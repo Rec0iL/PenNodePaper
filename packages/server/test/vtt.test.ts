@@ -10,7 +10,7 @@ import { runCommand } from '../src/commands.js';
 import { toPng, renderSvg, newMap } from '../src/maps.js';
 import { Persistence } from '../src/persistence.js';
 import { Store } from '../src/store.js';
-import { connectMockVtt, D20_LIKE_PROFILE, HTBAH_PROFILE, KINETIK_LIKE_PROFILE, STRUCTURE_ONLY_PROFILE } from '../scripts/mock-vtt.js';
+import { connectMockVtt, D20_LIKE_PROFILE, ELDARAHQ_PROFILE, HEROHQ_PROFILE, KINETIK_LIKE_PROFILE, STRUCTURE_ONLY_PROFILE } from '../scripts/mock-vtt.js';
 
 let dir: string;
 let store: Store;
@@ -147,52 +147,70 @@ describe('VTT bridge', () => {
     expect(cp.payload.sheet.attacks[0]).toEqual({ name: 'Spear', toHit: 5, damage: '1d6+3' });
   });
 
-  it('real ruleset: the documented HeroHQ/EldaraHQ sheet structure (flat keys, nested lists) works end to end', async () => {
-    const c = await connect(HTBAH_PROFILE);
-    expect(run('get_vtt_capabilities')).toMatchObject({ canReceiveCharacters: true, characterRoles: [{ id: 'monster' }, { id: 'nsc' }] });
-    // node type picks the role through the profile's `for` hints: enemy -> monster, npc -> nsc
+  it('real ruleset: the shipped EldaraHQ profile (NPC list entries with combat fields, party role) works end to end', async () => {
+    const c = await connect(ELDARAHQ_PROFILE);
+    expect(run('get_vtt_capabilities')).toMatchObject({ canReceiveCharacters: true, characterRoles: [{ id: 'nsc' }, { id: 'pc' }] });
+    // enemy and npc nodes both use the nsc role (its `for` hints); hp only exists while a combat side is chosen
     const e = run('create_node', { type: 'enemy', title: 'Kraken-Seemann', summary: 'Zäher Seeräuber.' }).id;
-    const r = run('set_character_sheet', { nodeId: e, sheet: {
-      beruf: 'Seeräuber', hpMax: 30, attr_handeln: 55, attr_wissen: 20,
-      skills_handeln: [{ name: 'Nahkampf', invested: 40 }, 'Ausweichen'],
-      weapons: [{ name: 'Säbel', damage: '1w10+2' }],
-      statuses: [{ name: 'Wütend', type: 'bonus' }],
-    } });
-    expect(r.role).toBe('monster');
-    expect(r.sheet.skills_handeln).toEqual([{ name: 'Nahkampf', invested: 40 }, { name: 'Ausweichen' }]);
-    expect(() => run('set_character_sheet', { nodeId: e, sheet: { statuses: [{ name: 'Seekrank', type: 'cursed' }] } })).toThrow(/statuses\[0\]\.type.*malus, bonus, neutral/);
-    expect(() => run('set_character_sheet', { nodeId: e, sheet: { hpMax: 0 } })).toThrow(/below the minimum 1/);
+    const r = run('set_character_sheet', { nodeId: e, sheet: { rolle: 'Seeräuber', haltung: 'feindlich', kampfSeite: 'Gegner', hp: 30, tokenGroesse: 1.5 } });
+    expect(r.role).toBe('nsc');
+    expect(r.sheet).toMatchObject({ kampfSeite: 'gegner', hp: 30, tokenGroesse: 1.5 });
+    expect(() => run('set_character_sheet', { nodeId: e, sheet: { kampfSeite: 'Piraten' } })).toThrow(/kampfSeite.*none, gegner, verbuendet/);
+    expect(() => run('set_character_sheet', { nodeId: e, sheet: { tokenGroesse: 20 } })).toThrow(/above the maximum 8/);
+    expect(run('set_character_sheet', { nodeId: e, sheet: { kampfSeite: 'none' } }).sheet).not.toHaveProperty('hp');
+    run('set_character_sheet', { nodeId: e, sheet: { kampfSeite: 'gegner', hp: 30 } });
     await run('push_character', { nodeId: e });
     const cp = c.received.find((m) => m.t === 'push' && m.kind === 'character') as any;
-    // the pushed sheet uses the VTT's own JSON keys, so the VTT can merge it into its character object as-is
-    expect(cp.payload.role).toBe('monster');
-    expect(cp.payload.sheet).toMatchObject({ hpMax: 30, attr_handeln: 55, weapons: [{ name: 'Säbel', damage: '1w10+2' }] });
-    // an NPC node gets the NSC role with its own, lighter fields
+    expect(cp.payload.role).toBe('nsc');
+    expect(cp.payload.sheet).toMatchObject({ rolle: 'Seeräuber', kampfSeite: 'gegner', hp: 30 });
     const n = run('create_node', { type: 'npc', title: 'Hafenmeisterin Orla' }).id;
-    expect(run('set_character_sheet', { nodeId: n, sheet: { ort: 'Hafen', haltung: 'misstrauisch', tokenGroesse: 1 } }).role).toBe('nsc');
+    expect(run('set_character_sheet', { nodeId: n, sheet: { ort: 'Hafen', haltung: 'misstrauisch' } }).role).toBe('nsc');
+  });
+
+  it('both shipped How to be a Hero profiles stay well-formed and differ where the apps differ', () => {
+    for (const p of [ELDARAHQ_PROFILE, HEROHQ_PROFILE]) {
+      expect(p.protocol).toBe(1);
+      expect(p.provides?.party).toBe(true);
+      expect(p.characters!.roles.map((r) => r.id)).toEqual(['nsc', 'pc']);
+      for (const role of p.characters!.roles) {
+        const keys = role.fields.map((f) => f.key);
+        expect(new Set(keys).size).toBe(keys.length);
+      }
+    }
+    // EldaraHQ has a map and a combat tracker, HeroHQ has neither
+    expect(ELDARAHQ_PROFILE.push.scene).toMatchObject({ grids: ['square'] });
+    expect(HEROHQ_PROFILE.push.scene).toBeUndefined();
+    expect(HEROHQ_PROFILE.characters!.roles[0].fields.map((f) => f.key)).not.toContain('hp');
+  });
+
+  it('HeroHQ has no map: PenNodePaper refuses a scene push before it reaches the VTT', async () => {
+    const c = await connect(HEROHQ_PROFILE);
+    const m = run('create_map', { name: 'Schankraum', kind: 'battle' }).mapId;
+    await expect(run('push_scene', { mapId: m, image: 'plan' })).rejects.toThrow(/can't receive "scene"/);
+    expect(c.received.some((x) => x.t === 'push')).toBe(false);
   });
 
   it('a VTT that only DESCRIBES characters: the AI can still write sheets for the GM, pushing is refused with guidance', async () => {
     const c = await connect(STRUCTURE_ONLY_PROFILE);
-    expect(run('get_vtt_capabilities')).toMatchObject({ canReceiveCharacters: false, characterRoles: [{ id: 'monster' }, { id: 'nsc' }] });
+    expect(run('get_vtt_capabilities')).toMatchObject({ canReceiveCharacters: false, characterRoles: [{ id: 'nsc' }, { id: 'pc' }] });
     const e = run('create_node', { type: 'enemy', title: 'Sumpfgeist' }).id;
-    run('set_character_sheet', { nodeId: e, sheet: { hpMax: 18, weapons: [{ name: 'Klauen', damage: '1w6' }] } });
-    expect(store.state.nodes[e].fields.sheet).toMatchObject({ hpMax: 18 });
+    run('set_character_sheet', { nodeId: e, sheet: { rolle: 'Spuk', auffaelligkeit: 'Leuchtende Augen' } });
+    expect(store.state.nodes[e].fields.sheet).toMatchObject({ rolle: 'Spuk' });
     await expect(run('push_character', { nodeId: e })).rejects.toThrow(/describes characters but can't receive them yet/);
     expect(c.received.some((m) => m.t === 'push')).toBe(false);
     // still exportable
     const x = run('export_vtt_bundle', { format: 'upf', handouts: [], maps: [], characters: [e] });
     expect(x.characters).toBe(1);
     const b = JSON.parse(fs.readFileSync(path.join(store.exportsDir, x.file), 'utf8'));
-    expect(b.characters[0]).toMatchObject({ role: 'monster', name: 'Sumpfgeist', sheet: { hpMax: 18 } });
+    expect(b.characters[0]).toMatchObject({ role: 'nsc', name: 'Sumpfgeist', sheet: { rolle: 'Spuk' } });
   });
 
   it('works offline from the cached profile (structure survives the VTT disconnecting)', async () => {
-    const c = await connect(HTBAH_PROFILE);
+    const c = await connect(ELDARAHQ_PROFILE);
     c.close();
     await until(() => !store.vtt.status().connected);
     const e = run('create_node', { type: 'enemy', title: 'Offline Ghoul' }).id;
-    expect(run('set_character_sheet', { nodeId: e, sheet: { hpMax: 12 } }).role).toBe('monster');
+    expect(run('set_character_sheet', { nodeId: e, sheet: { kampfSeite: 'gegner', hp: 12 } }).role).toBe('nsc');
     await expect(run('push_character', { nodeId: e })).rejects.toThrow(/No VTT is connected/);
   });
 
@@ -314,7 +332,7 @@ describe('drop-in client for vanilla-JS VTTs (docs/pnp-bridge-client.js)', () =>
     clients.push(link);
     await until(() => store.vtt.status().connected);
     await until(() => statuses.includes('connected')); // the hub counts as connected a moment before the client has seen its welcome
-    expect(store.vtt.status().profile?.id).toBe('herohq-htbah');
+    expect(store.vtt.status().profile?.id).toBe('herohq');
     const h = run('create_node', { type: 'handout', title: 'Brief', readAloud: 'Hallo' }).id;
     expect(await run('push_handout', { nodeId: h })).toMatchObject({ pushed: 'handout' });
     expect(seen).toEqual(['Brief']);

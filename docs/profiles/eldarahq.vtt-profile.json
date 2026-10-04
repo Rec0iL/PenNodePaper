@@ -1,0 +1,346 @@
+{
+  "id": "eldarahq",
+  "name": "EldaraHQ (How to be a Hero)",
+  "version": "0.9.2",
+  "protocol": 1,
+  "push": {
+    "handout": {
+      "text": true,
+      "image": true,
+      "toPlayer": true
+    },
+    "scene": {
+      "grids": [
+        "square"
+      ],
+      "tokens": true
+    },
+    "character": {},
+    "music_cue": {
+      "tracks": true,
+      "mood": true
+    }
+  },
+  "provides": {
+    "party": true
+  },
+  "requests": [
+    "tracks",
+    "party"
+  ],
+  "images": {
+    "maxBytes": 8000000,
+    "formats": [
+      "png",
+      "jpg",
+      "webp"
+    ]
+  },
+  "characters": {
+    "roles": [
+      {
+        "id": "nsc",
+        "label": "NSC / Gegner",
+        "description": "Eintrag der NSC-Liste des Spielleiters (Gedächtnisstütze, kein Charakterbogen: das Regelwerk kennt keine Gegnerbögen). Das Porträt wird zum Kartentoken. Mit hp und kampfSeite kommt die Figur zusätzlich in den Kampf-Tracker.",
+        "for": [
+          "npc",
+          "enemy"
+        ],
+        "portrait": true,
+        "fields": [
+          {
+            "key": "ort",
+            "label": "Ort",
+            "type": "text",
+            "group": "Auftreten"
+          },
+          {
+            "key": "rolle",
+            "label": "Rolle",
+            "type": "text",
+            "group": "Auftreten",
+            "help": "z.B. Wirtin, Schmuggler, Schiffsarzt"
+          },
+          {
+            "key": "haltung",
+            "label": "Haltung",
+            "type": "text",
+            "group": "Auftreten",
+            "help": "gegenüber der Gruppe, z.B. freundlich, misstrauisch, feindlich"
+          },
+          {
+            "key": "auffaelligkeit",
+            "label": "Auffälligkeit",
+            "type": "text",
+            "group": "Auftreten",
+            "help": "woran man ihn erkennt"
+          },
+          {
+            "key": "motivation",
+            "label": "Motivation",
+            "type": "text",
+            "group": "Auftreten"
+          },
+          {
+            "key": "wesen",
+            "label": "Eldara-Wesen",
+            "type": "text",
+            "group": "Auftreten",
+            "help": "nur falls ein Wesen aus dem Regelwerk passt"
+          },
+          {
+            "key": "tokenGroesse",
+            "label": "Tokengröße (Felder)",
+            "type": "number",
+            "group": "Karte",
+            "min": 0.5,
+            "max": 8,
+            "step": 0.5,
+            "default": 1
+          },
+          {
+            "key": "kampfSeite",
+            "label": "Im Kampf",
+            "type": "select",
+            "group": "Kampf",
+            "default": "none",
+            "options": [
+              {
+                "value": "none",
+                "label": "Nicht im Kampf-Tracker"
+              },
+              {
+                "value": "gegner",
+                "label": "Gegner"
+              },
+              {
+                "value": "verbuendet",
+                "label": "Verbündet"
+              }
+            ]
+          },
+          {
+            "key": "hp",
+            "label": "Lebenspunkte",
+            "type": "number",
+            "group": "Kampf",
+            "min": 1,
+            "max": 999,
+            "step": 1,
+            "showIf": {
+              "key": "kampfSeite",
+              "notEquals": "none"
+            }
+          }
+        ]
+      },
+      {
+        "id": "pc",
+        "label": "Spielercharakter",
+        "description": "Der Bogen eines verbundenen Spielers (nur lesend; öffentliche Felder, ohne Notizen und Quest-Log).",
+        "for": [
+          "pc"
+        ],
+        "portrait": true,
+        "fields": [
+          {
+            "key": "beruf",
+            "label": "Beruf",
+            "type": "text",
+            "group": "Person"
+          },
+          {
+            "key": "alter",
+            "label": "Alter",
+            "type": "text",
+            "group": "Person"
+          },
+          {
+            "key": "statur",
+            "label": "Statur",
+            "type": "text",
+            "group": "Person"
+          },
+          {
+            "key": "geschlecht",
+            "label": "Geschlecht",
+            "type": "text",
+            "group": "Person"
+          },
+          {
+            "key": "wesen",
+            "label": "Wesen",
+            "type": "text",
+            "group": "Person"
+          },
+          {
+            "key": "hauptbaeume",
+            "label": "Hauptbäume",
+            "type": "tags",
+            "group": "Person"
+          },
+          {
+            "key": "hpCurrent",
+            "label": "Lebenspunkte",
+            "type": "number",
+            "group": "Gesundheit"
+          },
+          {
+            "key": "hpMax",
+            "label": "Max. Lebenspunkte",
+            "type": "number",
+            "group": "Gesundheit"
+          },
+          {
+            "key": "attr_handeln",
+            "label": "Handeln",
+            "type": "number",
+            "group": "Basiswerte"
+          },
+          {
+            "key": "attr_wissen",
+            "label": "Wissen",
+            "type": "number",
+            "group": "Basiswerte"
+          },
+          {
+            "key": "attr_soziales",
+            "label": "Soziales",
+            "type": "number",
+            "group": "Basiswerte"
+          },
+          {
+            "key": "skills_handeln",
+            "label": "Talente Handeln",
+            "type": "list",
+            "group": "Talente",
+            "item": [
+              {
+                "key": "name",
+                "label": "Name",
+                "type": "text"
+              },
+              {
+                "key": "invested",
+                "label": "Punkte",
+                "type": "number"
+              }
+            ]
+          },
+          {
+            "key": "skills_wissen",
+            "label": "Talente Wissen",
+            "type": "list",
+            "group": "Talente",
+            "item": [
+              {
+                "key": "name",
+                "label": "Name",
+                "type": "text"
+              },
+              {
+                "key": "invested",
+                "label": "Punkte",
+                "type": "number"
+              }
+            ]
+          },
+          {
+            "key": "skills_soziales",
+            "label": "Talente Soziales",
+            "type": "list",
+            "group": "Talente",
+            "item": [
+              {
+                "key": "name",
+                "label": "Name",
+                "type": "text"
+              },
+              {
+                "key": "invested",
+                "label": "Punkte",
+                "type": "number"
+              }
+            ]
+          },
+          {
+            "key": "inventory",
+            "label": "Inventar",
+            "type": "list",
+            "group": "Ausrüstung",
+            "item": [
+              {
+                "key": "name",
+                "label": "Name",
+                "type": "text"
+              },
+              {
+                "key": "description",
+                "label": "Beschreibung",
+                "type": "text"
+              }
+            ]
+          },
+          {
+            "key": "weapons",
+            "label": "Waffen",
+            "type": "list",
+            "group": "Ausrüstung",
+            "item": [
+              {
+                "key": "name",
+                "label": "Name",
+                "type": "text"
+              },
+              {
+                "key": "damage",
+                "label": "Schaden",
+                "type": "text"
+              },
+              {
+                "key": "description",
+                "label": "Beschreibung",
+                "type": "text"
+              }
+            ]
+          },
+          {
+            "key": "statuses",
+            "label": "Status",
+            "type": "list",
+            "group": "Zustand",
+            "item": [
+              {
+                "key": "name",
+                "label": "Name",
+                "type": "text"
+              },
+              {
+                "key": "value",
+                "label": "Wert",
+                "type": "text"
+              },
+              {
+                "key": "type",
+                "label": "Art (bonus/malus/neutral)",
+                "type": "text"
+              }
+            ]
+          },
+          {
+            "key": "waehrung",
+            "label": "Währung",
+            "type": "text",
+            "group": "Ausrüstung"
+          },
+          {
+            "key": "geld",
+            "label": "Geld",
+            "type": "number",
+            "group": "Ausrüstung"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -6,7 +6,7 @@ PenNodePaper pushes prepared content (handouts, battle maps, NPCs, music cues) i
 2. announce what it can receive (a **profile**),
 3. handle `push` / `request` messages and answer each with a `result`.
 
-All content uses one fixed format, the **Universal Push Format (UPF)**. PenNodePaper never needs per-VTT mapping rules — the VTT adapts UPF to its own model. **Start here (vanilla JS VTT):** [`pnp-bridge-client.js`](pnp-bridge-client.js) is a one-file, dependency-free client that handles the connection, `hello`, reconnects and replies — you only write two handlers. Ready-made profile for the *How to be a Hero* VTTs (HeroHQ / EldaraHQ): [`profiles/how-to-be-a-hero.vtt-profile.json`](profiles/how-to-be-a-hero.vtt-profile.json). Reference implementation of a full VTT side: [`packages/server/scripts/mock-vtt.ts`](../packages/server/scripts/mock-vtt.ts). Types: [`packages/shared/src/vtt.ts`](../packages/shared/src/vtt.ts).
+All content uses one fixed format, the **Universal Push Format (UPF)**. PenNodePaper never needs per-VTT mapping rules — the VTT adapts UPF to its own model. **Start here (vanilla JS VTT):** [`pnp-bridge-client.js`](pnp-bridge-client.js) is a one-file, dependency-free client that handles the connection, `hello`, reconnects and replies — you only write two handlers. Real-world profiles of the two *How to be a Hero* VTTs, generated from the code they ship (their `pnpbridge.js`): [`profiles/herohq.vtt-profile.json`](profiles/herohq.vtt-profile.json) (handouts, NPC list, music, party) and [`profiles/eldarahq.vtt-profile.json`](profiles/eldarahq.vtt-profile.json) (the same plus maps and a combat tracker). Reference implementation of a full VTT side: [`packages/server/scripts/mock-vtt.ts`](../packages/server/scripts/mock-vtt.ts). Types: [`packages/shared/src/vtt.ts`](../packages/shared/src/vtt.ts).
 
 **Every part is optional.** A VTT lists only what it supports. In particular it can *describe* its character sheets without being able to *receive* characters yet (see [Characters](#characters-any-game-system)) — that alone lets the AI write characters for the GM in your game's terms.
 
@@ -132,7 +132,7 @@ A **role** is one kind of character the VTT works with (e.g. `enemy`, `npc`, `mo
 * `characters` present, no `push.character` → *"describes, can't receive yet"*: the sheet form and the AI work in your game's terms and the GM reads the result in PenNodePaper (copy as JSON or readable text, or export it). Pushing is refused with an explanation.
 * both present → live pushes as above.
 
-This is the easiest first step for any VTT: publish the structure now, add receiving later. See [`profiles/how-to-be-a-hero.vtt-profile.json`](profiles/how-to-be-a-hero.vtt-profile.json) for a complete real-world example (flat character keys, nested skill/weapon/status lists, a lighter NPC role).
+This is the easiest first step for any VTT: publish the structure now, add receiving later. See [`profiles/eldarahq.vtt-profile.json`](profiles/eldarahq.vtt-profile.json) for a complete real-world example (a lighter NPC/enemy role with a conditional combat field, and a read-only `pc` role with nested skill/weapon/status lists).
 
 ## Party (the players' characters)
 

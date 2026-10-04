@@ -126,8 +126,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   console.log('mock VTT connecting to', url.replace(/token=.*/, 'token=…'));
 }
 
-const HTBAH_FILE: VttProfile = JSON.parse(fs.readFileSync(new URL('../../../docs/profiles/how-to-be-a-hero.vtt-profile.json', import.meta.url), 'utf8'));
-/** The real documented structure of HeroHQ / EldaraHQ (How to be a Hero), exactly as shipped in docs/profiles/: it DESCRIBES characters but cannot import them yet. */
-export const STRUCTURE_ONLY_PROFILE: VttProfile = HTBAH_FILE;
-/** The same VTT once it can also receive pushed characters. */
-export const HTBAH_PROFILE: VttProfile = { ...HTBAH_FILE, push: { ...HTBAH_FILE.push, character: {} } };
+const readProfile = (file: string): VttProfile => JSON.parse(fs.readFileSync(new URL(`../../../docs/profiles/${file}`, import.meta.url), 'utf8'));
+/** The profiles the two How to be a Hero VTTs really announce (generated from their pnpbridge.js), exactly as shipped in docs/profiles/. */
+export const ELDARAHQ_PROFILE: VttProfile = readProfile('eldarahq.vtt-profile.json');
+export const HEROHQ_PROFILE: VttProfile = readProfile('herohq.vtt-profile.json');
+/** A VTT that DESCRIBES its characters but cannot import them (yet): HeroHQ's structure without push.character. */
+export const STRUCTURE_ONLY_PROFILE: VttProfile = { ...HEROHQ_PROFILE, push: { handout: HEROHQ_PROFILE.push.handout } };
