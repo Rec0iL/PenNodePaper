@@ -153,6 +153,8 @@
         {@const m = r.m}
         {#if m.role === 'user'}
           <div class="user"><div class="b">{m.text}</div></div>
+        {:else if m.role === 'assistant' && !m.text && !m.streaming}
+          <!-- a turn that only called tools has no text: the tool cards say it all -->
         {:else if m.role === 'assistant'}
           <div class="ai" style="--c:var(--{m.backend})">
             <span class="who">{m.backend === 'agy' ? 'agy' : 'Claude'}</span>

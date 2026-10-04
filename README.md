@@ -1,8 +1,64 @@
-# PenNodePaper
+<div align="center">
+
+# 🗺️ PenNodePaper
+
+**Build your pen & paper world and story on an infinite canvas, with an AI co-GM that works right in front of you.**
+
+<img src="https://img.shields.io/badge/node-%E2%89%A520-339933?style=for-the-badge&logo=nodedotjs&logoColor=white" alt="Node">
+<img src="https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript">
+<img src="https://img.shields.io/badge/Svelte_5-FF3E00?style=for-the-badge&logo=svelte&logoColor=white" alt="Svelte 5">
+<img src="https://img.shields.io/badge/Vite-646CFF?style=for-the-badge&logo=vite&logoColor=white" alt="Vite">
+<img src="https://img.shields.io/badge/MCP-server-8A63D2?style=for-the-badge" alt="MCP">
+<img src="https://img.shields.io/badge/Claude-D97757?style=for-the-badge&logo=anthropic&logoColor=white" alt="Claude">
+<img src="https://img.shields.io/badge/ComfyUI-images-4C8BF5?style=for-the-badge" alt="ComfyUI">
+<img src="https://img.shields.io/badge/local--first-plain%20files-2EA043?style=for-the-badge" alt="local-first">
+
+<br>
+
+<a href="https://github.com/Rec0iL/PenNodePaper/commits/main"><img src="https://img.shields.io/github/last-commit/Rec0iL/PenNodePaper?style=flat-square&color=blue" alt="Last commit"></a>
+<a href="https://github.com/Rec0iL/PenNodePaper/stargazers"><img src="https://img.shields.io/github/stars/Rec0iL/PenNodePaper?style=flat-square&color=yellow" alt="Stars"></a>
+<a href="https://github.com/Rec0iL/PenNodePaper/issues"><img src="https://img.shields.io/github/issues/Rec0iL/PenNodePaper?style=flat-square" alt="Issues"></a>
+<img src="https://img.shields.io/badge/status-early%20development-orange?style=flat-square" alt="Status: early development">
+
+<br><br>
+
+<img src="docs/img/canvas-detail.png" alt="PenNodePaper: the story as a node graph, the pool on the left, the inspector on the right" width="100%">
+
+<sub>A small example campaign (written in German). Everything you see is a plain file in a folder.</sub>
+
+</div>
 
 AI-assisted world & story building for pen & paper. An infinite node canvas for the story, a sidebar **pool** for prepared nodes that don't have a fixed place yet (the tavern the players may or may not visit), and an AI co-GM (Claude or agy) that edits the campaign through an MCP server — every change animated live.
 
-## Run
+## ✨ Highlights
+
+* 🧩 **Node canvas + pool** — scenes, NPCs, places, clues, items and more as typed nodes with typed connections; prepared material waits in the pool until it is needed.
+* 🤖 **AI co-GM** — Claude or agy edit the campaign through MCP and you watch every change happen; each request is one undo step, or review it first.
+* 📚 **Rulebooks & world books** — the AI looks rules up instead of inventing them.
+* 🎨 **Images & maps** — portraits, scenes and handouts via your local ComfyUI; battle and region maps you or the AI edit, painted on request.
+* 🔌 **Live VTT bridge** — push handouts, scenes, NPCs and music to KINETIK VTT (or any VTT that speaks the small bridge protocol), or export a file.
+* 🎭 **Running the session** — split the party, track where each group is, get back on track, share a spoiler-safe wiki with your players.
+* 📘 **GM binder** — the whole campaign as one printable A4 PDF with page references on every connection.
+* 🛟 **Yours to keep** — backups, branching campaigns, optional git; everything is markdown and JSON on your disk.
+
+## 🧭 The canvas
+
+The story lives on an infinite canvas; the **pool** on the left holds everything that has no place in the story yet. **Semantic zoom** keeps big campaigns readable: far zoomed out, cards shrink to their type colour and one big title; zoom in and the full cards come back, with summary, tags, status and thumbnail.
+
+<div align="center">
+<img src="docs/img/semantic-zoom.gif" alt="Semantic zoom: the canvas switches between overview and detailed cards while zooming" width="85%">
+</div>
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/img/canvas-overview.png" alt="Overview: cards collapse to colour and title"><br><sub><b>Overview</b> — see the whole story at a glance.</sub></td>
+    <td width="50%"><img src="docs/img/canvas-detail.png" alt="Detail: full cards with summary, tags and thumbnails"><br><sub><b>Detail</b> — full cards, status badges and pictures.</sub></td>
+  </tr>
+</table>
+
+Connections have kinds (leads to, if …, reveals, belongs to, foreshadows, bridge), each with its own colour that you can switch on and off from the bar at the bottom.
+
+## 🚀 Run
 
 ```bash
 npm install
@@ -14,7 +70,12 @@ First launch seeds a small demo campaign in `campaigns/demo/`. The server starts
 
 **What you need:** Node 20+. Optional, each unlocks one feature: the `claude` and/or `agy` CLI (AI chat), a local **ComfyUI** with Krea 2 (images, painted maps), **WeasyPrint** (`pip install weasyprint`, GM binder PDF), **ImageMagick** (image thumbnails), `unzip` + `pdftotext` (importing .docx / .pdf notes), `git` (optional local git commits).
 
-## The AI
+## 🤖 The AI
+
+
+<div align="center">
+<img src="docs/img/chat.png" alt="The AI chat with tool-call cards and the context node" width="300">
+</div>
 
 * **In-app chat** (right dock → *AI*): switch Claude / agy per conversation, pick a model, `@`-mention nodes, selected node is sent as context. Per-node threads live in the inspector and leave a pointer card in the global chat.
 * **Claude** works out of the box (the app spawns `claude -p` headless and hands it this app's MCP server; only the campaign tools are allowed).
@@ -27,18 +88,31 @@ First launch seeds a small demo campaign in `campaigns/demo/`. The server starts
 
 Every MCP call is one undo step (`Ctrl+Z` / `Ctrl+Shift+Z`). Deleting is a soft delete (Trash in the pool panel).
 
-## Library: rulebooks & world books
+## 📚 Library: rulebooks & world books
 
 Two kinds of stable reference documents live in the **Library** tab (not on the canvas), both plain markdown split by headings, both searchable by you and the AI:
 
 * **Rulebooks** — load your system's rules (upload or import by path). The AI uses `search_rules` / `get_section` / `list_chapters` instead of inventing mechanics, and an optional *core rules digest* is always in its context.
 * **World books** — lore, geography, history, factions; as much text as you like. A small autosaving editor (**Library → ＋ New / Edit**) has an outline, formatting shortcuts and a summary field. The AI always sees each book's dense summary + a compact outline, searches the rest with `search_world` / `get_world_section`, and can write or extend a book on request (`write_world`, previous version backed up in `worldbooks/.bak/`).
 
-## Images (ComfyUI)
+## 🎨 Images (ComfyUI)
+
+
+<div align="center">
+<img src="docs/img/images.png" alt="Inspector: cover image, prompt, Generate and AI writes it" width="300">
+</div>
 
 Per node: **Inspector → Images**. Pick a kind (portrait / scene / item / handout / banner), write a prompt or let the AI write it (**✦ AI writes it**), generate 1–4 variants, choose the cover, click for the lightbox. Jobs run one at a time with live progress; finished images attach to the node as undoable edits. Settings (⚙): ComfyUI URL + model pickers (defaults = your KINETIK Krea 2 Turbo setup), campaign image style, campaign language. The AI can do all of it through `generate_image`, `image_queue`, `set_cover_image`, `remove_image`.
 
-## Maps
+## 🗺️ Maps
+
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/img/map-editor.png" alt="Battle map editor with room, paint, door, prop and token tools"><br><sub><b>Plan</b> — the editor you and the AI share.</sub></td>
+    <td width="50%"><img src="docs/img/map-painted.png" alt="The same map painted by ComfyUI"><br><sub><b>Painted</b> — the same plan, painted by ComfyUI.</sub></td>
+  </tr>
+</table>
 
 Two kinds, both stored as plain JSON in `maps/` and attached to a **location** (double-click the location's card, or Inspector → *Open the map of this place*):
 
@@ -49,7 +123,7 @@ The **Select** tool (first in the toolbar) edits what is already drawn: click a 
 
 The editor autosaves and edits through the same ops as the AI's `edit_map`, so you and Claude/agy can work on one map at once (AI changes glow briefly). **Paint** turns the plan into a painted map via ComfyUI img2img (Krea 2): *Faithful* keeps your plan exactly, *Painterly* is richer but may drift. *Model input* shows exactly what the image model receives.
 
-## VTT link
+## 🔌 VTT link
 
 Connect a tabletop app (KINETIK VTT, or any VTT that implements the small bridge protocol — see `docs/vtt-bridge-spec.md`; vanilla-JS VTTs can drop in `docs/pnp-bridge-client.js`) and push **handouts, scenes (map + grid + token starts), enemies/NPCs** and **music cues** from the Inspector or via the AI (`push_handout`, `push_scene`, `push_character`, `play_track`, `list_vtt_tracks`).
 
@@ -59,7 +133,16 @@ Connect a tabletop app (KINETIK VTT, or any VTT that implements the small bridge
 
 **Your players' characters come along:** a VTT that reports its party (`provides.party`) fills the **Party strip** above the pool with the players' characters when a session is open — portrait, player, online state; they are saved as `pc` nodes in the campaign folder (so they are there offline, and resync when the players change them; players who leave are kept, marked absent). The VTT owns the sheet (read-only here); your notes and the party group are yours.
 
-## Running the session
+## 🎭 Running the session
+
+
+<table>
+  <tr>
+    <td width="33%"><img src="docs/img/story.png" alt="Story tab: where the groups are, how to get back on track"></td>
+    <td width="67%"><img src="docs/img/search.png" alt="Search palette"><br><img src="docs/img/campaign-menu.png" alt="Campaign menu: new, branch, open, GM binder, backups"></td>
+  </tr>
+</table>
+<sub>The <b>Story</b> tab (left), search with <kbd>Ctrl</kbd>+<kbd>K</kbd> and the campaign menu (right).</sub>
 
 * **Right-click a node** → *Move players here*: tick which players go there (or pick *Whole party* / a group). The party can split up — each part keeps its own coloured marker and trail, groups are named after who is together (“Anna & Ben”), and when they meet again they become the plain “party”. Select **several nodes** (Shift-click or Shift-drag, or Ctrl/Cmd-click) to mark the players as being at all of them at once — e.g. in the tavern while the bell is ringing — or to set all their statuses together. The same menu sets the **status** (untouched / active / done / skipped; *active* is a marker only — several nodes can be active — and doesn't move anyone). Right-click a **connection** to take the played-path highlight off it (the players went back and forth), change its kind or reverse it; right-click the **empty canvas** to add a node right there.
 * **Campaigns** — the campaign name in the top bar is a menu: open another campaign, create a new one, jump back to a recently used one, or open any campaign folder by path. (Switching waits until the AI and image queue are idle; the VTT reconnects by itself.) The server starts with the campaign you used last.
@@ -80,7 +163,13 @@ Connect a tabletop app (KINETIK VTT, or any VTT that implements the small bridge
 * **Connection kinds** — hover a kind in the bar at the bottom for what it is for (leads to, if …, reveals, belongs to, foreshadows, bridge).
 * The AI has the same tools: `move_players`, `set_status`, `mark_played`, `set_known`, `advance_clock`, `story_status`, `lint_story`, `get_party`, `sync_party`.
 
-## Campaign folder
+### 📘 The GM binder
+
+<div align="center">
+<img src="docs/img/binder.png" alt="GM binder PDF: cover, story with read-aloud boxes and page references, a place with its painted map, a character with portrait" width="100%">
+</div>
+
+## 📁 Campaign folder
 
 ```
 campaigns/<name>/
@@ -100,7 +189,7 @@ campaigns/<name>/
 
 Plain files: git-friendly and hand-editable — external edits (including Claude Code editing the folder directly) show up live in the UI.
 
-## Dev scripts
+## 🧪 Dev scripts
 
 ```bash
 npm run smoke   -w @pnp/server   # drive a running server through the real MCP client
@@ -108,7 +197,7 @@ npm run ai-demo -w @pnp/server   # paced fake-AI session to watch the animations
 npm test                          # command layer / undo / persistence tests
 ```
 
-## Layout
+## 🧱 Layout
 
 * `packages/shared` — domain types, node/edge metadata, WebSocket protocol
 * `packages/server` — store + transaction/undo layer (`store.ts`), command registry used by both REST and MCP (`commands.ts`), MCP endpoint, CLI chat runner, file watcher

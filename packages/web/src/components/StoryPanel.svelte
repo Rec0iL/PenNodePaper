@@ -177,7 +177,7 @@
 </div>
 
 <style>
-  .story { padding: 10px 14px 40px; display: grid; gap: 14px; }
+  .story { padding: 10px 14px 40px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
   .label { display: flex; gap: 6px; align-items: center; }
   .sub { font-size: 11px; color: var(--text-faint); margin: 8px 0 3px; display: flex; gap: 8px; align-items: baseline; }
   .dim { color: var(--text-faint); font-size: 11.5px; }
@@ -197,7 +197,7 @@
   .row { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: transparent; border: 0; padding: 4px 6px; border-radius: 6px; color: var(--text-dim); }
   .row:hover { background: var(--bg-3); color: var(--text); }
   .row i { width: 4px; height: 14px; border-radius: 2px; flex: none; }
-  .row .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .chip.warn { background: #3a2a10; color: #ffcf70; border-color: #6a4a18; }
   .chip.good { background: #12301f; color: var(--ok); border-color: #2c5a3e; }
 .wrow { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
