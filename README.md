@@ -137,14 +137,27 @@ Connect a tabletop app (KINETIK VTT, or any VTT that implements the small bridge
 
 ### Supported VTTs
 
-| VTT | Handouts | Maps & scenes | NPCs & enemies | Music | Party sync |
-|---|:---:|:---:|---|:---:|:---:|
-| **[KINETIK VTT](https://github.com/Rec0iL/KINETIK-PNP)** | ✅ | ✅ grid + token starts | ✅ full sheets: the tier ladder goon → nemesis, moves, portrait | ✅ | ✅ |
-| **EldaraHQ** (How to be a Hero) | ✅ text + image | ✅ square grid + tokens | ✅ NSC list entries; the portrait becomes the map token; optional entry in the combat tracker | ✅ | ✅ |
-| **HeroHQ** (How to be a Hero) | ✅ text + image | — | ✅ NSC list entries (no portrait) | ✅ | ✅ |
-| **Your VTT** | see [the bridge spec](docs/vtt-bridge-spec.md) | | | | |
+✅ supported · ❌ not supported (yet)
 
-Each VTT ships its own small bridge client, and PenNodePaper learns what it can do from the capability profile it announces on connect (the real ones for EldaraHQ and HeroHQ are in [`docs/profiles/`](docs/profiles)). The AI only offers what the connected VTT supports and writes characters in that game's own terms. Some of these bridges are still on their way into the VTTs' main branches. No live link? **⚙ Settings → VTT link → export a file** works with the cached profile (a KINETIK session file today).
+| | 🥋 **[KINETIK VTT](https://github.com/Rec0iL/KINETIK-PNP)** | 🏴‍☠️ **[EldaraHQ](https://github.com/DonDavis-vibe/EldaraHQ)**<br><sub>Extended How to be a Hero</sub> | 🦸 **[HeroHQ](https://github.com/DonDavis-vibe/how-to-be-a-hero-character-sheet)**<br><sub>How to be a Hero</sub> |
+|---|:---:|:---:|:---:|
+| 📜 Handouts: text | ✅ | ✅ | ✅ |
+| 🖼️ Handouts: picture | ✅ | ✅ | ✅ |
+| 👁️ Show a handout to the players right away | ✅ | ✅ | ✅ |
+| 🗺️ Maps & scenes (square grid, token starts) | ✅ | ✅ | ❌ |
+| 🧙 NPC entries | ✅ | ✅ | ✅ |
+| 🎭 NPC portrait, used as the map token | ✅ | ✅ | ❌ |
+| 👹 Enemy stat blocks (tiers goon → nemesis, moves) | ✅ | ❌ | ❌ |
+| ⚔️ Enemies in the combat tracker | ✅ | ✅ | ❌ |
+| 🎵 Music cues (tracks and moods) | ✅ | ✅ | ✅ |
+| 👥 Party sync (the players' characters, read-only) | ✅ | ✅ | ✅ |
+
+What an NPC entry holds depends on the game:
+
+* **KINETIK VTT** — name, note and token size; enemies get full stat blocks with the tier ladder, level, bonus, protection, willpower, energy and moves.
+* **EldaraHQ** and **HeroHQ** — the GM's NPC list: place, role, attitude, what stands out, motivation and kind of being. *How to be a Hero* has no enemy stat blocks, so enemies are NPC entries too. In EldaraHQ an NPC also gets a map token size, and with hit points and a side it joins the combat tracker; HeroHQ stores no portrait.
+
+Each VTT ships its own small bridge client, and PenNodePaper learns what it can do from the capability profile it announces on connect (the real ones for EldaraHQ and HeroHQ are in [`docs/profiles/`](docs/profiles)). The AI only offers what the connected VTT supports and writes characters in that game's own terms. No live link? **⚙ Settings → VTT link → export a file** works with the cached profile (a KINETIK session file today).
 
 > Building or adapting a VTT? The protocol is small and versioned: [`docs/vtt-bridge-spec.md`](docs/vtt-bridge-spec.md), with a drop-in vanilla-JS client and a mock VTT for testing.
 
