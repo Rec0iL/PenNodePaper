@@ -58,7 +58,7 @@ The story lives on an infinite canvas; the **pool** on the left holds everything
 
 Connections have kinds (leads to, if …, reveals, belongs to, foreshadows, bridge), each with its own colour that you can switch on and off from the bar at the bottom.
 
-## 🚀 Run
+## 🚀 Install & run
 
 ```bash
 npm install
@@ -70,11 +70,19 @@ First launch seeds a small demo campaign in `campaigns/demo/`. The server starts
 
 **What you need:** Node 20+. Optional, each unlocks one feature: the `claude` and/or `agy` CLI (AI chat), a local **ComfyUI** with Krea 2 (images, painted maps), **WeasyPrint** (`pip install weasyprint`, GM binder PDF), **ImageMagick** (image thumbnails), `unzip` + `pdftotext` (importing .docx / .pdf notes), `git` (optional local git commits).
 
+> 📖 **Step-by-step guides for Linux, macOS and Windows** (including every optional tool, the AI CLIs, ComfyUI and troubleshooting): **[docs/INSTALL.md](docs/INSTALL.md)**
+
 ## 🤖 The AI
 
 
 <div align="center">
 <img src="docs/img/chat.png" alt="The AI chat with tool-call cards and the context node" width="300">
+</div>
+
+**Watch it work.** `npm run ai-demo -w @pnp/server` plays a short scripted AI session against the demo campaign, using the very same MCP calls Claude or agy make: a card flies out of the pool onto the canvas, a connection draws itself, a new NPC spawns with a glow, an edit flashes, a connection slides to a new target, a node is deleted, and another one returns to the pool. Every step lands in the activity log and is one undo step.
+
+<div align="center">
+<img src="docs/img/ai-demo.gif" alt="The AI builds on the canvas: place, link, create, edit, relink, delete, move to pool" width="100%">
 </div>
 
 * **In-app chat** (right dock → *AI*): switch Claude / agy per conversation, pick a model, `@`-mention nodes, selected node is sent as context. Per-node threads live in the inspector and leave a pointer card in the global chat.
@@ -126,6 +134,20 @@ The editor autosaves and edits through the same ops as the AI's `edit_map`, so y
 ## 🔌 VTT link
 
 Connect a tabletop app (KINETIK VTT, or any VTT that implements the small bridge protocol — see `docs/vtt-bridge-spec.md`; vanilla-JS VTTs can drop in `docs/pnp-bridge-client.js`) and push **handouts, scenes (map + grid + token starts), enemies/NPCs** and **music cues** from the Inspector or via the AI (`push_handout`, `push_scene`, `push_character`, `play_track`, `list_vtt_tracks`).
+
+### Supported VTTs
+
+| VTT | Handouts | Maps & scenes | NPCs & enemies | Music | Party sync |
+|---|:---:|:---:|---|:---:|:---:|
+| **[KINETIK VTT](https://github.com/Rec0iL/KINETIK-PNP)** | ✅ | ✅ grid + token starts | ✅ full sheets: the tier ladder goon → nemesis, moves, portrait | ✅ | ✅ |
+| **EldaraHQ** (How to be a Hero) | ✅ text + image | ✅ square grid + tokens | ✅ NSC list entries; the portrait becomes the map token; optional entry in the combat tracker | ✅ | ✅ |
+| **HeroHQ** (How to be a Hero) | ✅ text + image | — | ✅ NSC list entries (no portrait) | ✅ | ✅ |
+| **Your VTT** | see [the bridge spec](docs/vtt-bridge-spec.md) | | | | |
+
+Each VTT ships its own small bridge client, and PenNodePaper learns what it can do from the capability profile it announces on connect (the real ones for EldaraHQ and HeroHQ are in [`docs/profiles/`](docs/profiles)). The AI only offers what the connected VTT supports and writes characters in that game's own terms. Some of these bridges are still on their way into the VTTs' main branches. No live link? **⚙ Settings → VTT link → export a file** works with the cached profile (a KINETIK session file today).
+
+> Building or adapting a VTT? The protocol is small and versioned: [`docs/vtt-bridge-spec.md`](docs/vtt-bridge-spec.md), with a drop-in vanilla-JS client and a mock VTT for testing.
+
 
 **Locations carry their map.** A map is an attachment of a location (there is no separate map node): *Inspector → ＋ Battle/Region map*, or `create_map` with `nodeId`. In *Show to the players* every picture attached to any node (an NPC portrait, an item, a place) can go out as a **handout**, and for places also onto the **map screen** as a backdrop (no grid, no tokens) — or you push the location's **battle map** (grid + tokens) instead; you choose which one the players see first. Smaller areas inside a place (the cellar under the tavern) are their own locations linked with *belongs to*. Older campaigns' map nodes load as locations.
 
