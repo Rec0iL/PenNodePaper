@@ -5,7 +5,7 @@ import { DOOR_KINDS, EDGE_KINDS, EDGE_SIDES, IMAGE_KINDS, NODE_STATUSES, NODE_TY
 import fs from 'node:fs';
 import path from 'node:path';
 import { BINDER_SECTIONS, binderHtml, renderPdf } from './binder.js';
-import { buildBundle, characterFromNode, handoutFromNode, kinetikSession, roleFor, sceneFromImage, sceneFromMap, sheetOf, wantsPlayerStarts } from './vtt.js';
+import { buildBundle, characterFromNode, handoutFromNode, illustrationsOf, kinetikSession, roleFor, sceneFromImage, sceneFromMap, sheetOf, wantsPlayerStarts } from './vtt.js';
 import { CONTROL_LEGEND, REGION_LEGEND, applyOps, imageSize, renderSvg, toPng, type MapOp } from './maps.js';
 import type { Store, Tx } from './store.js';
 
@@ -894,23 +894,24 @@ def({
 def({
   name: 'export_vtt_bundle',
   description:
-    'Offline export for a VTT. format "kinetik-session" = a fresh KINETIK VTT session file (scenes + handouts; load it on the GM start screen — NOTE it replaces that VTT’s session); "upf" = the universal bundle other VTTs can import. Select handouts / maps / characters by node id / map id; omit all three to export every handout node, every map and every enemy node with a valid sheet. Returns the file path and a download URL.',
+    'Offline export for a VTT. format "kinetik-session" = a fresh KINETIK VTT session file (load it on the GM start screen — NOTE it replaces that VTT’s session): maps as scenes (with tokens), a picture of each place as a grid-less backdrop scene, handouts, enemies as combat NPCs, and NPCs as map tokens with portrait and note on the scene of the place they belong to. "upf" = the universal bundle other VTTs can import. Select handouts / maps / backdrops (location node ids) / characters (enemy or NPC node ids); omit all four to export everything that is ready: every handout node, every map, every location with a picture, every enemy and NPC node whose sheet is valid. Returns the file path and a download URL.',
   shape: {
     format: z.enum(['kinetik-session', 'upf']).optional(),
     handouts: z.array(z.string()).optional(),
     maps: z.array(z.string()).optional(),
+    backdrops: z.array(z.string()).optional().describe('Location node ids whose picture becomes a backdrop scene.'),
     characters: z.array(z.string()).optional(),
     includePlayers: z.boolean().optional().describe('Keep player start markers in exported scenes (default: only if the VTT wants them).'),
   },
   run(tx, a) {
-    const all = !a.handouts && !a.maps && !a.characters;
+    const all = !a.handouts && !a.maps && !a.backdrops && !a.characters;
     const handouts = a.handouts ?? (all ? Object.values(tx.state.nodes).filter((n) => n.type === 'handout' && !n.trashed && (n.images.length || n.readAloud || n.summary)).map((n) => n.id) : []);
     const maps = a.maps ?? (all ? tx.store.maps.list().filter((m) => m.renders.length || m.kind === 'battle').map((m) => m.id) : []);
     const profile = tx.store.vtt.status().profile;
     const characters =
       a.characters ??
       (all
-        ? Object.values(tx.state.nodes).filter((n) => n.type === 'enemy' && !n.trashed).filter((n) => {
+        ? Object.values(tx.state.nodes).filter((n) => (n.type === 'enemy' || n.type === 'npc') && !n.trashed).filter((n) => {
             try {
               characterFromNode(tx.store, tx.store.imagesDir, n.id, profile);
               return true;
@@ -919,14 +920,15 @@ def({
             }
           }).map((n) => n.id)
         : []);
-    const bundle = buildBundle(tx.store, tx.store.imagesDir, { handouts, maps, characters }, profile, { includePlayers: a.includePlayers });
+    const backdrops = a.backdrops ?? (all ? Object.values(tx.state.nodes).filter((n) => n.type === 'location' && !n.trashed && illustrationsOf(tx.store, n).length > 0).map((n) => n.id) : []);
+    const bundle = buildBundle(tx.store, tx.store.imagesDir, { handouts, maps, backdrops, characters }, profile, { includePlayers: a.includePlayers });
     const format = a.format ?? 'kinetik-session';
     const body = format === 'upf' ? bundle : kinetikSession(bundle);
     fs.mkdirSync(tx.store.exportsDir, { recursive: true });
     const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 16);
     const file = `${slugify(tx.state.meta.name)}-${stamp}.${format === 'upf' ? 'upf' : 'kinetik-session'}.json`;
     fs.writeFileSync(path.join(tx.store.exportsDir, file), JSON.stringify(body));
-    return { file, url: `/api/exports/${file}`, handouts: bundle.handouts.length, scenes: bundle.scenes.length, characters: bundle.characters.length };
+    return { file, url: `/api/exports/${file}`, handouts: bundle.handouts.length, scenes: bundle.scenes.length, characters: bundle.characters.length, npcTokens: bundle.characters.filter((x) => x.role === 'npc').length };
   },
 });
 

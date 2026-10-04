@@ -154,8 +154,8 @@ List **everything the GM can play, including their own uploads** (`"uploaded": t
 
 Without a live link the GM can export from ⚙ Settings → *VTT link*:
 
-* **Universal bundle (UPF)** — one JSON file `{ upf: 1, handouts: UpfHandout[], scenes: UpfScene[], characters: UpfCharacter[] }`; import it however you like.
-* **KINETIK session file** — a ready-made *new* KINETIK VTT session (`{ kinetik: "session", … }`) with scenes (grid + tokens set), handouts and — if your enemy sheet is KINETIK's — combat enemies. Add another converter by naming it in your profile's `file.kind`.
+* **Universal bundle (UPF)** — one JSON file `{ upf: 1, handouts: UpfHandout[], scenes: UpfScene[], characters: UpfCharacter[] }`; import it however you like. Backdrop scenes carry `grid.hidden: true`; an NPC's `scene` field names the scene (the map of the place it belongs to) it should stand on.
+* **KINETIK session file** — a ready-made *new* KINETIK VTT session (`{ kinetik: "session", … }`): scenes (grid + tokens set; place pictures as backdrop scenes with the grid hidden), handouts, enemies as combat NPCs (portrait included) and NPCs as map tokens with portrait and note. Add another converter by naming it in your profile's `file.kind`.
 
 ## Checklist for implementers
 

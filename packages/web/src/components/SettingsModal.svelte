@@ -94,10 +94,10 @@
   const copy = (t: string) => navigator.clipboard.writeText(t).then(() => say('Copied', 'ok'));
   async function exportBundle(format: 'kinetik-session' | 'upf') {
     exporting = true;
-    const r = await cmd<{ file: string; url: string; handouts: number; scenes: number }>('export_vtt_bundle', { format });
+    const r = await cmd<{ file: string; url: string; handouts: number; scenes: number; characters: number }>('export_vtt_bundle', { format });
     exporting = false;
     if (!r) return;
-    say(`Exported ${r.scenes} scene(s) and ${r.handouts} handout(s)`, 'ok');
+    say(`Exported ${r.scenes} scene(s), ${r.handouts} handout(s) and ${r.characters} character(s)`, 'ok');
     const a = document.createElement('a');
     a.href = r.url;
     a.download = r.file;
@@ -197,7 +197,7 @@
           {/if}
           <div class="label">Offline export <span class="dim">— no live connection needed</span></div>
           <div class="row">
-            <button class="btn primary" disabled={exporting} onclick={() => exportBundle('kinetik-session')} title="A new KINETIK VTT session containing all handouts and maps">KINETIK session file</button>
+            <button class="btn primary" disabled={exporting} onclick={() => exportBundle('kinetik-session')} title="A new KINETIK VTT session: maps and place pictures as scenes, handouts, enemies in the combat list, NPCs as map tokens">KINETIK session file</button>
             <button class="btn" disabled={exporting} onclick={() => exportBundle('upf')} title="Universal bundle other VTTs can import">Universal bundle (UPF)</button>
           </div>
           <p class="hint">The KINETIK session file creates a <b>new</b> session when loaded on the GM start screen (it replaces what is loaded there). Maps become scenes with grid size and token start positions already set.</p>

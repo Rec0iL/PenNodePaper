@@ -117,6 +117,8 @@ export interface UpfCharacter {
   /** role "pc": the player at the table, and whether they are connected right now */
   playerName?: string;
   online?: boolean;
+  /** offline bundles only: the id of the scene this character belongs on (the map of the place they live in) */
+  scene?: string;
 }
 
 export interface UpfMusicCue {

@@ -245,6 +245,47 @@ describe('offline export', () => {
     expect(s.handouts.find((x: any) => x.kind === 'text').text).toContain('thirteen');
   });
 
+  it('exports everything that is ready: NPCs as tokens on their place\'s scene, place pictures as grid-less backdrops, enemies with a token portrait', async () => {
+    const c = await connect(); // the cached profile is what lets sheets be checked offline
+    c.close();
+    await until(() => !store.vtt.status().connected);
+    const cellar = run('create_node', { type: 'location', title: 'Cellar' }).id;
+    const hall = run('create_node', { type: 'location', title: 'Hall' }).id;
+    fs.writeFileSync(path.join(store.imagesDir, 'hall.png'), png());
+    store.transact('user', 'img', (tx) => tx.putNode({ ...tx.requireNode(hall), images: ['hall.png'] }));
+    const { mapId } = run('create_map', { name: 'Cellar map', nodeId: cellar, cols: 10, rows: 8 });
+    run('edit_map', { mapId, ops: [{ op: 'room', x: 1, y: 1, w: 6, h: 5 }] });
+    const brenn = run('create_node', { type: 'npc', title: 'Brenn', summary: 'Barkeep.' }).id;
+    run('set_character_sheet', { nodeId: brenn, sheet: { note: 'Knows the cult\nand pours slowly', size: 2 } });
+    run('link', { from: brenn, to: cellar, kind: 'belongs-to' });
+    const ghost = run('create_node', { type: 'npc', title: 'Wanderer' }).id;
+    run('set_character_sheet', { nodeId: ghost, sheet: { note: 'Passing through' } });
+    const brute = run('create_node', { type: 'enemy', title: 'Brute' }).id;
+    run('set_character_sheet', { nodeId: brute, preset: 'schlaeger' });
+    fs.writeFileSync(path.join(store.imagesDir, 'brute.png'), png());
+    store.transact('user', 'img', (tx) => tx.putNode({ ...tx.requireNode(brute), images: ['brute.png'] }));
+
+    const r = run('export_vtt_bundle', { format: 'kinetik-session' });
+    expect(r).toMatchObject({ scenes: 2, npcTokens: 2 }); // the cellar map + the hall picture
+    const s = JSON.parse(fs.readFileSync(path.join(store.exportsDir, r.file), 'utf8')).session;
+    const mapScene = s.scenes.find((x: any) => x.id === mapId);
+    const backdrop = s.scenes.find((x: any) => x.id.startsWith(`${hall}:`));
+    expect(backdrop).toMatchObject({ name: 'Hall', tokens: [], grid: { show: false } }); // no map of its own: plain name
+    expect(mapScene.grid.show).toBe(true);
+    const tok = mapScene.tokens.find((t: any) => t.src === `pnp:${brenn}`);
+    expect(tok).toMatchObject({ name: 'Brenn', kind: 'npc', size: 2, note: 'Knows the cult and pours slowly', hidden: false });
+    expect(tok.x).toBeGreaterThan(0);
+    expect(tok.x).toBeLessThan(mapScene.width);
+    // an NPC that belongs to no place stands on the first scene
+    expect([...s.scenes[0].tokens, ...s.scenes[1].tokens].some((t: any) => t.src === `pnp:${ghost}`)).toBe(true);
+    // enemies stay combat NPCs and carry the portrait for token and card
+    const e = s.combat.npcs.find((n: any) => n.src === `pnp:${brute}`);
+    expect(e).toMatchObject({ type: 'schlaeger' });
+    expect(e.img).toMatch(/^data:image\//);
+    expect(e.token).toBe(e.img);
+    expect(s.combat.npcs).toHaveLength(1);
+  });
+
   it('upf format and the default selection', () => {
     run('create_node', { type: 'handout', title: 'Letter', readAloud: 'Hello' });
     run('create_node', { type: 'handout', title: 'Empty' }); // nothing to hand out: skipped by default
