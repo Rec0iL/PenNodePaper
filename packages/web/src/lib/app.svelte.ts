@@ -1,0 +1,578 @@
+import { tick } from 'svelte';
+import type {
+  Actor, Backend, Batch, CampaignState, ChatMsg, ChatStatus, ImageJob, MapDoc, VttStatus, ChangeEvent, CommandResult, EdgeKind, GraphFile, Placement, Proposal, ServerMsg, StoryEdge, StoryNode,
+} from '@pnp/shared';
+
+// ---------------------------------------------------------------------------
+// Client-side campaign state + the animation director.
+// Server pushes Batches of ChangeEvents; we apply them event by event and, for
+// AI-made changes, pace them out so you can watch what changed.
+// ---------------------------------------------------------------------------
+
+export const NODE_W = 280;
+export const NODE_H = 150;
+
+export type NodeFx = { spawn?: boolean; flash?: boolean; glide?: boolean; hidden?: boolean; dissolve?: boolean };
+export type EdgeFxMode = 'draw' | 'rewire' | 'flash' | 'fade';
+export interface Ghost { node: StoryNode; placement: Placement; until: number }
+export interface EdgeGhost { edge: StoryEdge; until: number }
+export interface Flyer { id: number; from: DOMRect; to: DOMRect; node: StoryNode }
+export interface RecentDiff { from: unknown; to: unknown; until: number }
+
+export interface FlowApi {
+  flowToScreen(p: { x: number; y: number }): { x: number; y: number };
+  screenToFlow(p: { x: number; y: number }): { x: number; y: number };
+  centerOn(p: { x: number; y: number }, duration?: number): Promise<unknown>;
+  fit?(): Promise<unknown>;
+  zoom(): number;
+}
+
+const emptyGraph = (): GraphFile => ({ version: 1, canvases: [{ id: 'main', name: 'Main story' }], placements: {}, edges: [], frames: [] });
+
+function ls(k: string): string | null {
+  try {
+    return localStorage.getItem(k);
+  } catch {
+    return null;
+  }
+}
+export function remember(k: string, v: string) {
+  try {
+    localStorage.setItem(k, v);
+  } catch { /* private mode */ }
+}
+
+const LAYOUT_DEFAULT = { left: 300, right: 380, bottom: 150 };
+const LAYOUT_LIMITS = { left: [200, 560], right: [280, 720], bottom: [80, 460] } as const;
+function loadLayout() {
+  const out = { ...LAYOUT_DEFAULT };
+  try {
+    const saved = JSON.parse(ls('pnp.layout') ?? '{}') as Record<string, unknown>;
+    for (const k of Object.keys(out) as (keyof typeof out)[]) {
+      const v = saved[k];
+      if (typeof v === 'number' && Number.isFinite(v)) out[k] = Math.max(LAYOUT_LIMITS[k][0], Math.min(LAYOUT_LIMITS[k][1], v));
+    }
+  } catch { /* defaults */ }
+  return out;
+}
+
+/** Resize a panel (px), clamped to sensible limits, and remember it. */
+export function setPanelSize(which: 'left' | 'right' | 'bottom', px: number) {
+  const [lo, hi] = LAYOUT_LIMITS[which];
+  app.layout[which] = Math.round(Math.max(lo, Math.min(hi, px)));
+  remember('pnp.layout', JSON.stringify(app.layout));
+}
+export const resetPanelSize = (which: 'left' | 'right' | 'bottom') => setPanelSize(which, LAYOUT_DEFAULT[which]);
+
+export const app = $state({
+  /** Panel sizes in px (drag the splitters). */
+  layout: loadLayout(),
+  connected: false,
+  loaded: false,
+  meta: { name: '', language: 'de', createdAt: '' } as CampaignState['meta'],
+  nodes: {} as Record<string, StoryNode>,
+  graph: emptyGraph(),
+  history: [] as Batch[],
+  canUndo: false,
+  canRedo: false,
+
+  canvasId: 'main',
+  selectedId: null as string | null,
+  selectedEdge: null as string | null,
+  /** Several nodes selected at once on the canvas (empty unless 2+). */
+  multi: [] as string[],
+  /** Which part of the party the table controls refer to (parties can split up). */
+  playGroup: 'party',
+  tab: 'inspector' as 'inspector' | 'chat' | 'library' | 'story',
+  edgeKind: 'leads-to' as EdgeKind,
+  followAi: true,
+  toast: '' as string,
+  toastKind: 'error' as 'error' | 'ok',
+  jobs: [] as ImageJob[],
+  vtt: null as VttStatus | null,
+  /** Map editor modal (by map id) and the latest map change pushed by the server (AI edits, other tabs). */
+  mapEditor: null as null | { mapId: string },
+  mapEvent: null as null | { map: MapDoc; actor: Actor; at: number },
+  settingsOpen: false,
+  /** AI changes waiting for Accept / Reject (review mode). */
+  proposals: [] as Proposal[],
+  /** A frame that was just created and wants its title typed in. */
+  editingFrame: null as string | null,
+  /** Right-click menu on a frame (screen position). */
+  frameMenu: null as null | { frameId: string; x: number; y: number },
+  /** Ctrl+K search palette. */
+  paletteOpen: false,
+  /** GM binder (PDF) dialog. */
+  binderOpen: false,
+  /** Backups & sync dialog. */
+  backupsOpen: false,
+  /** Level of detail of the canvas: far zoomed out, cards show only their big title (semantic zoom). */
+  lod: 'full' as 'full' | 'compact',
+  /** Bumped when another campaign is opened: the canvas re-fits its view. */
+  fitNonce: 0,
+  /** Image-queue dropdown in the top bar. */
+  queueOpen: false,
+  /** Right-click menu on a node (screen position). */
+  nodeMenu: null as null | { nodeId: string; x: number; y: number },
+  edgeMenu: null as null | { edgeId: string; x: number; y: number },
+  /** Right-click on empty canvas: screen position for the menu, flow position for the new node. */
+  paneMenu: null as null | { x: number; y: number; fx: number; fy: number },
+  lightbox: null as null | { nodeId: string; file: string },
+  /** World-book editor modal: name = existing book, null = new book. */
+  editor: null as null | { name: string | null },
+
+  chat: [] as ChatMsg[],
+  chatStatus: { busy: false } as ChatStatus,
+  backend: (ls('pnp.backend') === 'agy' ? 'agy' : 'claude') as Backend,
+  models: { claude: ls('pnp.model.claude') ?? '', agy: ls('pnp.model.agy') ?? '' } as Record<Backend, string>,
+
+  // transient animation state
+  fx: {} as Record<string, NodeFx>,
+  edgeFx: {} as Record<string, EdgeFxMode>,
+  ghosts: {} as Record<string, Ghost>,
+  edgeGhosts: {} as Record<string, EdgeGhost>,
+  flyers: [] as Flyer[],
+  presence: null as { actor: Actor; nodeId: string | null; edgeId: string | null; until: number } | null,
+  /** previous label of a connection the AI just edited (shown struck-through for a few seconds) */
+  edgeDiffs: {} as Record<string, { from: string; until: number }>,
+  diffs: {} as Record<string, Record<string, RecentDiff>>,
+});
+
+let flowApi: FlowApi | null = null;
+export const registerFlowApi = (a: FlowApi | null) => {
+  flowApi = a;
+};
+
+/** Flow coordinates (top-left of a new ~280×80 card) that put it in the middle of what the GM currently sees. */
+export function viewCenter(): { x: number; y: number } {
+  const r = document.querySelector('.canvas')?.getBoundingClientRect();
+  const c = r ? screenToFlow({ x: r.left + r.width / 2, y: r.top + r.height / 2 }) : { x: 0, y: 0 };
+  return { x: Math.round(c.x - 140), y: Math.round(c.y - 40) };
+}
+
+/** Table actions on a whole selection (one undo step). */
+export const setStatusMany = (ids: string[], status: string) =>
+  cmd('batch', { ops: ids.map((nodeId) => ({ command: 'set_status', args: { nodeId, status } })), label: `Set ${ids.length} nodes ${status}` });
+export const hereMany = (ids: string[], group?: string) => cmd('set_here', { nodeIds: ids, ...(group ? { group } : {}) });
+
+let chatMetaCache: Promise<{ models: { claude: { id: string; label: string }[]; agy: { id: string; label: string }[] }; agy: { installed: boolean; registered: boolean; permitted: boolean } }> | null = null;
+/** Models and agy status, fetched once (not on every node selection); pass refresh after changing agy's setup. */
+export function chatMeta(refresh = false) {
+  if (!chatMetaCache || refresh) {
+    chatMetaCache = Promise.all([fetch('/api/models').then((r) => r.json()), fetch('/api/agy/status').then((r) => r.json())]).then(([models, agy]) => ({ models, agy }));
+    chatMetaCache.catch(() => (chatMetaCache = null));
+  }
+  return chatMetaCache;
+}
+
+/** Called while the canvas pans/zooms; flips the level of detail with a little hysteresis so it never flickers. */
+export function noteZoom(z: number) {
+  if (app.lod === 'full' && z < 0.42) app.lod = 'compact';
+  else if (app.lod === 'compact' && z > 0.5) app.lod = 'full';
+}
+
+export function closeMenus() {
+  app.nodeMenu = null;
+  app.edgeMenu = null;
+  app.paneMenu = null;
+  app.frameMenu = null;
+}
+
+export const screenToFlow = (p: { x: number; y: number }) => flowApi?.screenToFlow(p) ?? p;
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+const isAi = (a: Actor) => a === 'claude' || a === 'agy';
+let flyerSeq = 0;
+
+// ------------------------------- helpers -----------------------------------
+
+/** Image jobs that are running or waiting, in the order they will be worked off. */
+export const activeJobs = () => app.jobs.filter((j) => j.status === 'queued' || j.status === 'running');
+/** 0 = being generated now, n = n jobs are ahead of it. */
+export const jobAhead = (id: string) => Math.max(0, activeJobs().findIndex((j) => j.id === id));
+
+export function say(msg: string, kind: 'error' | 'ok' = 'error') {
+  app.toast = msg;
+  app.toastKind = kind;
+  setTimeout(() => {
+    if (app.toast === msg) app.toast = '';
+  }, 4000);
+}
+
+export async function cmd<T = unknown>(name: string, args: Record<string, unknown> = {}): Promise<T | undefined> {
+  try {
+    const res = await fetch('/api/command', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name, args, actor: 'user' }),
+    });
+    const j = (await res.json()) as CommandResult;
+    if (!j.ok) {
+      say(j.error ?? 'Command failed');
+      return undefined;
+    }
+    return j.result as T;
+  } catch (e) {
+    say(`Server unreachable: ${e instanceof Error ? e.message : e}`);
+    return undefined;
+  }
+}
+
+export async function sendChat(text: string, opts: { nodeId?: string; pins?: string[] } = {}): Promise<boolean> {
+  const res = await fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text, backend: app.backend, model: app.models[app.backend] || undefined, ...opts }),
+  });
+  if (!res.ok) {
+    say(((await res.json().catch(() => ({}))) as { error?: string }).error ?? 'Could not send');
+    return false;
+  }
+  return true;
+}
+export const cancelChat = () => fetch('/api/chat/cancel', { method: 'POST' });
+export const clearChat = () => fetch('/api/chat/clear', { method: 'POST' }).then(() => (app.chat = []));
+
+export const undo = () => fetch('/api/undo', { method: 'POST' });
+export const redo = () => fetch('/api/redo', { method: 'POST' });
+
+export function poolNodes(): StoryNode[] {
+  return Object.values(app.nodes)
+    .filter((n) => !n.trashed && !app.graph.placements[n.id])
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+export function selectEdge(id: string | null) {
+  app.selectedEdge = id;
+  if (id) {
+    app.selectedId = null;
+    app.tab = 'inspector';
+  }
+}
+
+export function selectNode(id: string | null, tab?: 'inspector' | 'chat') {
+  app.selectedId = id;
+  if (id) app.selectedEdge = null;
+  if (id && tab !== 'chat') app.tab = 'inspector';
+}
+
+export function focusEdge(id: string) {
+  const e = app.graph.edges.find((x) => x.id === id);
+  if (!e) return;
+  selectEdge(id);
+  const a = app.graph.placements[e.from];
+  const b = app.graph.placements[e.to];
+  if (a && b) {
+    app.canvasId = a.canvas;
+    void flowApi?.centerOn({ x: (a.x + b.x) / 2 + NODE_W / 2, y: (a.y + b.y) / 2 + NODE_H / 2 }, 500);
+  }
+}
+
+export function focusNode(id: string) {
+  const p = app.graph.placements[id];
+  selectNode(id);
+  if (p) {
+    app.canvasId = p.canvas;
+    void flowApi?.centerOn({ x: p.x + NODE_W / 2, y: p.y + NODE_H / 2 }, 500);
+  }
+}
+
+// ------------------------------- state sync --------------------------------
+
+/** Another campaign was opened: nothing of the old one may linger in the view. */
+function resetForCampaign() {
+  app.selectedId = null;
+  app.selectedEdge = null;
+  app.multi = [];
+  app.nodeMenu = null;
+  app.edgeMenu = null;
+  app.paneMenu = null;
+  app.mapEditor = null;
+  app.lightbox = null;
+  app.editor = null;
+  app.presence = null;
+  app.fx = {};
+  app.ghosts = {};
+  app.edgeGhosts = {};
+  app.canvasId = 'main';
+  app.fitNonce++;
+}
+
+function load(state: CampaignState) {
+  app.meta = state.meta;
+  app.nodes = state.nodes;
+  app.graph = state.graph;
+  if (!state.graph.canvases.some((c) => c.id === app.canvasId)) app.canvasId = state.graph.canvases[0]?.id ?? 'main';
+  app.loaded = true;
+}
+
+function setFx(id: string, patch: Partial<NodeFx>, ms?: number) {
+  app.fx[id] = { ...app.fx[id], ...patch };
+  if (ms) {
+    const keys = Object.keys(patch) as (keyof NodeFx)[];
+    setTimeout(() => {
+      const cur = app.fx[id];
+      if (!cur) return;
+      for (const k of keys) delete cur[k];
+      if (!Object.keys(cur).length) delete app.fx[id];
+    }, ms);
+  }
+}
+
+function setEdgeFx(id: string, mode: EdgeFxMode, ms: number) {
+  app.edgeFx[id] = mode;
+  setTimeout(() => {
+    if (app.edgeFx[id] === mode) delete app.edgeFx[id];
+  }, ms);
+}
+
+const rectOf = (sel: string): DOMRect | null => document.querySelector(sel)?.getBoundingClientRect() ?? null;
+
+async function flyer(from: DOMRect, to: DOMRect, node: StoryNode) {
+  const f: Flyer = { id: ++flyerSeq, from, to, node };
+  app.flyers.push(f);
+  await sleep(720);
+  app.flyers = app.flyers.filter((x) => x.id !== f.id);
+}
+
+function pointOf(p: Placement) {
+  const z = flowApi?.zoom() ?? 1;
+  const tl = flowApi?.flowToScreen(p) ?? { x: p.x, y: p.y };
+  return new DOMRect(tl.x, tl.y, NODE_W * z, NODE_H * z);
+}
+
+/** Targets are node ids, or "edge:<id>" for connections. */
+function focusPresence(actor: Actor, target: string | undefined) {
+  if (!target || !isAi(actor)) return;
+  const edgeId = target.startsWith('edge:') ? target.slice(5) : null;
+  app.presence = { actor, nodeId: edgeId ? null : target, edgeId, until: Date.now() + 3200 };
+  setTimeout(() => {
+    if (app.presence && app.presence.until <= Date.now()) app.presence = null;
+  }, 3300);
+}
+
+async function centerOnEdge(edge: StoryEdge) {
+  const a = app.graph.placements[edge.from];
+  const b = app.graph.placements[edge.to];
+  if (!a || !b) return;
+  await flowApi?.centerOn({ x: (a.x + b.x) / 2 + NODE_W / 2, y: (a.y + b.y) / 2 + NODE_H / 2 }, 450);
+}
+
+async function applyEvent(ev: ChangeEvent, actor: Actor): Promise<string | undefined> {
+  const ai = isAi(actor);
+  const follow = ai && app.followAi;
+  switch (ev.type) {
+    case 'node.created': {
+      app.nodes[ev.node.id] = ev.node;
+      if (ev.placement) {
+        app.graph.placements[ev.node.id] = ev.placement;
+        if (follow) await flowApi?.centerOn({ x: ev.placement.x + NODE_W / 2, y: ev.placement.y + NODE_H / 2 }, 450);
+      }
+      setFx(ev.node.id, { spawn: true }, 1100);
+      return ev.node.id;
+    }
+    case 'node.updated': {
+      const n = app.nodes[ev.id];
+      if (!n) return;
+      const until = Date.now() + (ai ? 9000 : 2500);
+      for (const d of ev.diffs) {
+        (n as unknown as Record<string, unknown>)[d.field] = d.to;
+        (app.diffs[ev.id] ??= {})[d.field] = { from: d.from, to: d.to, until };
+      }
+      setTimeout(() => {
+        const m = app.diffs[ev.id];
+        if (!m) return;
+        for (const k of Object.keys(m)) if (m[k].until <= Date.now()) delete m[k];
+      }, (ai ? 9000 : 2500) + 100);
+      setFx(ev.id, { flash: true }, 1300);
+      return ev.id;
+    }
+    case 'node.trashed': {
+      const n = app.nodes[ev.id];
+      const p = app.graph.placements[ev.id];
+      if (n && p) {
+        app.ghosts[ev.id] = { node: { ...n }, placement: { ...p }, until: Date.now() + 800 };
+        setTimeout(() => delete app.ghosts[ev.id], 850);
+      }
+      if (n) n.trashed = true;
+      delete app.graph.placements[ev.id];
+      if (app.selectedId === ev.id) app.selectedId = null;
+      return ev.id;
+    }
+    case 'node.restored': {
+      const n = app.nodes[ev.id];
+      if (n) n.trashed = false;
+      if (ev.placement) app.graph.placements[ev.id] = ev.placement;
+      setFx(ev.id, { spawn: true }, 1100);
+      return ev.id;
+    }
+    case 'node.placed': {
+      const n = app.nodes[ev.id];
+      const from = ai ? rectOf(`[data-pool-id="${ev.id}"]`) : null;
+      if (ai && from && n) {
+        setFx(ev.id, { hidden: true });
+        app.graph.placements[ev.id] = ev.placement;
+        await tick();
+        if (follow) await flowApi?.centerOn({ x: ev.placement.x + NODE_W / 2, y: ev.placement.y + NODE_H / 2 }, 450);
+        await tick();
+        await flyer(from, pointOf(ev.placement), n);
+        setFx(ev.id, { spawn: true }, 1100);
+        delete app.fx[ev.id]?.hidden;
+        if (app.fx[ev.id] && !Object.keys(app.fx[ev.id]).length) delete app.fx[ev.id];
+      } else {
+        app.graph.placements[ev.id] = ev.placement;
+        setFx(ev.id, { spawn: true }, 1100);
+      }
+      return ev.id;
+    }
+    case 'node.pooled': {
+      const n = app.nodes[ev.id];
+      const from = ai ? rectOf(`.svelte-flow__node[data-id="${ev.id}"]`) : null;
+      delete app.graph.placements[ev.id];
+      if (ai && from && n) {
+        setFx(`pool:${ev.id}`, { hidden: true });
+        await tick();
+        const to = rectOf(`[data-pool-id="${ev.id}"]`);
+        if (to) await flyer(from, to, n);
+        delete app.fx[`pool:${ev.id}`];
+        setFx(ev.id, { spawn: true }, 900);
+      }
+      return ev.id;
+    }
+    case 'node.moved': {
+      if (ai) setFx(ev.id, { glide: true }, 1000);
+      app.graph.placements[ev.id] = ev.to;
+      if (follow) await flowApi?.centerOn({ x: ev.to.x + NODE_W / 2, y: ev.to.y + NODE_H / 2 }, 450);
+      return ev.id;
+    }
+    case 'edge.created': {
+      app.graph.edges.push(ev.edge);
+      setEdgeFx(ev.edge.id, 'draw', 1300);
+      if (follow) await centerOnEdge(ev.edge);
+      return `edge:${ev.edge.id}`;
+    }
+    case 'edge.updated':
+    case 'edge.rewired': {
+      const i = app.graph.edges.findIndex((e) => e.id === ev.edge.id);
+      if (i >= 0) app.graph.edges[i] = ev.edge;
+      else app.graph.edges.push(ev.edge);
+      setEdgeFx(ev.edge.id, ev.type === 'edge.rewired' ? 'rewire' : 'flash', 1300);
+      if (ev.before.label !== ev.edge.label) {
+        const id = ev.edge.id;
+        app.edgeDiffs[id] = { from: ev.before.label, until: Date.now() + (ai ? 9000 : 2500) };
+        setTimeout(() => {
+          if (app.edgeDiffs[id] && app.edgeDiffs[id].until <= Date.now()) delete app.edgeDiffs[id];
+        }, (ai ? 9000 : 2500) + 100);
+      }
+      if (follow) await centerOnEdge(ev.edge);
+      return `edge:${ev.edge.id}`;
+    }
+    case 'edge.deleted': {
+      const i = app.graph.edges.findIndex((e) => e.id === ev.edge.id);
+      if (i >= 0) app.graph.edges.splice(i, 1);
+      app.edgeGhosts[ev.edge.id] = { edge: ev.edge, until: Date.now() + 700 };
+      setTimeout(() => delete app.edgeGhosts[ev.edge.id], 750);
+      return ev.edge.from;
+    }
+    case 'graph.meta':
+      app.graph.canvases = ev.canvases;
+      app.graph.frames = ev.frames;
+      if (!ev.canvases.some((c) => c.id === app.canvasId)) app.canvasId = ev.canvases[0]?.id ?? 'main';
+      return;
+    case 'graph.reloaded':
+      return;
+  }
+}
+
+async function applyBatch(batch: Batch) {
+  const ai = isAi(batch.actor);
+  app.history.push(batch);
+  if (app.history.length > 200) app.history.shift();
+  for (const ev of batch.events) {
+    const nodeId = await applyEvent(ev, batch.actor);
+    focusPresence(batch.actor, nodeId);
+    if (ai) await sleep(360);
+  }
+}
+
+let chain: Promise<void> = Promise.resolve();
+const enqueue = (batch: Batch) => {
+  chain = chain.then(() => applyBatch(batch)).catch((e) => console.error('applyBatch', e));
+};
+
+// ------------------------------- websocket ---------------------------------
+
+let ws: WebSocket | null = null;
+let retry = 0;
+let disposed = false;
+
+export function connect() {
+  // one socket only: a second connect() (hot reload, remount) must not open another listener on the same server
+  if (disposed || (ws && ws.readyState <= WebSocket.OPEN)) return;
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const sock = new WebSocket(`${proto}://${location.host}/ws`);
+  ws = sock;
+  sock.onopen = () => {
+    retry = 0;
+    app.connected = true;
+  };
+  sock.onclose = () => {
+    if (ws === sock) ws = null;
+    if (disposed) return;
+    app.connected = false;
+    setTimeout(connect, Math.min(5000, 500 * 2 ** retry++));
+  };
+  sock.onmessage = (m) => {
+    const msg = JSON.parse(m.data) as ServerMsg;
+    if (msg.t === 'hello') {
+      chain = chain.then(() => {
+        if (msg.switched) resetForCampaign();
+        load(msg.state);
+        app.history = msg.history;
+        app.canUndo = msg.canUndo;
+        app.canRedo = msg.canRedo;
+        app.chat = msg.chat;
+        app.chatStatus = msg.chatStatus;
+        app.jobs = msg.jobs;
+        app.vtt = msg.vtt;
+        app.proposals = msg.proposals ?? [];
+      });
+    } else if (msg.t === 'chat') {
+      const i = app.chat.findIndex((m) => m.id === msg.msg.id);
+      if (i >= 0) app.chat[i] = msg.msg;
+      else app.chat.push(msg.msg);
+    } else if (msg.t === 'vtt') {
+      app.vtt = msg.status;
+    } else if (msg.t === 'map') {
+      app.mapEvent = { map: msg.map, actor: msg.actor, at: Date.now() };
+    } else if (msg.t === 'image.job') {
+      const i = app.jobs.findIndex((j) => j.id === msg.job.id);
+      if (i >= 0) app.jobs[i] = msg.job;
+      else app.jobs.push(msg.job);
+    } else if (msg.t === 'proposals') {
+      app.proposals = msg.list;
+    } else if (msg.t === 'chat.status') {
+      app.chatStatus = msg.status;
+    } else if (msg.t === 'batch') {
+      enqueue(msg.batch);
+      chain = chain.then(() => {
+        app.canUndo = msg.canUndo;
+        app.canRedo = msg.canRedo;
+      });
+    } else if (msg.t === 'reload') {
+      chain = chain.then(() => load(msg.state));
+    }
+  };
+}
+
+// Hot reload replaced this module without ever disposing the old copy (Vite only disposes modules that accept updates),
+// so every edit left one more live socket behind — each receiving every broadcast — and the page got slower the longer
+// you worked on it. This module owns the app state, so an update to it simply reloads the page.
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    disposed = true;
+    ws?.close();
+    ws = null;
+  });
+  import.meta.hot.accept(() => location.reload());
+}

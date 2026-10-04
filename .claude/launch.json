@@ -1,0 +1,41 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "server",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "-w",
+        "@pnp/server"
+      ],
+      "port": 4317
+    },
+    {
+      "name": "web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "-w",
+        "@pnp/web"
+      ],
+      "port": 5273
+    },
+    {
+      "name": "kinetik-vtt",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--prefix",
+        "../KINETIK_PNP/tools/kinetik-vtt",
+        "--",
+        "--host",
+        "127.0.0.1"
+      ],
+      "port": 5173
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env
+*.log
+# campaigns are your own data (the demo is re-created on first start): never part of the code repository
+campaigns/
+.DS_Store
