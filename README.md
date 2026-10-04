@@ -70,6 +70,8 @@ First launch seeds a small demo campaign in `campaigns/demo/`. The server starts
 
 **What you need:** Node 20+. Optional, each unlocks one feature: the `claude` and/or `agy` CLI (AI chat), a local **ComfyUI** with Krea 2 (images, painted maps), **WeasyPrint** (`pip install weasyprint`, GM binder PDF), **ImageMagick** (image thumbnails), `unzip` + `pdftotext` (importing .docx / .pdf notes), `git` (optional local git commits).
 
+**Start-menu launcher (Linux):** `scripts/install-launcher.sh` adds a *PenNodePaper* entry to your application menu — it starts the server in the background (building the UI when needed) and opens the browser; right-click the entry for *Stop PenNodePaper*. Or run `scripts/pennodepaper.sh start|stop|open|status` yourself. The log is in `~/.local/state/pennodepaper/server.log`.
+
 > 📖 **Step-by-step guides for Linux, macOS and Windows** (including every optional tool, the AI CLIs, ComfyUI and troubleshooting): **[docs/INSTALL.md](docs/INSTALL.md)**
 
 ## 🤖 The AI
