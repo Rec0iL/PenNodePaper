@@ -50,14 +50,15 @@
   }
 
   async function upload(kind: Kind, e: Event & { currentTarget: HTMLInputElement }) {
-    const f = e.currentTarget.files?.[0];
+    const input = e.currentTarget; // currentTarget is null after the first await
+    const f = input.files?.[0];
     if (!f) return;
     busy = 'uploading…';
     const r = await fetch(`/api/library/${kind}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: f.name, content: await f.text() }) });
     const j = await r.json();
     busy = '';
     say(r.ok ? `Loaded “${j.name}” (${j.sections} sections)` : j.error);
-    e.currentTarget.value = '';
+    input.value = '';
     void refresh();
   }
 
@@ -85,10 +86,11 @@
     }
   }
   async function uploadNotes(e: Event & { currentTarget: HTMLInputElement }) {
-    const f = e.currentTarget.files?.[0];
+    const input = e.currentTarget;
+    const f = input.files?.[0];
     if (!f) return;
     await importNotes(f.name, await f.arrayBuffer() as ArrayBuffer);
-    e.currentTarget.value = '';
+    input.value = '';
   }
   const pasteNotes = () => importNotes(pasteName.trim() || 'pasted-notes', JSON.stringify({ text: pasteText }), true);
   async function removeImport(name: string) {
