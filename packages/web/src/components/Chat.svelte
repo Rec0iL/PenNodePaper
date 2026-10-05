@@ -7,8 +7,12 @@
   /** When set, this is a per-node thread (compact, filtered to that node). */
   let { nodeId }: { nodeId?: string } = $props();
 
-  let text = $state('');
-  let pins = $state<string[]>([]);
+  // the unsent draft survives tab switches (this component is unmounted then)
+  // svelte-ignore state_referenced_locally -- the per-node Chat is re-created per node ({#key})
+  const draftKey = nodeId ?? '';
+  let text = $state(app.drafts[draftKey]?.text ?? '');
+  let pins = $state<string[]>([...(app.drafts[draftKey]?.pins ?? [])]);
+  $effect(() => { app.drafts[draftKey] = { text, pins: [...pins] }; });
   let useSelected = $state(true);
   let list: HTMLDivElement;
   let models = $state<{ claude: { id: string; label: string }[]; agy: { id: string; label: string }[] } | null>(null);

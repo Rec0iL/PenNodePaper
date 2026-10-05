@@ -122,6 +122,8 @@ export const app = $state({
   editor: null as null | { name: string | null },
 
   chat: [] as ChatMsg[],
+  /** Unsent chat input per thread ('' = main chat, else node id) — the Chat component unmounts on tab switches. */
+  drafts: {} as Record<string, { text: string; pins: string[] }>,
   chatStatus: { busy: false } as ChatStatus,
   backend: (ls('pnp.backend') === 'agy' ? 'agy' : 'claude') as Backend,
   models: { claude: ls('pnp.model.claude') ?? '', agy: ls('pnp.model.agy') ?? '' } as Record<Backend, string>,
