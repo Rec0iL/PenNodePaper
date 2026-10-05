@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { WebSocket } from 'ws';
-import { DEFAULT_COMFY, type ComfyConfig } from '@pnp/shared';
+import { DEFAULT_COMFY, type ComfyConfig, type Crop } from '@pnp/shared';
 
 // ---------------------------------------------------------------------------
 // ComfyUI client (REST + progress websocket). Ported from KINETIK's
@@ -104,6 +104,31 @@ export class Comfy {
     wf['21'] = { class_type: 'VAEEncode', inputs: { pixels: ['20', 0], vae: ['3', 0] } };
     wf['13'].inputs.latent_image = ['21', 0];
     wf['13'].inputs.denoise = denoise;
+    return wf;
+  }
+
+  /**
+   * Inpaint one window of an image with the same Krea 2 graph (no inpainting model needed): crop the window,
+   * scale it to the model's working size, sample only inside the noise mask, scale back and blend into the
+   * untouched original through a soft mask, so nothing outside the mask changes by a single pixel.
+   * `image` / `sampleMask` / `composeMask` are names of files uploaded to ComfyUI (the masks use the red channel).
+   */
+  buildInpaint(prompt: string, negative: string, o: { image: string; sampleMask: string; composeMask: string; crop: Crop }, seed: number, denoise = 1): Workflow {
+    const c = o.crop;
+    const wf = this.buildWorkflow(prompt, negative, 64, 64, seed);
+    delete wf['12'];
+    wf['20'] = { class_type: 'LoadImage', inputs: { image: o.image } };
+    wf['21'] = { class_type: 'ImageCrop', inputs: { image: ['20', 0], width: c.w, height: c.h, x: c.x, y: c.y } };
+    wf['22'] = { class_type: 'ImageScale', inputs: { image: ['21', 0], upscale_method: 'lanczos', width: c.tw, height: c.th, crop: 'disabled' } };
+    wf['23'] = { class_type: 'VAEEncode', inputs: { pixels: ['22', 0], vae: ['3', 0] } };
+    wf['24'] = { class_type: 'LoadImageMask', inputs: { image: o.sampleMask, channel: 'red' } };
+    wf['25'] = { class_type: 'SetLatentNoiseMask', inputs: { samples: ['23', 0], mask: ['24', 0] } };
+    wf['13'].inputs.latent_image = ['25', 0];
+    wf['13'].inputs.denoise = denoise;
+    wf['26'] = { class_type: 'ImageScale', inputs: { image: ['14', 0], upscale_method: 'lanczos', width: c.w, height: c.h, crop: 'disabled' } };
+    wf['27'] = { class_type: 'LoadImageMask', inputs: { image: o.composeMask, channel: 'red' } };
+    wf['28'] = { class_type: 'ImageCompositeMasked', inputs: { destination: ['20', 0], source: ['26', 0], x: c.x, y: c.y, resize_source: false, mask: ['27', 0] } };
+    wf['15'].inputs.images = ['28', 0];
     return wf;
   }
 

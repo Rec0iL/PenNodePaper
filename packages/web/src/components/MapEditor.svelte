@@ -4,7 +4,7 @@
   // edit_map uses, so the GM and the AI can work on one map at the same time.
   import { onMount, untrack } from 'svelte';
   import {
-    DOOR_KINDS, FLOORS, PROP_KINDS, TERRAINS, applyOps, canon, derivedWalls, imageSize, renderSvg,
+    DOOR_KINDS, FLOORS, PROP_KINDS, TERRAINS, applyOps, canon, derivedWalls, groupProps, imageSize, renderSvg,
     type DoorKind, type MapDoc, type MapOp, type PropKind, type TerrainKind,
   } from '@pnp/shared';
   import { app, cmd, say, sendChat } from '../lib/app.svelte';
@@ -30,13 +30,17 @@
   let terrain = $state<TerrainKind>('forest');
   let brush = $state(50);
   let autoWalls = $state(true);
-  let view = $state<'plan' | 'control' | 'painted'>('plan');
+  let view = $state<'plan' | 'control' | 'terrain' | 'painted'>('plan');
   let shownRender = $state<string | null>(null);
   let panel = $state<'render' | 'map'>('render');
 
   const battle = $derived(doc?.kind === 'battle');
+  // how this computer paints battle maps (Settings → Map painting): quick = one pass, staged = precise, two steps
+  interface PaintInfo { mode: 'quick' | 'staged'; groups: number; quickSeconds: number; terrainSeconds: number; propsSeconds: number; measured: boolean }
+  let paint = $state<PaintInfo | null>(null);
+  const staged = $derived(battle && paint?.mode === 'staged');
   const dim = $derived(doc ? imageSize(doc) : { w: 1, h: 1, cell: 1 });
-  const svgStr = $derived(doc && view !== 'painted' ? renderSvg(doc, view === 'control' ? 'control' : 'preview') : '');
+  const svgStr = $derived(doc && view !== 'painted' && view !== 'terrain' ? renderSvg(doc, view === 'control' ? (staged ? 'terrain' : 'control') : 'preview') : '');
   const node = $derived(nodeId ? app.nodes[nodeId] : undefined);
 
   // ---- load / save --------------------------------------------------------------------
@@ -52,6 +56,7 @@
       nodeId = j.nodeId;
       tool = doc!.kind === 'battle' ? 'rect' : 'polygon';
       queueMicrotask(fit);
+      void loadPaint();
     })();
     return () => clearTimeout(saveTimer);
   });
@@ -131,12 +136,21 @@
     const ev = app.mapEvent;
     if (!ev) return;
     untrack(() => {
-      if (!doc || ev.map.id !== doc.id || ev.actor === 'user') return;
+      if (!doc || ev.map.id !== doc.id) return;
+      if (ev.actor === 'user') {
+        // the GM's own edit: keep the local plan, but take what jobs and commands changed on the server (painted results, terrains)
+        doc.renders = ev.map.renders;
+        doc.terrains = ev.map.terrains;
+        doc.terrainPick = ev.map.terrainPick;
+        doc.paintPrompt = ev.map.paintPrompt;
+        return;
+      }
       clearTimeout(saveTimer);
       dirty = false;
       markFresh(doc, ev.map);
       doc = JSON.parse(JSON.stringify(ev.map));
       status = `${ev.actor === 'agy' ? 'agy' : 'Claude'} edited the map`;
+      void loadPaint();
     });
   });
 
@@ -560,6 +574,7 @@
 
   // ---- keyboard ------------------------------------------------------------------------------------
   function onkeydown(e: KeyboardEvent) {
+    if (app.settingsOpen) return; // Settings is open on top of the editor
     const el = e.target as HTMLElement;
     const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName);
     if (e.key === ' ' && !typing) {
@@ -626,7 +641,19 @@
     touch();
   }
 
-  // ---- rendering (img2img) ------------------------------------------------------------------------------
+  // ---- painting ------------------------------------------------------------------------------------------
+  // quick: one img2img pass. precise (Settings → Map painting): ① the empty terrain, you pick one, ② every prop group painted into its spot.
+  let showGroups = $state(false);
+  const groups = $derived(doc && battle ? groupProps(doc) : []);
+
+  async function loadPaint() {
+    if (!doc) return;
+    await save(); // the estimate counts the props of the saved plan
+    const r = await fetch(`/api/maps/${encodeURIComponent(mapId)}/paint`);
+    if (r.ok) paint = await r.json();
+  }
+  const dur = (s: number) => (s < 90 ? `about ${Math.max(5, Math.round(s / 5) * 5)} seconds` : s < 5400 ? `about ${Math.round(s / 60)} min` : `about ${(s / 3600).toFixed(1)} hours`);
+
   let prompt_ = $state('');
   let promptTouched = $state(false);
   let fidelity = $state<'faithful' | 'balanced' | 'painterly'>('balanced');
@@ -636,21 +663,69 @@
   });
   const jobs = $derived(app.jobs.filter((j) => j.kind === 'map' && j.nodeId === nodeId && (j.status === 'queued' || j.status === 'running' || j.status === 'error')).slice(-4));
   const busy = $derived(jobs.some((j) => j.status === 'queued' || j.status === 'running'));
+  // a finished job changes the estimate (it now knows this computer's speed) and may add a picture
+  let doneCount = 0;
+  $effect(() => {
+    const n = app.jobs.filter((j) => j.kind === 'map' && j.nodeId === nodeId && j.status === 'done').length;
+    untrack(() => {
+      if (n !== doneCount) {
+        doneCount = n;
+        void loadPaint();
+      }
+    });
+  });
 
+  // the mode is changed in Settings (which can be opened from here): re-read it when that window closes
+  let settingsWasOpen = false;
+  $effect(() => {
+    const open = app.settingsOpen;
+    untrack(() => {
+      if (settingsWasOpen && !open) void loadPaint();
+      settingsWasOpen = open;
+    });
+  });
+
+  const aiArgs = () => ({ backend: app.backend, model: app.models[app.backend] || undefined });
+
+  /** quick: the whole picture. precise: step 1, the empty terrain (the server decides by the setting). */
   async function renderNow() {
     await save();
-    const r = await cmd('render_map', { mapId, prompt: prompt_, fidelity, variants });
+    const r = await cmd('render_map', { mapId, prompt: prompt_, fidelity, variants, ...aiArgs() });
     if (r) promptTouched = true;
+  }
+  async function pickTerrain(f: string) {
+    if (!doc) return;
+    doc.terrainPick = f;
+    await cmd('set_map_terrain', { mapId, file: f });
+    view = 'terrain';
+  }
+  async function paintProps() {
+    await save();
+    const r = await cmd('paint_map_props', { mapId, prompt: prompt_, variants: 1, ...aiArgs() });
+    if (r) promptTouched = true;
+  }
+  async function acceptTerrain() {
+    const r = await cmd('accept_map_terrain', { mapId });
+    if (r) {
+      say('Terrain accepted as the finished picture', 'ok');
+      view = 'painted';
+    }
   }
   function askAi() {
     if (!nodeId) return;
-    void sendChat(`Write a vivid render prompt for the map "${doc?.name}" (read it with get_map; describe materials, mood and lighting — not the layout), then call render_map with fidelity "${fidelity}" and ${variants} variant${variants > 1 ? 's' : ''}.`, { nodeId });
+    void sendChat(
+      staged
+        ? `Write a vivid description of the place for the map "${doc?.name}" (read it with get_map; materials, mood and lighting — not the layout, no furniture), then call render_map with fidelity "${fidelity}" and ${variants} variant${variants > 1 ? 's' : ''}. This only paints the empty terrain: tell me it takes a while, and wait for me to pick one before painting the props.`
+        : `Write a vivid render prompt for the map "${doc?.name}" (read it with get_map; describe materials, mood and lighting — not the layout), then call render_map with fidelity "${fidelity}" and ${variants} variant${variants > 1 ? 's' : ''}.`,
+      { nodeId },
+    );
     say('Asked the AI — see the AI tab for progress');
   }
   const cancel = () => fetch('/api/images/cancel', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
 
   const painted = $derived(shownRender ?? doc?.renders.at(-1) ?? null);
   const FIDELITY_HINT = { faithful: 'keeps the plan exactly, flatter look', balanced: 'good mix of fidelity and painting', painterly: 'richest look, may drift from the plan' };
+  const TERRAIN_HINT = { faithful: 'sticks closely to your walls and floors', balanced: 'creative, but keeps the rooms where they are', painterly: 'freest — rooms may shift a little' };
 
   const regionTools: { id: Tool; label: string; icon: string; tip: string }[] = [
     { id: 'polygon', label: 'Area', icon: '⬠', tip: 'Click points; Enter or double-click to finish' },
@@ -687,8 +762,9 @@
       <span class="grow"></span>
       <div class="seg">
         <button class:on={view === 'plan'} onclick={() => (view = 'plan')} title="Editable plan">Plan</button>
-        <button class:on={view === 'control'} onclick={() => (view = 'control')} title="What the image model receives">Model input</button>
-        <button class:on={view === 'painted'} disabled={!painted} onclick={() => (view = 'painted')} title="Latest painted render">Painted</button>
+        <button class:on={view === 'control'} onclick={() => (view = 'control')} title={staged ? 'What the model receives in step 1: the empty place' : 'What the image model receives'}>{staged ? 'Terrain input' : 'Model input'}</button>
+        {#if staged}<button class:on={view === 'terrain'} disabled={!doc?.terrainPick} onclick={() => (view = 'terrain')} title="The painted terrain you picked (step 1)">Terrain</button>{/if}
+        <button class:on={view === 'painted'} disabled={!painted} onclick={() => (view = 'painted')} title={staged ? 'Latest finished painting (step 2)' : 'Latest painted render'}>Painted</button>
       </div>
       <button class="btn ghost" disabled={!canUndo} onclick={undo} title="Undo (Ctrl+Z)">↶</button>
       <button class="btn ghost" disabled={!canRedo} onclick={redo} title="Redo">↷</button>
@@ -793,10 +869,18 @@
           <div class="stage" bind:this={stage} style="width:{dim.w}px;height:{dim.h}px;transform:translate({tx}px,{ty}px) scale({k})">
             {#if view === 'painted' && painted}
               <img src={`/api/images/${painted}`} alt="painted map" draggable="false" style="width:{dim.w}px;height:{dim.h}px" />
+            {:else if view === 'terrain' && doc.terrainPick}
+              <img src={`/api/images/${doc.terrainPick}`} alt="painted terrain" draggable="false" style="width:{dim.w}px;height:{dim.h}px" />
             {:else}
               {@html svgStr}
             {/if}
             <svg class="ov" width={dim.w} height={dim.h} viewBox="0 0 {dim.w} {dim.h}">
+              {#if battle && showGroups && (view === 'plan' || view === 'control')}
+                {#each groups as g (g.id)}
+                  <rect class="grp" x={g.bbox.x0 * dim.cell} y={g.bbox.y0 * dim.cell} width={(g.bbox.x1 - g.bbox.x0) * dim.cell} height={(g.bbox.y1 - g.bbox.y0) * dim.cell} rx="4" />
+                  <text class="grpid" x={g.bbox.x0 * dim.cell + 3} y={g.bbox.y0 * dim.cell + 13}>{g.id.slice(1)}</text>
+                {/each}
+              {/if}
               {#if battle && view === 'plan'}
                 {#each [...fresh.cells] as c}
                   {@const [cx, cy] = c.split(',').map(Number)}
@@ -858,38 +942,91 @@
         </div>
 
         {#if panel === 'render'}
-          <div class="label">What does the place look like?</div>
-          <textarea class="field" rows="4" placeholder="Materials, mood, lighting, setting… (not the layout — that comes from your plan)" bind:value={prompt_} oninput={() => (promptTouched = true)}></textarea>
-          <div class="label">Fidelity ↔ creativity</div>
-          <div class="seg w">
-            {#each ['faithful', 'balanced', 'painterly'] as f}<button class:on={fidelity === f} onclick={() => (fidelity = f as typeof fidelity)}>{f}</button>{/each}
-          </div>
-          <div class="dim">{FIDELITY_HINT[fidelity]}</div>
-          <div class="row">
-            <select class="field" bind:value={variants} title="Variants">{#each [1, 2, 3, 4] as n}<option value={n}>{n}×</option>{/each}</select>
-            <button class="btn primary grow" onclick={renderNow} disabled={prompt_.trim().length < 8 || !nodeId}>Paint it</button>
-          </div>
-          <div class="row">
-            <button class="btn grow" onclick={askAi} disabled={!nodeId}>✦ AI writes the prompt</button>
-            {#if busy}<button class="btn ghost" onclick={cancel}>stop</button>{/if}
-          </div>
-          {#if !nodeId}<p class="warn">This map has no map node — create it from the canvas or ask the AI.</p>{/if}
+          {#snippet jobsView()}
+            {#each jobs as j (j.id)}
+              <div class="job" class:err={j.status === 'error'}>
+                {#if j.status === 'error'}⚠ {j.error}{:else}{j.status === 'queued' ? 'queued…' : (j.phase ?? 'painting…')}<div class="bar"><i style="width:{Math.round(j.progress * 100)}%"></i></div>{/if}
+              </div>
+            {/each}
+          {/snippet}
+          {#snippet rendersView()}
+            {#if doc?.renders.length}
+              <div class="label">Painted versions <span class="dim">({doc.renders.length})</span></div>
+              <div class="grid">
+                {#each [...doc.renders].reverse() as f (f)}
+                  <button class="th" class:on={painted === f && view === 'painted'} onclick={() => { shownRender = f; view = 'painted'; }} ondblclick={() => nodeId && (app.lightbox = { nodeId, file: f })} title="Click to overlay · double-click to enlarge">
+                    <img src={`/api/images/${f}?w=320`} alt="" loading="lazy" decoding="async" />
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          {/snippet}
 
-          {#each jobs as j (j.id)}
-            <div class="job" class:err={j.status === 'error'}>
-              {#if j.status === 'error'}⚠ {j.error}{:else}{j.status === 'queued' ? 'queued' : 'painting'}…<div class="bar"><i style="width:{Math.round(j.progress * 100)}%"></i></div>{/if}
-            </div>
-          {/each}
+          {#if staged}
+            <div class="mode">Precise painting · 2 steps <button class="lnk" onclick={() => (app.settingsOpen = true)} title="Change in Settings → Map painting">change</button></div>
+            <p class="warn">⏱ This takes a while — {dur(paint?.terrainSeconds ?? 0)} for the terrain, then {dur(paint?.propsSeconds ?? 0)} for {paint?.groups ?? 0} prop group{paint?.groups === 1 ? '' : 's'}, on this computer{paint?.measured ? '' : ' (a rough guess until ComfyUI has made an image here)'}. You decide after each step, and you can stop at any time.</p>
 
-          {#if doc?.renders.length}
-            <div class="label">Painted versions <span class="dim">({doc.renders.length})</span></div>
-            <div class="grid">
-              {#each [...doc.renders].reverse() as f (f)}
-                <button class="th" class:on={painted === f && view === 'painted'} onclick={() => { shownRender = f; view = 'painted'; }} ondblclick={() => nodeId && (app.lightbox = { nodeId, file: f })} title="Click to overlay · double-click to enlarge">
-                  <img src={`/api/images/${f}?w=320`} alt="" loading="lazy" decoding="async" />
-                </button>
-              {/each}
+            <div class="step"><b>①</b> Terrain <span class="dim">— the empty place, no props</span></div>
+            <textarea class="field" rows="3" placeholder="Materials, mood, lighting, setting… (the AI turns this into a description of the empty place)" bind:value={prompt_} oninput={() => (promptTouched = true)}></textarea>
+            <div class="seg w">
+              {#each ['faithful', 'balanced', 'painterly'] as f}<button class:on={fidelity === f} onclick={() => (fidelity = f as typeof fidelity)}>{f}</button>{/each}
             </div>
+            <div class="dim">{TERRAIN_HINT[fidelity]}</div>
+            <div class="row">
+              <select class="field" bind:value={variants} title="How many terrains to paint to choose from">{#each [1, 2, 3, 4] as n}<option value={n}>{n}×</option>{/each}</select>
+              <button class="btn primary grow" onclick={renderNow} disabled={prompt_.trim().length < 8 || !nodeId || busy}>{doc?.terrains?.length ? 'Paint another terrain' : 'Paint the terrain'}</button>
+            </div>
+            <div class="row">
+              <button class="btn grow" onclick={askAi} disabled={!nodeId}>✦ AI writes the description</button>
+              {#if busy}<button class="btn ghost" onclick={cancel}>stop</button>{/if}
+            </div>
+            {#if !nodeId}<p class="warn">This map has no map node — create it from the canvas or ask the AI.</p>{/if}
+            {#if doc?.terrains?.length}
+              <div class="label">Terrains <span class="dim">— click the one you like</span></div>
+              <div class="grid">
+                {#each [...doc.terrains].reverse() as f (f)}
+                  <button class="th" class:on={doc.terrainPick === f} onclick={() => pickTerrain(f)} title={doc.terrainPick === f ? 'Chosen for step 2' : 'Click to choose this terrain'}>
+                    <img src={`/api/images/${f}?w=320`} alt="" loading="lazy" decoding="async" />
+                    {#if doc.terrainPick === f}<i class="tick">✓</i>{/if}
+                  </button>
+                {/each}
+              </div>
+            {/if}
+
+            <div class="step"><b>②</b> Props <span class="dim">— painted into their spots</span></div>
+            <p class="dim">Touching props of the same kind are painted as one object (a row of tables is one long table). <label class="chk"><input type="checkbox" bind:checked={showGroups} /> show the groups on the plan</label></p>
+            {#if !groups.length}
+              <p class="warn">This map has no props. Accept a terrain as the finished picture, or place some props first.</p>
+              <button class="btn primary" onclick={acceptTerrain} disabled={!doc?.terrainPick || busy}>Use the chosen terrain as the finished picture</button>
+            {:else}
+              <button class="btn primary" onclick={paintProps} disabled={!doc?.terrainPick || prompt_.trim().length < 8 || !nodeId || busy}>
+                {doc?.renders.length ? 'Paint the props again' : 'Paint the props on the chosen terrain'}
+              </button>
+              {#if !doc?.terrainPick}<div class="dim">Choose a terrain above first.</div>{/if}
+            {/if}
+            {@render jobsView()}
+            {@render rendersView()}
+            {#if doc?.renders.length}<div class="dim">Not happy? Paint the props again for a new variation, or choose another terrain.</div>{/if}
+          {:else}
+            <div class="label">What does the place look like?</div>
+            <textarea class="field" rows="4" placeholder="Materials, mood, lighting, setting… (not the layout — that comes from your plan)" bind:value={prompt_} oninput={() => (promptTouched = true)}></textarea>
+            <div class="label">Fidelity ↔ creativity</div>
+            <div class="seg w">
+              {#each ['faithful', 'balanced', 'painterly'] as f}<button class:on={fidelity === f} onclick={() => (fidelity = f as typeof fidelity)}>{f}</button>{/each}
+            </div>
+            <div class="dim">{FIDELITY_HINT[fidelity]}</div>
+            <div class="row">
+              <select class="field" bind:value={variants} title="Variants">{#each [1, 2, 3, 4] as n}<option value={n}>{n}×</option>{/each}</select>
+              <button class="btn primary grow" onclick={renderNow} disabled={prompt_.trim().length < 8 || !nodeId}>Paint it</button>
+            </div>
+            <div class="row">
+              <button class="btn grow" onclick={askAi} disabled={!nodeId}>✦ AI writes the prompt</button>
+              {#if busy}<button class="btn ghost" onclick={cancel}>stop</button>{/if}
+            </div>
+            {#if !nodeId}<p class="warn">This map has no map node — create it from the canvas or ask the AI.</p>{/if}
+            {#if battle}<p class="dim">Quick painting (1 step). For props that land exactly where you put them, switch to <button class="lnk" onclick={() => (app.settingsOpen = true)}>Precise painting (2 steps)</button> in Settings.</p>{/if}
+            {@render jobsView()}
+            {@render rendersView()}
           {/if}
         {:else if doc}
           {#if battle}
@@ -975,6 +1112,15 @@
   .bar { height: 4px; background: var(--bg-4); border-radius: 99px; overflow: hidden; margin-top: 3px; }
   .bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), #7fe0a0); transition: width 0.4s; }
   .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+  .mode { font-size: 11.5px; color: var(--text-faint); display: flex; justify-content: space-between; align-items: center; }
+  .step { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); font-weight: 600; font-size: 12.5px; }
+  .step b { color: var(--accent); margin-right: 4px; }
+  .lnk { all: unset; cursor: pointer; color: var(--accent); text-decoration: underline; font-size: inherit; }
+  .chk { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; color: var(--text-dim); }
+  .th { position: relative; }
+  .tick { position: absolute; top: 4px; right: 4px; width: 18px; height: 18px; border-radius: 50%; background: var(--accent); color: #0a0c11; display: grid; place-items: center; font-style: normal; font-size: 12px; font-weight: 700; }
+  :global(.ov .grp) { fill: rgba(255, 220, 90, 0.12); stroke: #ffd84a; stroke-width: 2; stroke-dasharray: 6 4; pointer-events: none; }
+  :global(.ov .grpid) { fill: #fff; stroke: #000; stroke-width: 3; paint-order: stroke; font: 700 13px sans-serif; pointer-events: none; }
   .th { all: unset; cursor: pointer; border: 2px solid var(--line-2); border-radius: 8px; overflow: hidden; aspect-ratio: 3 / 2; }
   .th.on { border-color: var(--accent); }
   .th img { width: 100%; height: 100%; object-fit: cover; display: block; }

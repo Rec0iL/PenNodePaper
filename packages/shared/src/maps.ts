@@ -309,7 +309,8 @@ export function derivedWalls(m: MapDoc): WallSeg[] {
 
 // ------------------------------------ rendering ---------------------------------------
 
-export type MapStyle = 'preview' | 'control';
+/** preview = the editor view; control = what one-pass painting receives; terrain = the bare place (floors, walls, doors; no props) for the first of the two painting steps */
+export type MapStyle = 'preview' | 'control' | 'terrain';
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
@@ -339,7 +340,8 @@ export function renderSvg(m: MapDoc, style: MapStyle = 'preview', maxSide = 1344
 
 function renderBattle(m: MapDoc, style: MapStyle, maxSide: number): string {
   const { w: W, h: H, cell: c } = imageSize(m, maxSide);
-  const ctrl = style === 'control';
+  const ctrl = style !== 'preview';
+  const bare = style === 'terrain';
   const o: string[] = [];
   const bg = ctrl ? '#16110d' : '#10131a';
   o.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><rect width="${W}" height="${H}" fill="${bg}"/>`);
@@ -386,8 +388,8 @@ function renderBattle(m: MapDoc, style: MapStyle, maxSide: number): string {
     o.push(`<rect x="${cx - bw / 2}" y="${cy - bh / 2}" width="${bw}" height="${bh}" fill="${fill}" stroke="${ctrl ? '#050403' : '#0b0c10'}" stroke-width="${ctrl ? 2 : 1.5}" rx="${d.kind === 'arch' ? th / 2 : 2}"/>`);
     if (!ctrl && d.kind === 'secret') o.push(`<text x="${cx}" y="${cy + 4}" text-anchor="middle" font-size="${c * 0.4}" fill="#aab" font-family="sans-serif">S</text>`);
   }
-  // props
-  for (const p of m.props) {
+  // props (the terrain step leaves them out: they are painted in later, one group at a time)
+  for (const p of bare ? [] : m.props) {
     const col = PROP_COLOR[p.kind] ?? '#ccc';
     const pw = (p.w ?? 1) * c * 0.84, ph = (p.h ?? 1) * c * 0.84;
     const cx = (p.x + (p.w ?? 1) / 2) * c, cy = (p.y + (p.h ?? 1) / 2) * c;
@@ -444,6 +446,17 @@ function labelPoint(p: [number, number][]): [number, number] {
 }
 
 
+
+const FLOOR_WORDS: Record<string, string> = {
+  s: 'grey = stone floor', w: 'brown = wooden floor', d: 'dark brown = packed earth', g: 'green = grass', c: 'red = carpet', a: 'blue = water',
+  l: 'orange-red = lava', r: 'dark grey = rubble', m: 'white = marble floor', n: 'tan = sand', i: 'pale blue = ice',
+};
+/** Legend for the terrain image, naming only the floors this map really uses (a legend for absent materials makes the model invent them). */
+export function terrainLegend(m: MapDoc): string {
+  const used = new Set(m.rows.join('').replace(/\./g, ''));
+  const words = [...used].map((c) => FLOOR_WORDS[c]).filter(Boolean);
+  return `The input is a flat colour-coded floor plan of an EMPTY, unfurnished place: near-black = outside, thick black lines = walls, small orange marks = doors${words.length ? `, ${words.join(', ')}` : ''}.`;
+}
 
 /** What each colour in the control image means — handed to the image model's prompt. */
 export const CONTROL_LEGEND =

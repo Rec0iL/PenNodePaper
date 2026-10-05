@@ -3,9 +3,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   DEFAULT_COMFY, DEFAULT_STYLE, IMAGE_KINDS, slugify,
-  type Actor, type ComfyConfig, type ImageJob, type ImageKind, type StyleConfig,
+  type Actor, type ComfyConfig, type ImageJob, type ImageKind, type MapPaintMode, type StyleConfig,
 } from '@pnp/shared';
 import { Comfy, ComfyError } from './comfy.js';
+import { runOnce, type Runner } from './style.js';
 import type { Store } from './store.js';
 
 // ---------------------------------------------------------------------------
@@ -16,7 +17,20 @@ import type { Store } from './store.js';
 
 type Workflow = ReturnType<Comfy['buildWorkflow']>;
 
-/** A non-standard job (e.g. a map render): brings its own size, workflow builder and completion hook. */
+/** What a multi-image job (e.g. painting all props of a map) gets to work with. */
+export interface RunCtx {
+  seed: number;
+  signal: AbortSignal;
+  comfy: Comfy;
+  /** progress of the whole job, 0..1 */
+  progress(p: number): void;
+  /** what the job is doing right now ("Painting props 7/19"), shown next to the progress bar */
+  phase(label: string): void;
+  /** One ComfyUI generation. `megapixels` feeds the speed estimate; `span` maps its progress into [from, to] of the whole job. */
+  generate(wf: Workflow, megapixels: number, span?: [number, number]): Promise<Buffer>;
+}
+
+/** A non-standard job (e.g. a map render): brings its own size, workflow builder (or a whole runner) and completion hook. */
 export interface CustomJob {
   nodeId: string;
   kind: ImageJob['kind'];
@@ -26,9 +40,23 @@ export interface CustomJob {
   variants?: number;
   seed?: number;
   actor: Actor;
-  build: (seed: number) => Promise<Workflow>;
+  /** One generation: build its workflow. Either this or `runner` is required. */
+  build?: (seed: number) => Promise<Workflow>;
+  /** Several generations (and other work) that end in one image: returns the final PNG. */
+  runner?: (ctx: RunCtx) => Promise<Buffer>;
   /** Called with the saved file name once the image exists. */
   after?: (file: string) => void;
+  /** Part of the saved file name, e.g. "terrain". */
+  fileTag?: string;
+  /** false = keep the image out of the node's pictures (work-in-progress images such as terrain candidates). Default true. */
+  attach?: boolean;
+}
+
+export interface ImageServiceOptions {
+  /** how maps are painted (a user setting for this computer); default quick */
+  mapMode?: () => MapPaintMode;
+  /** runs the AI once, headless (prompt writing); injectable for tests */
+  ai?: Runner;
 }
 
 export interface ImageRequest {
@@ -57,15 +85,38 @@ export class ImageService {
   private queue: { job: ImageJob; negative?: string; custom?: CustomJob }[] = [];
   private running = false;
   private controllers = new Map<string, AbortController>();
+  /** measured speed of this computer: milliseconds per megapixel per sampler step (null until the first image) */
+  private msPerMpStep: number | null = null;
+  readonly ai: Runner;
+  private readonly modeFn: () => MapPaintMode;
 
   constructor(
     private store: Store,
     private dir: string,
     private broadcast: (job: ImageJob) => void,
     comfy?: Comfy,
+    opts: ImageServiceOptions = {},
   ) {
     fs.mkdirSync(dir, { recursive: true });
     this.comfy = comfy ?? new Comfy(() => this.comfyConfig());
+    this.ai = opts.ai ?? runOnce;
+    this.modeFn = opts.mapMode ?? (() => 'quick');
+  }
+
+  /** How battle maps are painted right now (the user's setting). */
+  mapMode(): MapPaintMode {
+    return this.modeFn();
+  }
+
+  /** Rough seconds for generating `megapixels` on this computer: measured once an image has been made, else a typical 16 GB card. */
+  estimateSeconds(megapixels: number): { seconds: number; measured: boolean } {
+    const perMpStep = this.msPerMpStep ?? 9500; // ~77 s per megapixel at 8 steps on a Quadro RTX 5000 (the dev machine)
+    return { seconds: (perMpStep * this.comfyConfig().steps * megapixels) / 1000, measured: this.msPerMpStep !== null };
+  }
+  private noteSpeed(ms: number, megapixels: number) {
+    if (megapixels <= 0.05 || ms < 500) return;
+    const v = ms / (megapixels * Math.max(1, this.comfyConfig().steps));
+    this.msPerMpStep = this.msPerMpStep === null ? v : this.msPerMpStep * 0.6 + v * 0.4;
   }
 
   comfyConfig(): ComfyConfig {
@@ -112,6 +163,7 @@ export class ImageService {
   enqueueCustom(c: CustomJob): ImageJob[] {
     const node = this.store.state.nodes[c.nodeId];
     if (!node || node.trashed) throw new Error(`Node "${c.nodeId}" not found`);
+    if (!c.build && !c.runner) throw new Error('A custom image job needs a build() or a runner()');
     const n = Math.max(1, Math.min(4, Math.round(c.variants ?? 1)));
     const made: ImageJob[] = [];
     for (let i = 0; i < n; i++) {
@@ -161,19 +213,35 @@ export class ImageService {
     job.status = 'running';
     this.emit(job);
     try {
-      const wf = custom ? await custom.build(job.seed) : this.comfy.buildWorkflow(this.fullPrompt(job.prompt), negative ?? this.style().negative, job.w, job.h, job.seed);
       let last = 0;
-      const { bytes } = await this.comfy.generate(wf, {
-        signal: ctl.signal,
-        onProgress: (p) => {
-          job.progress = p;
-          if (p - last >= 0.1 || p === 1) {
-            last = p;
+      const report = (p: number) => {
+        job.progress = Math.max(0, Math.min(1, p));
+        if (job.progress - last >= 0.05 || job.progress === 1) {
+          last = job.progress;
+          this.emit(job);
+        }
+      };
+      const timed = async (wf: Workflow, megapixels: number, onProgress: (p: number) => void): Promise<Buffer> => {
+        const t = Date.now();
+        const { bytes } = await this.comfy.generate(wf, { signal: ctl.signal, onProgress });
+        this.noteSpeed(Date.now() - t, megapixels);
+        return bytes;
+      };
+      let bytes: Buffer;
+      if (custom?.runner) {
+        bytes = await custom.runner({
+          seed: job.seed, signal: ctl.signal, comfy: this.comfy, progress: report,
+          phase: (label) => {
+            job.phase = label;
             this.emit(job);
-          }
-        },
-      });
-      const file = `${slugify(job.nodeId)}-${job.seed}.png`;
+          },
+          generate: (wf, megapixels, span = [0, 1]) => timed(wf, megapixels, (p) => report(span[0] + (span[1] - span[0]) * p)),
+        });
+      } else {
+        const wf = custom ? await custom.build!(job.seed) : this.comfy.buildWorkflow(this.fullPrompt(job.prompt), negative ?? this.style().negative, job.w, job.h, job.seed);
+        bytes = await timed(wf, (job.w * job.h) / 1e6, report);
+      }
+      const file = `${slugify(job.nodeId)}${custom?.fileTag ? `-${custom.fileTag}` : ''}-${job.seed}.png`;
       fs.writeFileSync(path.join(this.dir, file), bytes);
       this.record(file, { nodeId: job.nodeId, prompt: job.prompt, seed: job.seed, kind: job.kind as ImageKind, w: job.w, h: job.h, at: new Date().toISOString() });
       job.file = file;
@@ -184,12 +252,14 @@ export class ImageService {
       }
       job.status = 'done';
       job.progress = 1;
-      this.attach(job);
+      job.phase = undefined;
+      if (custom?.attach !== false) this.attach(job);
     } catch (e) {
       job.status = ctl.signal.aborted ? 'cancelled' : 'error';
       if (job.status === 'error') job.error = e instanceof ComfyError ? e.message : `Image generation failed: ${e instanceof Error ? e.message : e}`;
     } finally {
       this.controllers.delete(job.id);
+      job.phase = undefined;
       this.emit(job);
     }
   }

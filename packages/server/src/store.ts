@@ -44,6 +44,11 @@ export interface ImageApi {
   fullPrompt(prompt: string): string;
   style(): StyleConfig;
   comfy: import('./comfy.js').Comfy;
+  /** How battle maps are painted (the user's setting for this computer). */
+  mapMode(): import('@pnp/shared').MapPaintMode;
+  /** Runs the AI once, headless (used to write painting prompts). */
+  ai: import('./style.js').Runner;
+  estimateSeconds(megapixels: number): { seconds: number; measured: boolean };
 }
 
 const clone = <T>(v: T): T => (v === undefined ? v : (JSON.parse(JSON.stringify(v)) as T));

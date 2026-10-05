@@ -59,6 +59,11 @@ export interface MapDoc {
   shapes: { id: string; type: 'polygon' | 'path' | 'ellipse' | 'pin'; kind: TerrainKind; points: [number, number][]; r?: number; width?: number; label?: string }[];
   /** finished painted renders (files in images/), cover first */
   renders: string[];
+  /** two-step paint: finished images of the EMPTY terrain (candidates the GM chooses from) and the one picked for step 2 */
+  terrains?: string[];
+  terrainPick?: string;
+  /** what the place looks like, as given to the terrain step (reused for step 2) */
+  paintPrompt?: string;
   updatedAt: string;
 }
 

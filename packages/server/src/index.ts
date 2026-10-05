@@ -12,7 +12,8 @@ import { imageSize, renderSvg } from './maps.js';
 import { generateStyle } from './style.js';
 import { ImageService } from './images.js';
 import { listCommands, runCommand } from './commands.js';
-import { CONFIG_PATH, REPO_ROOT, loadConfig, loadSaved } from './config.js';
+import { CONFIG_PATH, REPO_ROOT, loadConfig, loadMapPaintMode, loadSaved, saveConfig } from './config.js';
+import { estimatePaint } from './mappaint.js';
 import { importArchive } from './backup.js';
 import { thumbnail } from './thumbs.js';
 import { extractText } from './imports.js';
@@ -24,6 +25,7 @@ import { Store } from './store.js';
 import { watchCampaign } from './watcher.js';
 
 const cfg = loadConfig();
+let mapPaintMode = loadMapPaintMode();
 const clients = new Set<WebSocket>();
 const send = (ws: WebSocket, msg: ServerMsg) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(msg));
 const broadcast = (msg: ServerMsg) => {
@@ -66,7 +68,7 @@ function openCampaign(dir: string) {
   store = next;
   stopWatching = watchCampaign(next, (m) => console.log(`[watch] ${m}`));
   chat = new Chat({ store: next, port: cfg.port, token: cfg.token, campaignDir, broadcast });
-  images = new ImageService(next, path.join(campaignDir, 'images'), (job) => broadcast({ t: 'image.job', job }));
+  images = new ImageService(next, path.join(campaignDir, 'images'), (job) => broadcast({ t: 'image.job', job }), undefined, { mapMode: () => mapPaintMode });
   next.images = images;
   const live = () => store === next; // a campaign that was swapped out must not talk to the UI any more
   next.onMeta(() => live() && broadcast({ t: 'reload', state: next.state }));
@@ -494,11 +496,26 @@ app.get('/api/maps/:id/svg', (c) => {
     return c.notFound();
   }
 });
+// how this map would be painted right now, and roughly how long that takes on this computer
+app.get('/api/maps/:id/paint', (c) => {
+  try {
+    const m = store.maps.get(c.req.param('id'));
+    return c.json(estimatePaint(images, m));
+  } catch {
+    return c.notFound();
+  }
+});
 // full-document save from the editor (autosave: history snapshots are throttled)
 app.put('/api/maps/:id', async (c) => {
   const doc = (await c.req.json()) as import('@pnp/shared').MapDoc;
   const id = c.req.param('id');
   if (doc.id !== id || !store.maps.has(id)) return c.json({ error: 'unknown map' }, 404);
+  // painting results belong to the server (jobs finish while the editor is open): an autosave of a stale copy must not wipe them
+  const cur = store.maps.get(id);
+  doc.renders = cur.renders;
+  doc.terrains = cur.terrains;
+  doc.terrainPick = cur.terrainPick;
+  doc.paintPrompt = cur.paintPrompt;
   doc.updatedAt = new Date().toISOString();
   store.maps.save(doc, { backup: 'throttled' });
   store.emitMap(doc, 'user');
@@ -524,14 +541,19 @@ app.get('/api/settings', async (c) => {
     style: images.style(),
     language: store.state.meta.language,
     aiMode: store.state.meta.aiMode ?? 'live',
+    mapPaintMode,
     alive,
     options: alive ? await images.comfy.options() : null,
   });
 });
 
 app.put('/api/settings', async (c) => {
-  const b = (await c.req.json()) as { comfy?: Record<string, unknown>; style?: Record<string, unknown>; language?: string; aiMode?: string };
+  const b = (await c.req.json()) as { comfy?: Record<string, unknown>; style?: Record<string, unknown>; language?: string; aiMode?: string; mapPaintMode?: string };
   const m = store.state.meta;
+  if (b.mapPaintMode === 'quick' || b.mapPaintMode === 'staged') {
+    mapPaintMode = b.mapPaintMode; // this computer's setting, kept in the user's config (not in the campaign)
+    saveConfig({ mapPaintMode });
+  }
   if (b.comfy) m.comfy = { ...m.comfy, ...(b.comfy as object) };
   if (b.style) m.style = { ...m.style, ...(b.style as object) };
   if (typeof b.language === 'string' && b.language.trim()) m.language = b.language.trim();

@@ -133,6 +133,13 @@ The **Select** tool (first in the toolbar) edits what is already drawn: click a 
 
 The editor autosaves and edits through the same ops as the AI's `edit_map`, so you and Claude/agy can work on one map at once (AI changes glow briefly). **Paint** turns the plan into a painted map via ComfyUI img2img (Krea 2): *Faithful* keeps your plan exactly, *Painterly* is richer but may drift. *Model input* shows exactly what the image model receives.
 
+**Two ways to paint a battle map** — choose once in **⚙ Settings → Map painting** (it is a setting of *this computer*, because it depends on how fast your graphics card is):
+
+* **Quick (1 step)** — the plan, props included, is painted in a single pass (about 1–2 minutes on a 16 GB card). Less exact: furniture can drift, merge or vanish.
+* **Precise (2 steps)** — **① Terrain:** only the empty place is painted (floors, walls, doors; no props), so the model is free to be creative — you pick the terrain you like or paint another. **② Props:** every prop group is then painted into exactly its spot, one after the other, each with its own AI-written prompt; touching props of the same kind count as **one** object (a row of tables is one long table, five barrels in a row stay five barrels — *show the groups on the plan* previews it). You accept the result or paint the props again. **This takes a while** — roughly 1½ minutes for the terrain plus ~40 seconds per prop group on a 16 GB card, so a map with 15 groups needs around 12 minutes; weaker cards need longer. The Paint tab shows an estimate for the map in front of you (a guess until ComfyUI has made an image on your computer, then measured) and you can stop at any time. It needs no extra models. Region maps are always painted in one step.
+
+The AI (`render_map`, `paint_map_props`, `set_map_terrain`, `accept_map_terrain`) works the same two steps and waits for your choice between them.
+
 ## 🔌 VTT link
 
 Connect a tabletop app (KINETIK VTT, or any VTT that implements the small bridge protocol — see `docs/vtt-bridge-spec.md`; vanilla-JS VTTs can drop in `docs/pnp-bridge-client.js`) and push **handouts, scenes (map + grid + token starts), enemies/NPCs** and **music cues** from the Inspector or via the AI (`push_handout`, `push_scene`, `push_character`, `play_track`, `list_vtt_tracks`).

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
-  import type { ComfyConfig, StyleConfig } from '@pnp/shared';
+  import type { ComfyConfig, MapPaintMode, StyleConfig } from '@pnp/shared';
   import { app, cmd, say } from '../lib/app.svelte';
 
   let { onclose }: { onclose: () => void } = $props();
@@ -9,9 +9,12 @@
   let comfy = $state<ComfyConfig | null>(null);
   let style = $state<StyleConfig | null>(null);
   let language = $state('de');
+  let mapMode = $state<MapPaintMode>('quick');
   let alive = $state<boolean | null>(null);
   let opts = $state<Opts | null>(null);
-  let loaded = false;
+  let loaded = $state(false);
+  let baseline = ''; // what the server has: only real changes are saved
+  const snapshot = () => JSON.stringify([comfy, style, language, mapMode]);
   let status = $state('');
 
   async function load() {
@@ -20,8 +23,10 @@
     comfy = j.comfy;
     style = j.style;
     language = j.language;
+    mapMode = j.mapPaintMode === 'staged' ? 'staged' : 'quick';
     alive = j.alive;
     opts = j.options;
+    baseline = snapshot();
     loaded = true;
   }
   onMount(load);
@@ -30,11 +35,13 @@
   let timer: ReturnType<typeof setTimeout>;
   $effect(() => {
     if (!loaded || !comfy || !style) return;
-    JSON.stringify([comfy, style, language]);
+    const now = snapshot();
+    if (now === baseline) return;
     clearTimeout(timer);
     status = 'Saving…';
     timer = setTimeout(async () => {
-      const r = await fetch('/api/settings', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ comfy, style, language }) });
+      const r = await fetch('/api/settings', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ comfy, style, language, mapPaintMode: mapMode }) });
+      if (r.ok) baseline = now;
       status = r.ok ? '✓ Saved automatically' : '⚠ save failed';
       if (!r.ok) say('Could not save settings');
     }, 600);
@@ -175,6 +182,25 @@
         </section>
 
         <section class="wide">
+          <h4>Map painting <span class="dim">how battle maps are painted — saved for this computer, all campaigns</span></h4>
+          <div class="modes" role="radiogroup" aria-label="Map painting">
+            <button class="mode" class:on={mapMode === 'quick'} role="radio" aria-checked={mapMode === 'quick'} onclick={() => (mapMode = 'quick')}>
+              <b>Quick <span class="tag">1 step</span></b>
+              <span>The plan, props included, is painted in a single pass.</span>
+              <span class="pro">⏱ Roughly 1–2 minutes per picture on a 16 GB graphics card.</span>
+              <span class="con">Less exact: furniture can drift, merge or vanish, and the model is held back by the flat colour blocks.</span>
+            </button>
+            <button class="mode" class:on={mapMode === 'staged'} role="radio" aria-checked={mapMode === 'staged'} onclick={() => (mapMode = 'staged')}>
+              <b>Precise <span class="tag">2 steps</span></b>
+              <span><i>Step 1</i> paints the empty place — more creative, and you accept it or paint it again. <i>Step 2</i> paints every prop group into exactly its spot (a row of tables becomes one long table) — you accept it or paint it again.</span>
+              <span class="pro">Props land where the editor puts them and stand out clearly.</span>
+              <span class="con">⏱ Takes a while: about 1½ minutes for the terrain plus about 40 seconds per prop group on a 16 GB card — a map with 15 prop groups takes around 12 minutes. A weaker graphics card needs proportionally longer.</span>
+            </button>
+          </div>
+          <p class="hint">Both use the Krea 2 model you already have; precise needs no extra downloads. In the map editor, the Paint tab shows an estimate for the map in front of you (it gets accurate once ComfyUI has made an image on this computer), and you can stop a job at any time. Precise painting works on battle maps; region maps are always painted in one step.</p>
+        </section>
+
+        <section class="wide">
           <h4>VTT link <span class="dot" class:on={app.vtt?.connected}></span>
             <span class="dim">{app.vtt?.connected ? `${app.vtt.profile?.name} ${app.vtt.profile?.version} connected` : app.vtt?.profile ? `not connected — last seen: ${app.vtt.profile.name}` : 'no VTT has connected yet'}</span></h4>
           <p class="hint">Your tabletop software connects to PenNodePaper and announces what it can receive (handouts, scenes, NPCs, music). Enable the “PenNodePaper link” in the VTT’s GM page and give it this address and pairing token.</p>
@@ -210,7 +236,7 @@
 </div>
 
 <style>
-  .scrim { position: fixed; inset: 0; z-index: 1500; background: rgba(5, 6, 9, 0.72); backdrop-filter: blur(4px); display: grid; place-items: center; animation: pnp-pop 0.18s ease-out; }
+  .scrim { position: fixed; inset: 0; z-index: 1600; background: rgba(5, 6, 9, 0.72); backdrop-filter: blur(4px); display: grid; place-items: center; animation: pnp-pop 0.18s ease-out; }
   .modal { width: min(860px, 94vw); max-height: 90vh; display: flex; flex-direction: column; background: var(--bg-2); border: 1px solid var(--line-2); border-radius: 14px; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6); overflow: hidden; }
   header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
   .grow { flex: 1; }
@@ -232,11 +258,22 @@
   .copy code { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 5px 8px; background: var(--bg); border: 1px solid var(--line-2); border-radius: 6px; }
   .caps { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
   .row { display: flex; gap: 8px; }
+  .modes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 8px 0 6px; }
+  .mode { all: unset; box-sizing: border-box; cursor: pointer; display: flex; flex-direction: column; gap: 6px; padding: 11px 13px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--bg); font-size: 12px; line-height: 1.45; color: var(--text-dim); }
+  .mode:hover { border-color: var(--text-faint); }
+  .mode.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--bg)); }
+  .mode:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .mode b { font-size: 13px; color: var(--text); display: flex; align-items: center; gap: 8px; }
+  .mode .tag { font-weight: 500; font-size: 10.5px; padding: 1px 8px; border-radius: 99px; background: var(--bg-4); color: var(--text-dim); }
+  .mode.on .tag { background: var(--accent); color: #0a0c11; }
+  .mode i { color: var(--text); font-style: normal; font-weight: 600; }
+  .pro { color: #8fd7a6; }
+  .con { color: #e0c36a; }
   .gen { display: flex; gap: 8px; align-items: center; margin: 6px 0 4px; }
   .err { color: var(--danger); font-size: 12px; background: #2a1518; border: 1px solid #5a2a30; padding: 6px 8px; border-radius: 6px; margin-top: 4px; }
   .fresh { animation: pnp-diffglow 6s ease-out; border-color: var(--accent); }
   .spin { width: 11px; height: 11px; border: 2px solid rgba(10, 12, 17, 0.35); border-top-color: #0a0c11; border-radius: 50%; display: inline-block; animation: spin 0.7s linear infinite; vertical-align: -1px; margin-right: 4px; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .loading { padding: 40px; text-align: center; color: var(--text-faint); }
-  @media (max-width: 760px) { .body { grid-template-columns: 1fr; } }
+  @media (max-width: 760px) { .body { grid-template-columns: 1fr; } .modes { grid-template-columns: 1fr; } }
 </style>

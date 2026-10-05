@@ -126,6 +126,14 @@ export const DEFAULT_STYLE: StyleConfig = {
   mapSuffix: 'hand-painted tabletop RPG battle map, seen from directly above, orthographic top-down view, detailed textures, no characters, no text, no grid lines',
 };
 
+/** How battle maps are painted. quick = one img2img pass from the plan (props in the model input);
+ *  staged = two steps: the empty terrain first (the GM accepts or regenerates), then every prop group inpainted into its place. */
+export type MapPaintMode = 'quick' | 'staged';
+export const MAP_PAINT_MODES: Record<MapPaintMode, { label: string; short: string }> = {
+  quick: { label: 'Quick (1 step)', short: 'quick' },
+  staged: { label: 'Precise (2 steps)', short: 'precise' },
+};
+
 export type ImageKind = 'portrait' | 'scene' | 'item' | 'handout' | 'banner' | 'square';
 
 /** Sizes are multiples of 16 (latent grid). */
@@ -148,6 +156,8 @@ export interface ImageJob {
   h: number;
   status: 'queued' | 'running' | 'done' | 'error' | 'cancelled';
   progress: number;
+  /** what a long multi-image job is doing right now, e.g. "Painting props 7/19" */
+  phase?: string;
   file?: string;
   error?: string;
   actor: Actor;
@@ -354,6 +364,7 @@ export function slugify(input: string): string {
 
 export * from './mapdata.js';
 export * from './maps.js';
+export * from './mapgroups.js';
 export * from './vtt.js';
 export * from './sheet.js';
 export * from './story.js';
