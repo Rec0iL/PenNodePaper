@@ -541,6 +541,7 @@ app.get('/api/settings', async (c) => {
     style: images.style(),
     language: store.state.meta.language,
     aiMode: store.state.meta.aiMode ?? 'live',
+    aiCreativity: store.state.meta.aiCreativity ?? 3,
     mapPaintMode,
     alive,
     options: alive ? await images.comfy.options() : null,
@@ -548,7 +549,7 @@ app.get('/api/settings', async (c) => {
 });
 
 app.put('/api/settings', async (c) => {
-  const b = (await c.req.json()) as { comfy?: Record<string, unknown>; style?: Record<string, unknown>; language?: string; aiMode?: string; mapPaintMode?: string };
+  const b = (await c.req.json()) as { comfy?: Record<string, unknown>; style?: Record<string, unknown>; language?: string; aiMode?: string; aiCreativity?: number; mapPaintMode?: string };
   const m = store.state.meta;
   if (b.mapPaintMode === 'quick' || b.mapPaintMode === 'staged') {
     mapPaintMode = b.mapPaintMode; // this computer's setting, kept in the user's config (not in the campaign)
@@ -558,6 +559,7 @@ app.put('/api/settings', async (c) => {
   if (b.style) m.style = { ...m.style, ...(b.style as object) };
   if (typeof b.language === 'string' && b.language.trim()) m.language = b.language.trim();
   if (b.aiMode === 'live' || b.aiMode === 'review') m.aiMode = b.aiMode;
+  if (b.aiCreativity === 1 || b.aiCreativity === 2 || b.aiCreativity === 3 || b.aiCreativity === 4 || b.aiCreativity === 5) m.aiCreativity = b.aiCreativity;
   store.persistence.writeMeta(m);
   broadcast({ t: 'reload', state: store.state });
   return c.json({ ok: true });

@@ -2,7 +2,7 @@ import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Backend, ChatMsg, ChatStatus } from '@pnp/shared';
+import type { AiCreativity, Backend, ChatMsg, ChatStatus } from '@pnp/shared';
 import { partyDigest } from './party.js';
 import type { Store } from './store.js';
 
@@ -52,6 +52,24 @@ export function knowledgeBlock(store: Store): string {
   return out.join('\n\n');
 }
 
+const IDEA_RULES = `Ideas are only SUGGESTIONS: never build them unasked. Phrase each as one short, concrete line the GM can accept with a plain "yes" / "sure, go ahead" (several: numbered, so "yes 1 and 3" or "all" works). When the GM then accepts, build exactly the idea(s) accepted from your previous message — do not ask again.`;
+
+/** How much the AI adds on its own initiative — the GM's "creativity" slider (1-5). Level 3 is the baseline behaviour and adds nothing. */
+export function creativityBlock(level: AiCreativity | undefined): string {
+  switch (level) {
+    case 1:
+      return `Creativity: LOW (strict). Do exactly what the GM asked and nothing more — no extra nodes, edges, links, fields, rewrites or embellishments. Where the request leaves room, take the plainest, most minimal reading. Do not offer ideas or suggestions either; confirm what you did in a line or two.`;
+    case 2:
+      return `Creativity: LOW with one idea. Do exactly what the GM asked and nothing more — no extra nodes, edges, links or embellishments in the campaign. Then end your final chat message with ONE creative idea that would improve or extend what you just did, on its own line starting with "💡". ${IDEA_RULES}`;
+    case 4:
+      return `Creativity: MEDIUM with ideas. Work as usual: fill in sensible detail and small supporting pieces where the task needs them. Then end your final chat message with 2-4 further creative ideas (twists, hooks, complications, connections to existing nodes or world books), one numbered line each starting with "💡". ${IDEA_RULES}`;
+    case 5:
+      return `Creativity: HIGH. Take real initiative as a co-author. Besides what was asked, add what the story would plainly benefit from: supporting nodes (a rival, a witness, a location, a secret), a complication or twist, foreshadowing clues placed earlier on the canvas, and links tying it into existing nodes and the world books. Make bold, specific choices rather than generic ones. Rules: additions only — never delete, overwrite or rewrite anything the GM wrote, never contradict established facts or the rules; keep extras clearly smaller than the requested core. In your final chat message, list what you added beyond the request (so the GM can reject it), then pitch 1-3 bolder ideas you did NOT build, each one numbered line starting with "💡". ${IDEA_RULES}`;
+    default:
+      return '';
+  }
+}
+
 function systemPrompt(store: Store): string {
   const lang = store.state.meta.language;
   const knowledge = knowledgeBlock(store);
@@ -60,6 +78,7 @@ function systemPrompt(store: Store): string {
     `Nodes are either placed on a canvas (a fixed place in the story) or live in the sidebar POOL (prepared, but with no fixed place yet — e.g. a tavern the players may visit at any time).`,
     `You change the campaign ONLY through the "${MCP_NAME}" MCP tools; every call is animated live in the GM's UI and is undoable. Call get_graph first when you need the current state. Prefer several small, clear actions. Use "batch" for compound edits and give new nodes an explicit id so later steps can reference them.`,
     `The GM may have switched on review mode: your changes still apply immediately as usual and the GM accepts or rejects them after you finish, so work normally and finish a task in one go instead of stopping to ask. Write campaign content (titles, summaries, read-aloud text) in the language "${lang}" unless asked otherwise. Keep your chat replies short — the work should be visible on the canvas, not buried in prose. Put GM-facing detail in node bodies and player-facing text in readAloud.`,
+    ...(creativityBlock(store.state.meta.aiCreativity) ? [creativityBlock(store.state.meta.aiCreativity)] : []),
     `Never delete things the GM did not ask you to delete. Moving a node to the pool is safer than deleting it.`,
     `Images: generate_image makes art with a local ComfyUI (Krea 2). Write prompts as natural-language prose — subject, setting, composition, lighting, mood — never tag lists or "masterpiece"; the campaign style is appended automatically. Use kind portrait for characters, scene for places, item for objects, handout for documents. Only generate when the GM asks, and offer 2-3 variants for important characters.`,
     `Running the session: when the GM tells you what happened at the table, record it — to move the players use move_players (which characters go where; the party can split, see get_party) or, with no player characters known, mark_played (a prepared POOL node that they visit is placed and linked automatically; use after to say where they came from); set_here when they are at several nodes at once (never invent a group name for that — groups are only for a party that really splits); set_status only marks a node active/done/skipped/untouched WITHOUT moving anyone ("the bell event is running" is active, not "the players are there"); set_known when they learn a clue, advance_clock for ticking threats. When they went off-script ("how do we get back on track?", "what did they miss?"): call story_status first and reason from it — frontier nodes with converges:true are natural merge points, skippedPast/untaken are what they bypassed, unrevealed is what they don't know (never spoil it). On a big canvas group nodes into labelled areas with create_frame (an act, a district). Fix gaps with small bridge nodes (create_node + a "bridge" edge) or by giving a missed clue a second route; never rewrite what already happened. For a recap or "what do the players know?": call player_wiki and write ONLY from it (it holds nothing the players have not experienced); export_player_wiki / push_player_wiki can hand your text to the players. lint_story finds structural problems — run it before a session or after big edits.`,

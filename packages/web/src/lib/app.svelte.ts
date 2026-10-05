@@ -42,8 +42,8 @@ export function remember(k: string, v: string) {
   } catch { /* private mode */ }
 }
 
-const LAYOUT_DEFAULT = { left: 300, right: 380, bottom: 150 };
-const LAYOUT_LIMITS = { left: [200, 560], right: [280, 720], bottom: [80, 460] } as const;
+const LAYOUT_DEFAULT = { left: 300, right: 380, bottom: 150, input: 56 };
+const LAYOUT_LIMITS = { left: [200, 560], right: [280, 720], bottom: [80, 460], input: [48, 420] } as const;
 function loadLayout() {
   const out = { ...LAYOUT_DEFAULT };
   try {
@@ -57,12 +57,12 @@ function loadLayout() {
 }
 
 /** Resize a panel (px), clamped to sensible limits, and remember it. */
-export function setPanelSize(which: 'left' | 'right' | 'bottom', px: number) {
+export function setPanelSize(which: 'left' | 'right' | 'bottom' | 'input', px: number) {
   const [lo, hi] = LAYOUT_LIMITS[which];
   app.layout[which] = Math.round(Math.max(lo, Math.min(hi, px)));
   remember('pnp.layout', JSON.stringify(app.layout));
 }
-export const resetPanelSize = (which: 'left' | 'right' | 'bottom') => setPanelSize(which, LAYOUT_DEFAULT[which]);
+export const resetPanelSize = (which: 'left' | 'right' | 'bottom' | 'input') => setPanelSize(which, LAYOUT_DEFAULT[which]);
 
 export const app = $state({
   /** Panel sizes in px (drag the splitters). */

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { SvelteFlowProvider } from '@xyflow/svelte';
-  import { lintStory, type CampaignState } from '@pnp/shared';
+  import { AI_CREATIVITY, lintStory, type AiCreativity, type CampaignState } from '@pnp/shared';
   import { activeJobs, app, cmd, connect, redo, resetPanelSize, selectNode, setPanelSize, undo } from './lib/app.svelte';
   import { IMAGE_KINDS } from '@pnp/shared';
   import Activity from './components/Activity.svelte';
@@ -94,6 +94,13 @@
     await fetch('/api/settings', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ aiMode: mode }) });
   }
 
+  let creativityDraft = $state<number | null>(null); // while dragging, before it is saved
+  const creativity = $derived(AI_CREATIVITY.find((c) => c.level === (creativityDraft ?? app.meta.aiCreativity ?? 3))!);
+  async function setCreativity(level: AiCreativity) {
+    await fetch('/api/settings', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ aiCreativity: level }) });
+    creativityDraft = null;
+  }
+
   async function addCanvas() {
     const name = prompt('Name of the new canvas (e.g. “Act II”)');
     if (!name?.trim()) return;
@@ -141,6 +148,14 @@
       <span class="dim">AI edits</span>
       <button class:on={(app.meta.aiMode ?? 'live') === 'live'} onclick={() => setAiMode('live')}>live</button>
       <button class:on={app.meta.aiMode === 'review'} onclick={() => setAiMode('review')}>review{#if app.proposals.length}<b class="rc">{app.proposals.length}</b>{/if}</button>
+    </div>
+    <div class="aimode creativity" role="group" aria-label="AI creativity" title={`AI creativity ${creativity.level}/5 — ${creativity.hint}`}>
+      <span class="dim">creativity</span>
+      <input type="range" min="1" max="5" step="1" aria-valuetext={creativity.name}
+        value={creativityDraft ?? app.meta.aiCreativity ?? 3}
+        oninput={(e) => (creativityDraft = +e.currentTarget.value)}
+        onchange={(e) => setCreativity(+e.currentTarget.value as AiCreativity)} />
+      <span class="cname">{creativity.name}</span>
     </div>
     <label class="toggle" title="Camera follows the AI while it edits">
       <input type="checkbox" bind:checked={app.followAi} /> follow AI
@@ -229,6 +244,8 @@
   .aimode .dim { color: var(--text-faint); padding: 0 6px 0 8px; }
   .aimode button { background: transparent; border: 0; color: var(--text-dim); border-radius: 99px; padding: 2px 10px; font-size: 11.5px; }
   .aimode button.on { background: var(--bg-4); color: var(--text); box-shadow: inset 0 0 0 1px var(--line-2); }
+  .creativity input { width: 72px; accent-color: var(--accent); margin: 0 4px; }
+  .creativity .cname { min-width: 78px; padding-right: 8px; color: var(--text-dim); }
   .aimode .rc { margin-left: 5px; background: var(--agy, #b89cff); color: #0a0c11; border-radius: 99px; padding: 0 6px; font-size: 10px; }
   .searchbtn { display: inline-flex; align-items: center; gap: 6px; background: var(--bg-3); border: 1px solid var(--line-2); color: var(--text-dim); border-radius: 99px; padding: 3px 10px; font-size: 12px; }
   .searchbtn:hover { color: var(--text); border-color: var(--accent); }

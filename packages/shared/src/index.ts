@@ -173,7 +173,18 @@ export interface CampaignMeta {
   backup?: Partial<BackupSettings>;
   /** live = AI edits stand until you undo them; review = they wait for your Accept / Reject after the AI is done */
   aiMode?: 'live' | 'review';
+  /** how much the AI adds on its own initiative (1 = exactly what was asked … 5 = inventive); see AI_CREATIVITY. Default 3. */
+  aiCreativity?: AiCreativity;
 }
+
+export type AiCreativity = 1 | 2 | 3 | 4 | 5;
+export const AI_CREATIVITY: { level: AiCreativity; name: string; hint: string }[] = [
+  { level: 1, name: 'exact', hint: 'Does exactly what you asked and nothing more.' },
+  { level: 2, name: 'exact + idea', hint: 'Does exactly what you asked, then suggests one creative idea in its summary — answer “yes” to have it done.' },
+  { level: 3, name: 'balanced', hint: 'Moderately creative: fills in sensible detail and small supporting pieces.' },
+  { level: 4, name: 'balanced + ideas', hint: 'Like balanced, and also offers several creative ideas in its summary to pick from.' },
+  { level: 5, name: 'inventive', hint: 'Takes initiative: adds supporting nodes, complications and foreshadowing on its own (additions only), and pitches bolder ideas.' },
+];
 
 /** Safety copies of the campaign folder (see server/src/backup.ts). */
 export interface BackupSettings {

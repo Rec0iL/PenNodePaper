@@ -2,7 +2,7 @@
   import { onMount, tick } from 'svelte';
   import type { Backend, ChatMsg } from '@pnp/shared';
   import { NODE_TYPE_INFO } from '@pnp/shared';
-  import { app, cancelChat, chatMeta, clearChat, focusNode, remember, selectNode, sendChat } from '../lib/app.svelte';
+  import { app, cancelChat, chatMeta, clearChat, focusNode, remember, resetPanelSize, selectNode, sendChat, setPanelSize } from '../lib/app.svelte';
 
   /** When set, this is a per-node thread (compact, filtered to that node). */
   let { nodeId }: { nodeId?: string } = $props();
@@ -60,6 +60,24 @@
   const chipIds = $derived([...new Set([...(useSelected && selected && !nodeId ? [selected.id] : []), ...pins])]);
 
   // --- composer ------------------------------------------------------------------
+  // drag the grip above the box: dragging up makes it taller
+  function dragInput(e: PointerEvent) {
+    e.preventDefault();
+    const el = e.currentTarget as HTMLElement;
+    el.setPointerCapture(e.pointerId);
+    const y0 = e.clientY, h0 = app.layout.input;
+    const move = (ev: PointerEvent) => setPanelSize('input', h0 + (y0 - ev.clientY));
+    const up = () => { el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up); };
+    el.addEventListener('pointermove', move);
+    el.addEventListener('pointerup', up);
+    el.addEventListener('pointercancel', up);
+  }
+  function nudgeInput(e: KeyboardEvent) {
+    const d = e.key === 'ArrowUp' ? 16 : e.key === 'ArrowDown' ? -16 : 0;
+    if (!d) return;
+    e.preventDefault();
+    setPanelSize('input', app.layout.input + d);
+  }
   const candidates = $derived(
     mention
       ? Object.values(app.nodes).filter((n) => !n.trashed && n.title.toLowerCase().includes(mention!.q.toLowerCase())).slice(0, 6)
@@ -218,8 +236,10 @@
         {/each}
       </div>
     {/if}
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+    <div class="grip" role="separator" aria-orientation="horizontal" aria-valuenow={app.layout.input} aria-label="Resize the message box (double-click to reset)" tabindex="0" title="Drag to resize the message box — double-click to reset" onpointerdown={dragInput} ondblclick={() => resetPanelSize('input')} onkeydown={nudgeInput}></div>
     <div class="row">
-      <textarea class="field" rows="2" placeholder={nodeId ? 'Ask about this node…' : 'Ask the AI… (@ to mention a node, Enter to send)'} bind:value={text} {oninput} onkeydown={onkey} disabled={busy}></textarea>
+      <textarea class="field" style="height:{app.layout.input}px" placeholder={nodeId ? 'Ask about this node…' : 'Ask the AI… (@ to mention a node, Enter to send)'} bind:value={text} {oninput} onkeydown={onkey} disabled={busy}></textarea>
       <button class="btn primary send" disabled={busy || !text.trim()} onclick={submit}>↑</button>
     </div>
   </div>
@@ -269,6 +289,9 @@
   .cchip { display: inline-flex; gap: 5px; align-items: center; font-size: 11.5px; padding: 1px 4px 1px 8px; border-radius: 99px; border: 1px solid var(--tc); background: color-mix(in srgb, var(--tc) 12%, transparent); }
   .cchip button { background: transparent; border: 0; color: var(--text-dim); padding: 0 4px; }
   .row { display: flex; gap: 6px; align-items: flex-end; }
+  .grip { height: 8px; margin: -2px 0 2px; cursor: ns-resize; position: relative; touch-action: none; }
+  .grip::after { content: ''; position: absolute; left: 50%; top: 3px; width: 32px; height: 3px; margin-left: -16px; border-radius: 3px; background: var(--line-2); }
+  .grip:hover::after, .grip:focus-visible::after { background: var(--accent); }
   .row textarea { resize: none; min-height: 0; }
   .send { width: 34px; height: 34px; padding: 0; border-radius: 10px; font-size: 16px; }
   .mention { position: absolute; bottom: 100%; left: 10px; right: 10px; background: var(--bg-3); border: 1px solid var(--line-2); border-radius: var(--radius-s); overflow: hidden; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); }
