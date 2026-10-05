@@ -141,6 +141,12 @@ export const app = $state({
 });
 
 let flowApi: FlowApi | null = null;
+
+/** Camera move for the animation director. xyflow resolves its promise only when the transition *ends*: if the
+ *  user pans/zooms meanwhile the transition is interrupted and the promise never settles, which would stall the
+ *  whole batch queue (nothing new would be drawn until a reload) — so never wait longer than the move itself. */
+const camera = (p: { x: number; y: number }, duration = 500) =>
+  Promise.race([Promise.resolve(flowApi?.centerOn(p, duration)).catch(() => {}), new Promise<void>((r) => setTimeout(r, duration + 300))]);
 export const registerFlowApi = (a: FlowApi | null) => {
   flowApi = a;
 };
@@ -357,7 +363,7 @@ async function centerOnEdge(edge: StoryEdge) {
   const a = app.graph.placements[edge.from];
   const b = app.graph.placements[edge.to];
   if (!a || !b) return;
-  await flowApi?.centerOn({ x: (a.x + b.x) / 2 + NODE_W / 2, y: (a.y + b.y) / 2 + NODE_H / 2 }, 450);
+  await camera({ x: (a.x + b.x) / 2 + NODE_W / 2, y: (a.y + b.y) / 2 + NODE_H / 2 }, 450);
 }
 
 async function applyEvent(ev: ChangeEvent, actor: Actor): Promise<string | undefined> {
@@ -368,7 +374,7 @@ async function applyEvent(ev: ChangeEvent, actor: Actor): Promise<string | undef
       app.nodes[ev.node.id] = ev.node;
       if (ev.placement) {
         app.graph.placements[ev.node.id] = ev.placement;
-        if (follow) await flowApi?.centerOn({ x: ev.placement.x + NODE_W / 2, y: ev.placement.y + NODE_H / 2 }, 450);
+        if (follow) await camera({ x: ev.placement.x + NODE_W / 2, y: ev.placement.y + NODE_H / 2 }, 450);
       }
       setFx(ev.node.id, { spawn: true }, 1100);
       return ev.node.id;
@@ -414,13 +420,17 @@ async function applyEvent(ev: ChangeEvent, actor: Actor): Promise<string | undef
       if (ai && from && n) {
         setFx(ev.id, { hidden: true });
         app.graph.placements[ev.id] = ev.placement;
-        await tick();
-        if (follow) await flowApi?.centerOn({ x: ev.placement.x + NODE_W / 2, y: ev.placement.y + NODE_H / 2 }, 450);
-        await tick();
-        await flyer(from, pointOf(ev.placement), n);
-        setFx(ev.id, { spawn: true }, 1100);
-        delete app.fx[ev.id]?.hidden;
-        if (app.fx[ev.id] && !Object.keys(app.fx[ev.id]).length) delete app.fx[ev.id];
+        try {
+          await tick();
+          if (follow) await camera({ x: ev.placement.x + NODE_W / 2, y: ev.placement.y + NODE_H / 2 }, 450);
+          await tick();
+          await flyer(from, pointOf(ev.placement), n);
+        } finally {
+          // never leave the card invisible, whatever went wrong above
+          setFx(ev.id, { spawn: true }, 1100);
+          delete app.fx[ev.id]?.hidden;
+          if (app.fx[ev.id] && !Object.keys(app.fx[ev.id]).length) delete app.fx[ev.id];
+        }
       } else {
         app.graph.placements[ev.id] = ev.placement;
         setFx(ev.id, { spawn: true }, 1100);
@@ -433,10 +443,13 @@ async function applyEvent(ev: ChangeEvent, actor: Actor): Promise<string | undef
       delete app.graph.placements[ev.id];
       if (ai && from && n) {
         setFx(`pool:${ev.id}`, { hidden: true });
-        await tick();
-        const to = rectOf(`[data-pool-id="${ev.id}"]`);
-        if (to) await flyer(from, to, n);
-        delete app.fx[`pool:${ev.id}`];
+        try {
+          await tick();
+          const to = rectOf(`[data-pool-id="${ev.id}"]`);
+          if (to) await flyer(from, to, n);
+        } finally {
+          delete app.fx[`pool:${ev.id}`];
+        }
         setFx(ev.id, { spawn: true }, 900);
       }
       return ev.id;
@@ -444,7 +457,7 @@ async function applyEvent(ev: ChangeEvent, actor: Actor): Promise<string | undef
     case 'node.moved': {
       if (ai) setFx(ev.id, { glide: true }, 1000);
       app.graph.placements[ev.id] = ev.to;
-      if (follow) await flowApi?.centerOn({ x: ev.to.x + NODE_W / 2, y: ev.to.y + NODE_H / 2 }, 450);
+      if (follow) await camera({ x: ev.to.x + NODE_W / 2, y: ev.to.y + NODE_H / 2 }, 450);
       return ev.id;
     }
     case 'edge.created': {
