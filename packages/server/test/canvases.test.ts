@@ -149,3 +149,41 @@ describe('portals', () => {
     expect(Object.values(store.state.nodes).filter((n) => n.type === 'portal')).toHaveLength(1);
   });
 });
+
+describe('connections between canvases', () => {
+  function twoActs() {
+    run('create_canvas', { name: 'Act II' });
+    scene('hook', 'main'); scene('arrive', 'act-ii'); scene('twist', 'act-ii');
+    run('link', { from: 'arrive', to: 'twist' });
+  }
+
+  it('link works across canvases, both ways, and get_graph flags those edges for the AI', () => {
+    twoActs();
+    const out = run('link', { from: 'hook', to: 'arrive', label: 'if they take the ship' });
+    const back = run('link', { from: 'twist', to: 'hook', kind: 'conditional' });
+    const edges = run('get_graph').edges;
+    expect(edges.find((e: any) => e.id === out.edgeId)).toMatchObject({ from: 'hook', to: 'arrive', crossCanvas: 'main → act-ii', label: 'if they take the ship' });
+    expect(edges.find((e: any) => e.id === back.edgeId)).toMatchObject({ crossCanvas: 'act-ii → main', kind: 'conditional' });
+    expect(edges.find((e: any) => e.from === 'arrive' && e.to === 'twist')).not.toHaveProperty('crossCanvas');
+  });
+
+  it('the story logic sees across: act II is not a separate chain, and the played path continues over the edge', () => {
+    twoActs();
+    run('link', { from: 'hook', to: 'arrive' });
+    expect(lintStory(store.state).some((i) => i.code === 'separate-chain')).toBe(false);
+    run('mark_played', { nodeId: 'hook' });
+    run('mark_played', { nodeId: 'arrive', after: 'hook' });
+    expect(run('story_status').here).toEqual([{ id: 'arrive', title: 'arrive' }]);
+  });
+
+  it('moving a node to another canvas turns its edges into cross-canvas ones without touching them; undo restores', () => {
+    twoActs();
+    scene('mid', 'main');
+    run('link', { from: 'hook', to: 'mid' });
+    expect(run('get_graph').edges.find((e: any) => e.to === 'mid')).not.toHaveProperty('crossCanvas');
+    run('move_node', { id: 'mid', x: 100, y: 100, canvas: 'act-ii' });
+    expect(run('get_graph').edges.find((e: any) => e.to === 'mid')).toMatchObject({ crossCanvas: 'main → act-ii' });
+    store.undo();
+    expect(run('get_graph').edges.find((e: any) => e.to === 'mid')).not.toHaveProperty('crossCanvas');
+  });
+});

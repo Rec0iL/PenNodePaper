@@ -1,6 +1,6 @@
 <script lang="ts">
   import { VISITABLE_TYPES, STATUS_CHOICES as STATUS_CHOICES_SHARED, NODE_TYPE_INFO, DEFAULT_GROUP, groupColor, groupsOf, visitsOf, type CampaignState, type StoryNode } from '@pnp/shared';
-  import { app, cmd, hereMany, selectNode, setStatusMany } from '../lib/app.svelte';
+  import { app, cmd, hereMany, openCrossLink, selectNode, setStatusMany } from '../lib/app.svelte';
 
   const menu = $derived(app.nodeMenu);
   /** Right-click on a node that belongs to a multi-selection acts on the whole selection. */
@@ -155,6 +155,7 @@
     {/if}
 
     <button class="ctx-item" onclick={() => { selectNode(node.id); close(); }}>Open in inspector</button>
+    {#if placed && app.graph.canvases.length > 1}<button class="ctx-item" onclick={() => openCrossLink(node.id)} title="Connect this node to a node on another canvas (next act, side quest …)">↠ Connect to another canvas…</button>{/if}
     {#if placed}<button class="ctx-item" onclick={() => act('move_to_pool', { id: node.id })}>Send to pool</button>{/if}
     <button class="ctx-item danger" onclick={() => act('delete_node', { id: node.id })}>Delete</button>
     {/if}

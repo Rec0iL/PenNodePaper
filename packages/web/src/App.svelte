@@ -20,6 +20,7 @@
   import CommandPalette from './components/CommandPalette.svelte';
   import BinderModal from './components/BinderModal.svelte';
   import BackupModal from './components/BackupModal.svelte';
+  import CrossLinkModal from './components/CrossLinkModal.svelte';
   import SettingsModal from './components/SettingsModal.svelte';
   import WorldEditor from './components/WorldEditor.svelte';
   import Pool from './components/Pool.svelte';
@@ -116,7 +117,7 @@
     <div class="brand"><span class="logo">◈</span><b>PenNodePaper</b><CampaignMenu /></div>
     <nav class="tabs">
       {#each app.graph.canvases as c (c.id)}
-        <button class:on={app.canvasId === c.id} onclick={() => (app.canvasId = c.id)}>{c.name}</button>
+        <button class:on={app.canvasId === c.id} data-canvas-tab={c.id} title="Drag a connection from a node onto this tab to connect it to a node on this canvas" onclick={() => (app.canvasId = c.id)}>{c.name}</button>
       {/each}
       <button class="plus" title="New canvas" onclick={addCanvas}>+</button>
     </nav>
@@ -196,6 +197,7 @@
 
 <Flyers />
 <NodeMenu />
+<CrossLinkModal />
 <EdgeMenu />
 <PaneMenu />
 <FrameMenu />

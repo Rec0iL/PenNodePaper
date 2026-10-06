@@ -117,7 +117,11 @@ def({
       campaign: { name: tx.state.meta.name, language: tx.state.meta.language },
       canvases: tx.state.graph.canvases,
       nodes: nodes.map((n) => summarize(tx, n, a.includeBodies)),
-      edges: tx.state.graph.edges.map(({ id, from, to, kind, label }) => ({ id, from, to, kind, ...(label ? { label } : {}) })),
+      edges: tx.state.graph.edges.map(({ id, from, to, kind, label }) => {
+        const a = tx.state.graph.placements[from]?.canvas;
+        const b = tx.state.graph.placements[to]?.canvas;
+        return { id, from, to, kind, ...(label ? { label } : {}), ...(a && b && a !== b ? { crossCanvas: `${a} → ${b}` } : {}) };
+      }),
       frames: tx.state.graph.frames,
     };
   },
@@ -345,7 +349,7 @@ def({
 
 def({
   name: 'link',
-  description: 'Create an edge between two nodes. kind: leads-to (story flow), conditional, reveals, belongs-to, foreshadows, bridge.',
+  description: 'Create an edge between two nodes. kind: leads-to (story flow), conditional, reveals, belongs-to, foreshadows, bridge. The nodes may be on DIFFERENT canvases (next act, side quest): the GM then sees a jump marker next to each end, and the story flow, linter and played path simply continue across. Use create_portal instead when you want a visible doorway node.',
   shape: { from: z.string(), to: z.string(), kind: edgeKindEnum.optional(), label: z.string().optional() },
   run(tx, a) {
     const e = link(tx, a.from, a.to, a.kind ?? 'leads-to', a.label ?? '');

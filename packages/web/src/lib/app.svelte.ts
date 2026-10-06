@@ -115,6 +115,8 @@ export const app = $state({
   /** Right-click menu on a node (screen position). */
   nodeMenu: null as null | { nodeId: string; x: number; y: number },
   edgeMenu: null as null | { edgeId: string; x: number; y: number },
+  /** the "connect to a node on another canvas" dialog */
+  crossLink: null as null | { fromId: string; dir: 'out' | 'in'; canvas?: string },
   /** Right-click on empty canvas: screen position for the menu, flow position for the new node. */
   paneMenu: null as null | { x: number; y: number; fx: number; fy: number },
   lightbox: null as null | { nodeId: string; file: string },
@@ -185,6 +187,12 @@ export function chatMeta(refresh = false) {
 export function noteZoom(z: number) {
   if (app.lod === 'full' && z < 0.42) app.lod = 'compact';
   else if (app.lod === 'compact' && z > 0.5) app.lod = 'full';
+}
+
+/** Open the dialog that connects a node to one on another canvas. */
+export function openCrossLink(fromId: string, dir: 'out' | 'in' = 'out', canvas?: string) {
+  closeMenus();
+  app.crossLink = { fromId, dir, canvas };
 }
 
 export function closeMenus() {
@@ -321,6 +329,7 @@ function resetForCampaign() {
   app.multi = [];
   app.nodeMenu = null;
   app.edgeMenu = null;
+  app.crossLink = null;
   app.paneMenu = null;
   app.mapEditor = null;
   app.lightbox = null;

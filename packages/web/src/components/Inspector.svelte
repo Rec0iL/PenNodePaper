@@ -1,6 +1,6 @@
 <script lang="ts">
   import { dieLabel, entryLine, parseEntryLines, rollLog, tableEntries, tableFaces, tableRanges, FLOW_TYPES, VISITABLE_TYPES, STATUS_CHOICES, visitsOf, groupsOf, sheetToText, type CampaignState, clockOf, isKnown, portalTarget, NODE_TYPES, NODE_STATUSES, NODE_TYPE_INFO, EDGE_KINDS, EDGE_KIND_INFO, type EdgeKind, type NodeType, type NodeStatus } from '@pnp/shared';
-  import { app, cmd, focusNode, gotoPortal, say, sendChat } from '../lib/app.svelte';
+  import { app, cmd, focusNode, gotoPortal, openCrossLink, say, sendChat } from '../lib/app.svelte';
   import Chat from './Chat.svelte';
   import ImagesPanel from './ImagesPanel.svelte';
   import MultiSelect from './MultiSelect.svelte';
@@ -358,13 +358,16 @@
         <div class="edge" style="--c:{k.color}">
           <span class="dir">{e.from === node.id ? '→' : '←'}</span>
           <span class="kind">{k.label}</span>
-          <button class="oth" onclick={() => other && focusNode(other.id)}>{other?.title ?? e.to}</button>
+          <button class="oth" onclick={() => other && focusNode(other.id)}>{other?.title ?? e.to}{#if other && app.graph.placements[other.id] && node && app.graph.placements[node.id] && app.graph.placements[other.id].canvas !== app.graph.placements[node.id].canvas}<span class="dim small"> · {app.graph.canvases.find((c) => c.id === app.graph.placements[other.id].canvas)?.name}</span>{/if}</button>
           <input class="elabel" value={e.label} placeholder="label…" title="Edit the label on this connection" onchange={(ev) => relink(e.id, { label: ev.currentTarget.value.trim() })} />
           <button class="btn ghost" title="Remove link" onclick={() => cmd('unlink', { edgeId: e.id })}>×</button>
         </div>
       {:else}
         <div class="dim small">No connections. Drag from a node's handle to another node.</div>
       {/each}
+      {#if app.graph.placements[node.id] && app.graph.canvases.length > 1}
+        <button class="btn ghost" onclick={() => openCrossLink(node.id)} title="Connect to a node on another canvas — or drag a connection onto that canvas' tab">↠ Connect to another canvas…</button>
+      {/if}
     </div>
   </div>
 {:else}

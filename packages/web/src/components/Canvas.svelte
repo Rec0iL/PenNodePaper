@@ -5,15 +5,22 @@
     type Node, type Edge, type Connection,
   } from '@xyflow/svelte';
   import { NODE_TYPES, NODE_TYPE_INFO, EDGE_KINDS, EDGE_KIND_INFO, groupColor, trailEdges, type CampaignState, type NodeType, type EdgeKind } from '@pnp/shared';
-  import { app, cmd, closeMenus, noteZoom, screenToFlow, selectEdge, selectNode, viewCenter } from '../lib/app.svelte';
+  import { NODE_H, NODE_W, app, cmd, closeMenus, noteZoom, openCrossLink, screenToFlow, selectEdge, selectNode, viewCenter } from '../lib/app.svelte';
   import NodeCard from './NodeCard.svelte';
   import StoryEdge from './StoryEdge.svelte';
   import FlowBridge from './FlowBridge.svelte';
   import FrameNode from './FrameNode.svelte';
+  import CanvasStub from './CanvasStub.svelte';
   import ReviewBar from './ReviewBar.svelte';
 
-  const nodeTypes = { story: NodeCard, frame: FrameNode };
+  const nodeTypes = { story: NodeCard, frame: FrameNode, stub: CanvasStub };
   const FRAME = 'frame:';
+  /** jump markers for connections that lead to another canvas (not real nodes) */
+  const STUB = 'stub:';
+  const STUB_W = 230;
+  const STUB_H = 48;
+  type Box = { x: number; y: number; w: number; h: number };
+  const hit = (a: Box, b: Box) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
   const edgeTypes = { story: StoryEdge };
 
   let nodes = $state.raw<Node[]>([]);
@@ -52,11 +59,48 @@
     const trail = trailEdges({ meta: app.meta, nodes: app.nodes, graph: app.graph } as unknown as CampaignState);
     const visible = new Set(Object.entries(app.graph.placements).filter(([, p]) => p.canvas === canvas).map(([id]) => id));
     const es: Edge[] = [];
+    const stubs: Node[] = [];
+    // what a jump marker must not sit on: the cards of this canvas and the markers already placed
+    const taken: Box[] = Object.entries(app.graph.placements)
+      .filter(([id, p]) => p.canvas === canvas && app.nodes[id] && !app.nodes[id].trashed)
+      .map(([, p]) => ({ x: p.x - 12, y: p.y - 12, w: NODE_W + 24, h: NODE_H + 24 }));
     for (const e of app.graph.edges) {
-      if (!visible.has(e.from) || !visible.has(e.to)) continue;
+      const fromHere = visible.has(e.from);
+      const toHere = visible.has(e.to);
+      if (!fromHere && !toHere) continue;
       const g = trail.get(e.id);
-      es.push({ id: e.id, source: e.from, target: e.to, type: 'story', data: { kind: e.kind, label: e.label, played: !!g, trailColor: g ? groupColor(g) : undefined, proposed: proposedEdges.has(e.id) } });
+      const data = { kind: e.kind, label: e.label, played: !!g, trailColor: g ? groupColor(g) : undefined, proposed: proposedEdges.has(e.id) };
+      if (fromHere && toHere) {
+        es.push({ id: e.id, source: e.from, target: e.to, type: 'story', data });
+        continue;
+      }
+      // exactly one end is on this canvas: draw the connection to a jump marker next to it (the other end may be in the pool: then there is nothing to jump to)
+      const out = fromHere;
+      const here = out ? e.from : e.to;
+      const there = out ? e.to : e.from;
+      const tp = app.graph.placements[there];
+      const tn = app.nodes[there];
+      const hp = app.graph.placements[here];
+      if (!tp || !tn || tn.trashed || !hp) continue;
+      // next to the node (right for outgoing, left for incoming), moving up/down until it is free
+      const px = out ? hp.x + NODE_W + 90 : hp.x - STUB_W - 90;
+      let py = hp.y;
+      for (let i = 0; i < 24; i++) {
+        const cand = hp.y + (i % 2 ? -1 : 1) * Math.ceil(i / 2) * (STUB_H + 8);
+        if (!taken.some((b) => hit(b, { x: px, y: cand, w: STUB_W, h: STUB_H }))) { py = cand; break; }
+      }
+      taken.push({ x: px, y: py, w: STUB_W, h: STUB_H });
+      const sid = STUB + e.id;
+      stubs.push({
+        ...(prev.get(sid) ?? {}),
+        id: sid, type: 'stub',
+        position: { x: px, y: py },
+        data: { targetId: there, title: tn.title, canvas: app.graph.canvases.find((c) => c.id === tp.canvas)?.name ?? tp.canvas, kind: e.kind, out },
+        draggable: false, selectable: false, connectable: false, deletable: false,
+      });
+      es.push({ id: e.id, source: out ? e.from : sid, target: out ? sid : e.to, type: 'story', data });
     }
+    if (stubs.length) nodes = [...next, ...stubs];
     for (const g of Object.values(app.edgeGhosts)) {
       if (visible.has(g.edge.from) && visible.has(g.edge.to))
         es.push({ id: `ghost:${g.edge.id}`, source: g.edge.from, target: g.edge.to, type: 'story', data: { kind: g.edge.kind, label: g.edge.label, ghost: true }, selectable: false });
@@ -80,11 +124,14 @@
   }
 
   function onreconnect(old: Edge, c: Connection) {
+    // the far end of a cross-canvas connection is only a jump marker: it cannot be re-wired from here
+    if (c.source.startsWith(STUB) || c.target.startsWith(STUB)) return;
+    if (old.source.startsWith(STUB) || old.target.startsWith(STUB)) return;
     void cmd('relink', { edgeId: old.id, from: c.source, to: c.target });
   }
 
   function ondelete({ nodes: dnAll, edges: de }: { nodes: Node[]; edges: Edge[] }) {
-    let dn = dnAll;
+    let dn = dnAll.filter((n) => !n.id.startsWith(STUB));
     const gone = new Set(dn.map((n) => n.id));
     const ops: { command: string; args: Record<string, unknown> }[] = [];
     for (const n of dn) if (n.id.startsWith(FRAME)) ops.push({ command: 'delete_frame', args: { id: n.id.slice(FRAME.length) } });
@@ -92,6 +139,15 @@
     for (const e of de) if (!gone.has(e.source) && !gone.has(e.target)) ops.push({ command: 'unlink', args: { edgeId: e.id } });
     for (const n of dn) ops.push({ command: 'delete_node', args: { id: n.id } });
     if (ops.length) void cmd('batch', { ops, label: dn.length ? `Deleted ${dn.length} node(s)` : ops.some((o) => o.command === 'delete_frame') ? 'Removed a frame' : 'Removed edge(s)' });
+  }
+
+  // a connection dragged out of a node and dropped on a canvas TAB: pick the node on that canvas to connect to
+  function onconnectend(event: MouseEvent | TouchEvent, state: { isValid: boolean | null; fromNode: Node | null; fromHandle: { type: string } | null }) {
+    const from = state.fromNode;
+    if (state.isValid || !from || from.id.startsWith(FRAME) || from.id.startsWith(STUB) || from.data.ghost) return;
+    const pt = 'changedTouches' in event ? event.changedTouches[0] : (event as MouseEvent);
+    const tab = document.elementsFromPoint(pt.clientX, pt.clientY).find((el) => (el as HTMLElement).dataset?.canvasTab) as HTMLElement | undefined;
+    if (tab?.dataset.canvasTab) openCrossLink(from.id, state.fromHandle?.type === 'target' ? 'in' : 'out', tab.dataset.canvasTab);
   }
 
   function overPool(ev: MouseEvent | TouchEvent): boolean {
@@ -185,6 +241,7 @@
     zoomOnDoubleClick={false}
     proOptions={{ hideAttribution: true }}
     {onconnect}
+    {onconnectend}
     {onreconnect}
     {ondelete}
     {onnodedragstart}
@@ -193,13 +250,13 @@
     {onnodedrag}
     {onnodedragstop}
     multiSelectionKey={['Shift', 'Control', 'Meta']}
-    onselectionchange={({ nodes: sel }) => { const ids = sel.filter((n) => !n.data.ghost && !n.id.startsWith(FRAME)).map((n) => n.id); app.multi = ids.length > 1 ? ids : []; }}
-    onnodeclick={({ node, event }) => { if (node.id.startsWith(FRAME)) return; if (!(event.shiftKey || event.ctrlKey || event.metaKey)) selectNode(node.id); }}
+    onselectionchange={({ nodes: sel }) => { const ids = sel.filter((n) => !n.data.ghost && !n.id.startsWith(FRAME) && !n.id.startsWith(STUB)).map((n) => n.id); app.multi = ids.length > 1 ? ids : []; }}
+    onnodeclick={({ node, event }) => { if (node.id.startsWith(FRAME) || node.id.startsWith(STUB)) return; if (!(event.shiftKey || event.ctrlKey || event.metaKey)) selectNode(node.id); }}
     onnodecontextmenu={({ node, event }) => {
       event.preventDefault();
       closeMenus();
       if (node.id.startsWith(FRAME)) { app.frameMenu = { frameId: node.id.slice(FRAME.length), x: event.clientX, y: event.clientY }; return; }
-      if (node.data.ghost) return;
+      if (node.data.ghost || node.id.startsWith(STUB)) return;
       if (!app.multi.includes(node.id)) selectNode(node.id);
       app.nodeMenu = { nodeId: node.id, x: event.clientX, y: event.clientY };
     }}
@@ -207,7 +264,7 @@
       // right-click on the selection box (after a Shift-drag) acts on the whole selection
       event.preventDefault();
       closeMenus();
-      const ids = sel.filter((n) => !n.data.ghost && !n.id.startsWith(FRAME)).map((n) => n.id);
+      const ids = sel.filter((n) => !n.data.ghost && !n.id.startsWith(FRAME) && !n.id.startsWith(STUB)).map((n) => n.id);
       if (!ids.length) return;
       if (ids.length > 1) app.multi = ids;
       app.nodeMenu = { nodeId: ids[0], x: event.clientX, y: event.clientY };

@@ -8,7 +8,7 @@ import type { Store } from './store.js';
 const INSTRUCTIONS = `PenNodePaper: a node-based story & world builder for pen-and-paper GMs.
 The campaign is a graph. Nodes live either on a canvas (placed in the story) or in the sidebar POOL (prepared, but no fixed place yet — e.g. a tavern scene that may happen whenever the players go there).
 Call get_graph first to see the current state. Every tool call is animated live in the GM's UI, and each call (or batch) is one undo step, so prefer several small, clear actions over silent bulk rewrites.
-A campaign can have several canvases (acts, chapters, side quests): create_canvas / rename_canvas / delete_canvas manage them, create_portal puts a doorway node on one canvas that leads to another (the story flow continues through it), show_canvas moves the GM's view.
+A campaign can have several canvases (acts, chapters, side quests): create_canvas / rename_canvas / delete_canvas manage them, link also works between nodes on different canvases (shown to the GM as a jump marker on each side; get_graph flags those edges with crossCanvas), create_portal puts a doorway node on one canvas that leads to another (the story flow continues through it), show_canvas moves the GM's view.
 Use 'batch' for compound edits. Give newly created nodes an explicit id when later steps in the same batch must reference them.`;
 
 function buildServer(store: Store, actor: Actor): McpServer {
