@@ -526,12 +526,43 @@ async function applyEvent(ev: ChangeEvent, actor: Actor): Promise<string | undef
   }
 }
 
+/** One animation step may never hold up the rest: a camera move, a card flight or a handler that throws must not leave
+ *  everything the AI did afterwards undrawn (that looks like "the nodes are invisible until I reload"). */
+const EVENT_TIMEOUT_MS = 4000;
+let pendingBatches = 0;
+let needResync = false;
+
+/** Safety net: re-read the whole campaign from the server (what a reload would show). */
+async function resync() {
+  try {
+    const r = (await (await fetch('/api/state')).json()) as { state: CampaignState; canUndo: boolean; canRedo: boolean };
+    load(r.state);
+    app.canUndo = r.canUndo;
+    app.canRedo = r.canRedo;
+  } catch (e) {
+    console.error('resync', e);
+  }
+}
+
 async function applyBatch(batch: Batch) {
   const ai = isAi(batch.actor);
   app.history.push(batch);
   if (app.history.length > 200) app.history.shift();
-  for (const ev of batch.events) {
-    const nodeId = await applyEvent(ev, batch.actor);
+  // the canvas list first (it is sent last): a new canvas' tab must exist before the view follows the AI onto it
+  const events = [...batch.events].sort((x, y) => Number(y.type === 'graph.meta') - Number(x.type === 'graph.meta'));
+  for (const ev of events) {
+    let nodeId: string | undefined;
+    try {
+      const timeout = new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), EVENT_TIMEOUT_MS));
+      const res = await Promise.race([applyEvent(ev, batch.actor), timeout]);
+      if (res === 'timeout') {
+        console.warn('[animation] a step took too long and was skipped:', ev.type, ev);
+        needResync = true;
+      } else nodeId = res;
+    } catch (e) {
+      console.error('[animation] a step failed, carrying on:', ev.type, e);
+      needResync = true;
+    }
     focusPresence(batch.actor, nodeId);
     if (ai) await sleep(360);
   }
@@ -539,7 +570,21 @@ async function applyBatch(batch: Batch) {
 
 let chain: Promise<void> = Promise.resolve();
 const enqueue = (batch: Batch) => {
-  chain = chain.then(() => applyBatch(batch)).catch((e) => console.error('applyBatch', e));
+  pendingBatches++;
+  chain = chain
+    .then(() => applyBatch(batch))
+    .catch((e) => {
+      console.error('applyBatch', e);
+      needResync = true;
+    })
+    .then(async () => {
+      pendingBatches--;
+      // only when nothing else is queued: replaying later events on top of a fresh state could draw things twice
+      if (needResync && pendingBatches === 0) {
+        needResync = false;
+        await resync();
+      }
+    });
 };
 
 // ------------------------------- websocket ---------------------------------
