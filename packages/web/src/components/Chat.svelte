@@ -53,10 +53,20 @@
     return out;
   });
 
+  let settleTimer: ReturnType<typeof setTimeout> | undefined;
   $effect(() => {
     rows.length;
     app.chat.at(-1)?.text;
-    void tick().then(() => list?.scrollTo({ top: list.scrollHeight, behavior: 'smooth' }));
+    app.chat.at(-1)?.tool?.status;
+    app.chatStatus.busy; // the “… is working” row appears and disappears with this, a moment after the message itself
+    void tick().then(() => {
+      list?.scrollTo({ top: list.scrollHeight, behavior: 'smooth' });
+      // a smooth scroll aims at where the end was when it began: if something grew meanwhile (the working row, a tool card), finish the job
+      clearTimeout(settleTimer);
+      settleTimer = setTimeout(() => {
+        if (list && list.scrollHeight - list.scrollTop - list.clientHeight > 2) list.scrollTo({ top: list.scrollHeight });
+      }, 450);
+    });
   });
 
   const busy = $derived(app.chatStatus.busy);
