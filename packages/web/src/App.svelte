@@ -171,7 +171,8 @@
         value={creativityDraft ?? app.meta.aiCreativity ?? 3}
         oninput={(e) => (creativityDraft = +e.currentTarget.value)}
         onchange={(e) => setCreativity(+e.currentTarget.value as AiCreativity)} />
-      <span class="cname">{creativity.name}</span>
+      <!-- every name sits in the same grid cell, so the label is always as wide as the longest one and the slider never moves while it changes -->
+      <span class="cname">{#each AI_CREATIVITY as c (c.level)}<span class:cur={c.level === creativity.level}>{c.name}</span>{/each}</span>
     </div>
     <label class="toggle" title="Camera follows the AI while it edits">
       <input type="checkbox" bind:checked={app.followAi} /> follow AI
@@ -263,7 +264,9 @@
   .aimode button { background: transparent; border: 0; color: var(--text-dim); border-radius: 99px; padding: 2px 10px; font-size: 11.5px; }
   .aimode button.on { background: var(--bg-4); color: var(--text); box-shadow: inset 0 0 0 1px var(--line-2); }
   .creativity input { width: 72px; accent-color: var(--accent); margin: 0 4px; }
-  .creativity .cname { min-width: 78px; padding-right: 8px; color: var(--text-dim); }
+  .creativity .cname { display: inline-grid; justify-items: center; padding: 0 8px 0 4px; color: var(--text-dim); white-space: nowrap; }
+  .creativity .cname > span { grid-area: 1 / 1; visibility: hidden; }
+  .creativity .cname > span.cur { visibility: visible; }
   .aimode .rc { margin-left: 5px; background: var(--agy, #b89cff); color: #0a0c11; border-radius: 99px; padding: 0 6px; font-size: 10px; }
   .searchbtn { display: inline-flex; align-items: center; gap: 6px; background: var(--bg-3); border: 1px solid var(--line-2); color: var(--text-dim); border-radius: 99px; padding: 3px 10px; font-size: 12px; }
   .searchbtn:hover { color: var(--text); border-color: var(--accent); }
