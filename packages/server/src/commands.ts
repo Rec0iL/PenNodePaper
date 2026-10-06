@@ -1479,6 +1479,131 @@ def({
   },
 });
 
+function canvasById(tx: Tx, id: string) {
+  const c = tx.state.graph.canvases.find((x) => x.id === id);
+  if (!c) throw new Error(`Canvas "${id}" not found (see get_graph → canvases)`);
+  return c;
+}
+
+def({
+  name: 'rename_canvas',
+  description: 'Rename a canvas (its id stays the same, so portals and placements keep working).',
+  shape: { id: z.string(), name: z.string().min(1) },
+  run(tx, a) {
+    const c = canvasById(tx, a.id);
+    tx.putCanvas({ id: c.id, name: a.name.trim() });
+    tx.label = `Renamed canvas “${c.name}” → “${a.name.trim()}”`;
+    return { id: c.id, name: a.name.trim() };
+  },
+});
+
+def({
+  name: 'delete_canvas',
+  description:
+    'Delete a canvas. Its nodes are NOT lost: they go back to the sidebar pool, or — with moveTo — onto another canvas (placed below what is already there, frames come along, portals that led here are re-pointed). Without moveTo, portals that led here lose their target (the linter flags them). The last canvas cannot be deleted. One undo step brings everything back.',
+  shape: { id: z.string(), moveTo: z.string().optional().describe('Canvas that receives the nodes and frames instead of the pool.') },
+  run(tx, a) {
+    const c = canvasById(tx, a.id);
+    if (tx.state.graph.canvases.length <= 1) throw new Error('The last canvas cannot be deleted.');
+    if (a.moveTo !== undefined) {
+      if (a.moveTo === a.id) throw new Error('moveTo is the canvas being deleted.');
+      canvasById(tx, a.moveTo);
+    }
+    const mine = Object.entries(tx.state.graph.placements).filter(([, p]) => p.canvas === a.id);
+    const frames = tx.state.graph.frames.filter((f) => f.canvas === a.id);
+    let dy = 0;
+    if (a.moveTo !== undefined) {
+      const theirs = [
+        ...Object.values(tx.state.graph.placements).filter((p) => p.canvas === a.moveTo).map((p) => p.y + NODE_H),
+        ...tx.state.graph.frames.filter((f) => f.canvas === a.moveTo).map((f) => f.y + f.h),
+      ];
+      const top = Math.min(...mine.map(([, p]) => p.y), ...frames.map((f) => f.y));
+      if (theirs.length && Number.isFinite(top)) dy = Math.round(Math.max(...theirs) + 80 - top);
+    }
+    for (const [id, p] of mine) tx.setPlacement(id, a.moveTo !== undefined ? { ...p, canvas: a.moveTo, y: p.y + dy } : null);
+    for (const f of frames) {
+      if (a.moveTo !== undefined) tx.putFrame({ ...f, canvas: a.moveTo, y: f.y + dy });
+      else tx.removeFrame(f.id);
+    }
+    let portals = 0;
+    for (const n of Object.values(tx.state.nodes)) {
+      if (n.type !== 'portal' || n.trashed || n.fields.canvas !== a.id) continue;
+      const fields = { ...n.fields };
+      if (a.moveTo !== undefined) fields.canvas = a.moveTo;
+      else { delete fields.canvas; delete fields.nodeId; }
+      tx.putNode({ ...n, fields, updatedAt: now() });
+      portals++;
+    }
+    tx.removeCanvas(a.id);
+    tx.label = `Deleted canvas “${c.name}”`;
+    return { deleted: a.id, nodes: mine.length, nodesWent: a.moveTo ?? 'pool', frames: frames.length, portalsAffected: portals };
+  },
+});
+
+def({
+  name: 'show_canvas',
+  description:
+    'Switch the GM\'s view to a canvas, optionally flying to a node on it (it then lights up). Changes nothing in the campaign. Use it to show the GM where you just worked or to walk them through the acts. Does nothing when the GM has turned off "follow the AI".',
+  readOnly: true,
+  shape: { id: z.string(), nodeId: z.string().optional() },
+  run(tx, a) {
+    let canvas = canvasById(tx, a.id);
+    if (a.nodeId) {
+      const n = tx.requireNode(a.nodeId);
+      const p = tx.state.graph.placements[a.nodeId];
+      if (!p) throw new Error(`“${n.title}” is in the pool, not on a canvas.`);
+      canvas = canvasById(tx, p.canvas);
+    }
+    tx.store.emitView({ canvas: canvas.id, nodeId: a.nodeId, actor: tx.actor });
+    return { shown: canvas.name, canvas: canvas.id };
+  },
+});
+
+def({
+  name: 'create_portal',
+  description:
+    'Put a PORTAL on a canvas: a doorway node that leads to another canvas — into the next act, a side quest, a flashback. The GM clicks it to jump over. The story flow continues through it, so the linter, the played path and "where can the story go" see across canvases. `from` = the node it hangs off (edge from → portal); `toNodeId` = the node you arrive at on the other canvas (portal → it, a bridge edge). For a side quest make two: one from the hook into the first side-quest node, and one at its end back into the main line (point it at the scene AFTER the hook, so the story does not loop). Without toNodeId the portal just opens the canvas.',
+  shape: {
+    toCanvas: z.string().describe('Canvas id the portal leads to.'),
+    toNodeId: z.string().optional().describe('Node on that canvas to arrive at.'),
+    from: z.string().optional().describe('Node on this side that leads into the portal.'),
+    canvas: z.string().optional().describe('Canvas to put the portal on (default: the canvas of `from`, else the first).'),
+    title: z.string().optional().describe('Default: “→ <canvas name>”.'),
+    summary: z.string().optional().describe('What the players do or see when they cross (e.g. “Sail for Tortuga”).'),
+    edgeLabel: z.string().optional(),
+    nearNodeId: z.string().optional(),
+    x: z.number().optional(), y: z.number().optional(),
+    id: z.string().optional(),
+  },
+  run(tx, a) {
+    const target = canvasById(tx, a.toCanvas);
+    if (a.toNodeId) {
+      const t = tx.requireNode(a.toNodeId);
+      if (tx.state.graph.placements[a.toNodeId]?.canvas !== target.id) throw new Error(`“${t.title}” is not on canvas “${target.name}” — place it there first.`);
+    }
+    const fromNode = a.from ? tx.requireNode(a.from) : null;
+    const fp = a.from ? tx.state.graph.placements[a.from] : undefined;
+    if (fromNode && !fp) throw new Error(`“${fromNode.title}” is in the pool — place it on a canvas first.`);
+    const canvas = a.canvas ?? fp?.canvas ?? tx.state.graph.canvases[0].id;
+    checkCanvas(tx, canvas);
+    if (canvas === target.id) throw new Error('The portal and its target are on the same canvas — just link the nodes instead.');
+    const title = a.title?.trim() || `→ ${target.name}`;
+    const id = tx.newNodeId(title, a.id);
+    const t = now();
+    const node: StoryNode = {
+      id, type: 'portal', title, summary: a.summary ?? '', body: '', readAloud: '', tags: [], status: 'untouched',
+      fields: { canvas: target.id, ...(a.toNodeId ? { nodeId: a.toNodeId } : {}) }, images: [], poolHint: '', trashed: false, createdAt: t, updatedAt: t,
+    };
+    tx.putNode(node);
+    const pos = a.x !== undefined && a.y !== undefined ? { x: a.x, y: a.y } : freeSpot(tx, canvas, a.nearNodeId ?? a.from);
+    tx.setPlacement(id, { canvas, ...pos });
+    if (a.from) link(tx, a.from, id, 'leads-to', a.edgeLabel ?? '');
+    if (a.toNodeId) link(tx, id, a.toNodeId, 'bridge', '');
+    tx.label = `Portal “${title}”`;
+    return { id, canvas, leadsTo: target.id, ...(a.toNodeId ? { arrivesAt: a.toNodeId } : {}) };
+  },
+});
+
 // ------------------------------- frames ---------------------------------------
 // A frame is a labelled coloured area behind a group of nodes on a canvas (an act, a chapter, "the harbour").
 const FRAME_COLORS = ['#7aa2ff', '#7fe0a0', '#ffb454', '#ff7a9c', '#b89cff', '#5fd4c4', '#ffd166'];

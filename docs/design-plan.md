@@ -62,6 +62,7 @@ Started in an empty working directory with no git repo.
 
 ## MCP tool surface (draft)
 - Graph: `create_node`, `update_node`, `delete_node`, `restore_node`, `link`, `unlink`, `relink`, `move_to_pool`, `place_on_canvas`, `move_node`, `group`, `get_graph`, `search_nodes`, `annotate`, `snapshot`
+- Canvases: `create_canvas`, `rename_canvas`, `delete_canvas` (nodes go to the pool or onto another canvas, one undo), `show_canvas` (moves the GM's view, respects "follow the AI"), `create_portal` (a `portal` story node that leads to another canvas — next act, side quest; the story flow, linter and played path continue through it via a `bridge` edge)
 - Rulebook: `list_chapters`, `get_section`, `search_rules`
 - Images/maps: `generate_image`, `queue_status`, `create_map`, `edit_map` (vector shapes), `render_map`
 - Story: `lint_story`, `mark_played`, `fork_timeline`, `reconverge`, `missed_report`, `suggest_placement`

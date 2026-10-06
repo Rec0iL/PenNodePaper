@@ -147,6 +147,14 @@ let flowApi: FlowApi | null = null;
  *  whole batch queue (nothing new would be drawn until a reload) — so never wait longer than the move itself. */
 const camera = (p: { x: number; y: number }, duration = 500) =>
   Promise.race([Promise.resolve(flowApi?.centerOn(p, duration)).catch(() => {}), new Promise<void>((r) => setTimeout(r, duration + 300))]);
+/** Follow the AI to a placement — onto its canvas first, if it works on another one than the GM is looking at. */
+const cameraTo = async (pl: { canvas: string; x: number; y: number }, duration = 450) => {
+  if (pl.canvas !== app.canvasId) {
+    app.canvasId = pl.canvas;
+    await tick();
+  }
+  await camera({ x: pl.x + NODE_W / 2, y: pl.y + NODE_H / 2 }, duration);
+};
 export const registerFlowApi = (a: FlowApi | null) => {
   flowApi = a;
 };
@@ -285,6 +293,25 @@ export function focusNode(id: string) {
   }
 }
 
+/** The GM clicked a portal: jump to what it leads to (the arrival node if it has one, else the canvas). */
+export function gotoPortal(node: StoryNode) {
+  const cid = typeof node.fields.canvas === 'string' ? node.fields.canvas : '';
+  const tid = typeof node.fields.nodeId === 'string' ? node.fields.nodeId : '';
+  if (tid && app.graph.placements[tid]) return focusNode(tid);
+  if (app.graph.canvases.some((c) => c.id === cid)) app.canvasId = cid;
+}
+
+/** The AI asked to show a canvas (show_canvas). Respects "follow the AI". */
+function showCanvasFromAi(canvas: string, nodeId: string | undefined, actor: Actor) {
+  if (!app.followAi || !app.graph.canvases.some((c) => c.id === canvas)) return;
+  app.canvasId = canvas;
+  const p = nodeId ? app.graph.placements[nodeId] : undefined;
+  if (nodeId && p) {
+    focusPresence(actor, nodeId);
+    void tick().then(() => camera({ x: p.x + NODE_W / 2, y: p.y + NODE_H / 2 }, 500));
+  }
+}
+
 // ------------------------------- state sync --------------------------------
 
 /** Another campaign was opened: nothing of the old one may linger in the view. */
@@ -374,7 +401,7 @@ async function applyEvent(ev: ChangeEvent, actor: Actor): Promise<string | undef
       app.nodes[ev.node.id] = ev.node;
       if (ev.placement) {
         app.graph.placements[ev.node.id] = ev.placement;
-        if (follow) await camera({ x: ev.placement.x + NODE_W / 2, y: ev.placement.y + NODE_H / 2 }, 450);
+        if (follow) await cameraTo(ev.placement);
       }
       setFx(ev.node.id, { spawn: true }, 1100);
       return ev.node.id;
@@ -422,7 +449,7 @@ async function applyEvent(ev: ChangeEvent, actor: Actor): Promise<string | undef
         app.graph.placements[ev.id] = ev.placement;
         try {
           await tick();
-          if (follow) await camera({ x: ev.placement.x + NODE_W / 2, y: ev.placement.y + NODE_H / 2 }, 450);
+          if (follow) await cameraTo(ev.placement);
           await tick();
           await flyer(from, pointOf(ev.placement), n);
         } finally {
@@ -457,7 +484,7 @@ async function applyEvent(ev: ChangeEvent, actor: Actor): Promise<string | undef
     case 'node.moved': {
       if (ai) setFx(ev.id, { glide: true }, 1000);
       app.graph.placements[ev.id] = ev.to;
-      if (follow) await camera({ x: ev.to.x + NODE_W / 2, y: ev.to.y + NODE_H / 2 }, 450);
+      if (follow) await cameraTo(ev.to);
       return ev.id;
     }
     case 'edge.created': {
@@ -558,6 +585,8 @@ export function connect() {
       else app.chat.push(msg.msg);
     } else if (msg.t === 'vtt') {
       app.vtt = msg.status;
+    } else if (msg.t === 'view') {
+      showCanvasFromAi(msg.canvas, msg.nodeId, msg.actor);
     } else if (msg.t === 'map') {
       app.mapEvent = { map: msg.map, actor: msg.actor, at: Date.now() };
     } else if (msg.t === 'image.job') {

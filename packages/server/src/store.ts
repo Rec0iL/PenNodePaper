@@ -112,6 +112,13 @@ export class Tx {
     else this.store.state.graph.canvases.push(clone(next));
   }
 
+  removeCanvas(id: string) {
+    const i = this.store.state.graph.canvases.findIndex((c) => c.id === id);
+    if (i < 0) return;
+    this.ops.push({ k: 'canvas', id, prev: clone(this.store.state.graph.canvases[i]), next: null });
+    this.store.state.graph.canvases.splice(i, 1);
+  }
+
   putFrame(next: Frame) {
     const prev = this.store.state.graph.frames.find((f) => f.id === next.id) ?? null;
     if (same(prev, next)) return;
@@ -194,6 +201,15 @@ export class Store {
   onMap(fn: (map: MapDoc, actor: Actor) => void): () => void {
     this.mapListeners.add(fn);
     return () => this.mapListeners.delete(fn);
+  }
+  private viewListeners = new Set<(v: { canvas: string; nodeId?: string; actor: Actor }) => void>();
+  /** The AI asked the GM's view to show a canvas (not part of the campaign, never undoable). */
+  onView(fn: (v: { canvas: string; nodeId?: string; actor: Actor }) => void) {
+    this.viewListeners.add(fn);
+    return () => this.viewListeners.delete(fn);
+  }
+  emitView(v: { canvas: string; nodeId?: string; actor: Actor }) {
+    for (const l of this.viewListeners) l(v);
   }
   private metaListeners = new Set<() => void>();
   onMeta(fn: () => void) {

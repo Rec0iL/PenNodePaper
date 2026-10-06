@@ -74,6 +74,7 @@ function openCampaign(dir: string) {
   next.onMeta(() => live() && broadcast({ t: 'reload', state: next.state }));
   next.vtt.onStatus((status) => live() && broadcast({ t: 'vtt', status }));
   next.onMap((map, actor) => live() && broadcast({ t: 'map', map, actor }));
+  next.onView((v) => live() && broadcast({ t: 'view', ...v }));
   next.subscribe((batch) => live() && (broadcast({ t: 'batch', batch, canUndo: next.canUndo, canRedo: next.canRedo }), broadcast({ t: 'proposals', list: next.proposals() })));
   rememberCampaign(campaignDir);
   backupTimer = setInterval(() => live() && autoSnapshot(next), 60_000);

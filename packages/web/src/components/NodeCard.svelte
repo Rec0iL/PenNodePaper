@@ -1,9 +1,10 @@
 <script lang="ts">
   import { Handle, Position, type NodeProps } from '@xyflow/svelte';
-  import { DEFAULT_GROUP, NODE_TYPE_INFO, clockOf, dieLabel, groupColor, isKnown, tableEntries, tableFaces, visitsOf, type StoryNode } from '@pnp/shared';
-  import { app, cmd } from '../lib/app.svelte';
+  import { DEFAULT_GROUP, NODE_TYPE_INFO, clockOf, dieLabel, groupColor, isKnown, portalTarget, tableEntries, tableFaces, visitsOf, type StoryNode } from '@pnp/shared';
+  import { app, cmd, gotoPortal } from '../lib/app.svelte';
 
   const openMap = () => {
+    if (data.node.type === 'portal' && !data.ghost) return gotoPortal(data.node);
     const id = data.node.fields?.mapId;
     if (typeof id === 'string' && id && !data.ghost) app.mapEditor = { mapId: id };
   };
@@ -29,6 +30,7 @@
   const proposal = $derived(app.proposals.find((p) => p.nodes.includes(id)));
   const hasMap = $derived(typeof node.fields?.mapId === 'string' && !!node.fields.mapId);
   const known = $derived(node.type === 'clue' && isKnown(node));
+  const portal = $derived(node.type === 'portal' ? portalTarget({ nodes: app.nodes, graph: app.graph }, node) : null);
 </script>
 
 <div
@@ -82,6 +84,11 @@
         <button class="roll nodrag" disabled={!table.faces} onclick={(e) => { e.stopPropagation(); void cmd('roll_table', { nodeId: node.id }); }} title={table.faces ? `Roll the table (${dieLabel(table.faces)})` : 'No entries yet — open the node and add some'}>🎲 {table.faces ? dieLabel(table.faces) : 'empty'}</button>
         {#if table.last}<span class="last" title="Last roll">{table.last}</span>{/if}
       </div>
+    {/if}
+    {#if portal}
+      <button class="portal nodrag" class:broken={!portal.canvas || (!!portal.nodeId && !portal.node)} onclick={(e) => { e.stopPropagation(); gotoPortal(node); }} title={portal.canvas ? 'Jump to the other canvas (or double-click the card)' : 'This portal has no valid target'}>
+        {portal.canvas ? `↠ ${portal.canvas.name}${portal.node ? ` · ${portal.node.title}` : ''}` : '⚠ no target'}
+      </button>
     {/if}
     {#if clock}
       <div class="clock" class:full={clock.full} title={clock.consequence}>
@@ -153,6 +160,9 @@
   .roll { background: var(--bg-4); border: 1px solid var(--line-2); color: var(--text); border-radius: 8px; padding: 2px 9px; font-size: 11.5px; white-space: nowrap; }
   .roll:hover:not(:disabled) { border-color: var(--accent); }
   .roll:disabled { opacity: .5; }
+  .portal { margin-top: 6px; align-self: flex-start; max-width: 100%; overflow: hidden; text-overflow: ellipsis; background: color-mix(in srgb, var(--tc) 18%, var(--bg-4)); border: 1px solid var(--tc); color: var(--text); border-radius: 8px; padding: 3px 10px; font-size: 12px; white-space: nowrap; cursor: pointer; }
+  .portal:hover { background: color-mix(in srgb, var(--tc) 30%, var(--bg-4)); }
+  .portal.broken { border-color: var(--danger, #ff5d73); color: var(--danger, #ff5d73); }
   .last { font-size: 12px; color: var(--accent); font-style: italic; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; }
   .clock { display: flex; align-items: center; gap: 8px; margin-top: 5px; font-size: 11.5px; color: var(--text-dim); }
   .clock.full { color: #ff8da0; }
