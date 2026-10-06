@@ -94,6 +94,8 @@ export const app = $state({
   mapEditor: null as null | { mapId: string },
   mapEvent: null as null | { map: MapDoc; actor: Actor; at: number },
   settingsOpen: false,
+  /** the music & sounds panel (play on the connected VTT) */
+  soundsOpen: false,
   /** AI changes waiting for Accept / Reject (review mode). */
   proposals: [] as Proposal[],
   /** A frame that was just created and wants its title typed in. */

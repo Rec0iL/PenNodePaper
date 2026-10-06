@@ -52,14 +52,50 @@
             "label": "Rolle",
             "type": "text",
             "group": "Auftreten",
-            "help": "z.B. Wirtin, Schmuggler, Schiffsarzt"
+            "suggestions": [
+              "Wirt / Wirtin",
+              "Händler",
+              "Schmuggler",
+              "Kapitän",
+              "Steuermann",
+              "Matrose",
+              "Schiffsarzt",
+              "Pirat",
+              "Soldat",
+              "Stadtwache",
+              "Adliger",
+              "Gelehrter",
+              "Heiler",
+              "Priester",
+              "Zauberer",
+              "Dieb",
+              "Söldner",
+              "Fischer",
+              "Handwerker",
+              "Bettler"
+            ],
+            "help": "was er tut, z.B. Wirtin, Schmuggler, Schiffsarzt"
           },
           {
             "key": "haltung",
             "label": "Haltung",
             "type": "text",
             "group": "Auftreten",
-            "help": "gegenüber der Gruppe, z.B. freundlich, misstrauisch, feindlich"
+            "suggestions": [
+              "freundlich",
+              "hilfsbereit",
+              "zugewandt",
+              "verbündet",
+              "treu",
+              "neutral",
+              "neugierig",
+              "ängstlich",
+              "gleichgültig",
+              "argwöhnisch",
+              "ablehnend",
+              "feindselig"
+            ],
+            "help": "gegenüber der Gruppe"
           },
           {
             "key": "auffaelligkeit",
@@ -79,7 +115,17 @@
             "label": "Wesen / Art",
             "type": "text",
             "group": "Auftreten",
-            "help": "z.B. Mensch, Zwerg, Untoter"
+            "suggestions": [
+              "Mensch",
+              "Zwerg",
+              "Elf",
+              "Ork",
+              "Halbling",
+              "Untoter",
+              "Dämon",
+              "Tier"
+            ],
+            "help": "Volk oder Art, falls es eine Rolle spielt"
           }
         ]
       },

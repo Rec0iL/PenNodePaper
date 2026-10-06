@@ -4,6 +4,7 @@
   import { untrack } from 'svelte';
   import { validateSheet, fieldVisible, pickRole, sheetToText, type CharacterRole, type FieldSpec, type StoryNode } from '@pnp/shared';
   import { app, cmd } from '../lib/app.svelte';
+  import FieldInput from './FieldInput.svelte';
 
   let { node }: { node: StoryNode } = $props();
 
@@ -65,8 +66,6 @@
   });
   const missing = $derived(role ? role.fields.filter((f) => f.required && fieldVisible(f, local) && local[f.key] === undefined) : []);
 
-  const num = (e: Event & { currentTarget: HTMLInputElement }) => (e.currentTarget.value === '' ? undefined : Number(e.currentTarget.value));
-  const tags = (v: unknown) => (Array.isArray(v) ? v.join(', ') : '');
   const asList = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? (v as Record<string, unknown>[]) : []);
 
   function applyPreset(id: string) {
@@ -76,25 +75,6 @@
   }
 </script>
 
-{#snippet widget(f: FieldSpec, value: unknown, set: (v: unknown) => void)}
-  {#if f.type === 'number'}
-    <input class="field" type="number" min={f.min} max={f.max} step={f.step ?? 1} value={value ?? ''} placeholder={f.default !== undefined ? String(f.default) : '—'} onchange={(e) => set(num(e))} />
-  {:else if f.type === 'boolean'}
-    <label class="chk"><input type="checkbox" checked={value === true} onchange={(e) => set(e.currentTarget.checked)} /> {f.label}</label>
-  {:else if f.type === 'select'}
-    <select class="field" value={String(value ?? '')} onchange={(e) => set(e.currentTarget.value || undefined)}>
-      <option value="">—</option>
-      {#each f.options ?? [] as o}<option value={o.value}>{o.label ?? o.value}</option>{/each}
-    </select>
-  {:else if f.type === 'longtext'}
-    <textarea class="field" rows="3" value={String(value ?? '')} onchange={(e) => set(e.currentTarget.value)}></textarea>
-  {:else if f.type === 'tags'}
-    <input class="field" value={tags(value)} placeholder="comma, separated" onchange={(e) => set(e.currentTarget.value.split(',').map((t) => t.trim()).filter(Boolean))} />
-  {:else}
-    <input class="field" value={String(value ?? '')} list={f.suggestions?.length ? `sg-${f.key}` : undefined} onchange={(e) => set(e.currentTarget.value)} />
-    {#if f.suggestions?.length}<datalist id={`sg-${f.key}`}>{#each f.suggestions as o}<option value={o}></option>{/each}</datalist>{/if}
-  {/if}
-{/snippet}
 
 <div class="label">{role?.label ?? (node.type === 'enemy' ? 'Enemy' : 'NPC')} sheet <span class="dim">— structure comes from your VTT / game system</span></div>
 <div class="sheet" data-testid="character-sheet">
@@ -147,15 +127,25 @@
                   {#each f.item ?? [] as sub (sub.key)}
                     <div class="sub">
                       {#if sub.type !== 'boolean'}<div class="label tight">{sub.label}</div>{/if}
-                      {@render widget(sub, entry[sub.key], (v) => setVal(f.key, asList(local[f.key]).map((x, j) => (j === i ? { ...x, [sub.key]: v } : x))))}
+                      <FieldInput f={sub} value={entry[sub.key]} set={(v) => setVal(f.key, asList(local[f.key]).map((x, j) => (j === i ? { ...x, [sub.key]: v } : x)))} />
                     </div>
                   {/each}
                   <button class="btn ghost" title="Remove" onclick={() => setVal(f.key, asList(local[f.key]).filter((_, j) => j !== i))}>×</button>
                 </div>
               {/each}
-              <button class="btn" onclick={() => setVal(f.key, [...asList(local[f.key]), {}])}>＋ Add</button>
+              {@const first = f.item?.[0]}
+              {#if first?.suggestions?.length}
+                <select class="field" value="" onchange={(e) => { const v = e.currentTarget.value; e.currentTarget.value = ''; if (v) setVal(f.key, [...asList(local[f.key]), { [first.key]: v }]); }}>
+                  <option value="">＋ Add {f.label.toLowerCase()}…</option>
+                  {#each first.suggestions as o (o)}<option value={o}>{o}</option>{/each}
+                  <option value="" disabled>──────────</option>
+                </select>
+                <button class="btn ghost" onclick={() => setVal(f.key, [...asList(local[f.key]), {}])}>＋ Add something else</button>
+              {:else}
+                <button class="btn" onclick={() => setVal(f.key, [...asList(local[f.key]), {}])}>＋ Add</button>
+              {/if}
             {:else}
-              {@render widget(f, local[f.key], (v) => setVal(f.key, v))}
+              <FieldInput {f} value={local[f.key]} set={(v) => setVal(f.key, v)} />
             {/if}
             {#if f.help}<div class="dim small">{f.help}</div>{/if}
           </div>
@@ -191,7 +181,6 @@
   .entry { display: grid; grid-template-columns: 1fr auto; gap: 4px 6px; padding: 6px; margin-bottom: 4px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; align-items: start; }
   .entry .sub { grid-column: 1; }
   .entry .btn { grid-column: 2; grid-row: 1; }
-  .chk { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--text-dim); padding-top: 18px; }
   .copy { display: flex; gap: 6px; }
   .chk-box { display: grid; gap: 2px; font-size: 11.5px; }
   .err { color: var(--danger); }

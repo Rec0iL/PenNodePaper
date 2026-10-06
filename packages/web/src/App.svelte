@@ -21,6 +21,7 @@
   import BinderModal from './components/BinderModal.svelte';
   import BackupModal from './components/BackupModal.svelte';
   import CrossLinkModal from './components/CrossLinkModal.svelte';
+  import SoundPanel from './components/SoundPanel.svelte';
   import SettingsModal from './components/SettingsModal.svelte';
   import WorldEditor from './components/WorldEditor.svelte';
   import Pool from './components/Pool.svelte';
@@ -144,6 +145,9 @@
     <button class="vttchip" class:on={app.vtt?.connected} onclick={() => (app.settingsOpen = true)} title="VTT link — click for pairing and export">
       <i></i>{app.vtt?.connected ? app.vtt.profile?.name : 'no VTT'}
     </button>
+    {#if app.vtt?.profile?.push?.music_cue}
+      <button class="btn ghost" disabled={!app.vtt?.connected} onclick={() => (app.soundsOpen = true)} title={app.vtt?.connected ? 'Play music and sounds on the VTT' : 'Connect the VTT to play music and sounds'}>♪</button>
+    {/if}
     <button class="btn ghost" onclick={() => (app.settingsOpen = true)} title="Settings (ComfyUI, image style, language, VTT)">⚙</button>
     <div class="aimode" role="group" aria-label="What happens to the AI's edits" title="Live: the AI's edits stand until you undo them. Review: they wait for your Keep / Reject after the AI is done.">
       <span class="dim">AI edits</span>
@@ -198,6 +202,7 @@
 <Flyers />
 <NodeMenu />
 <CrossLinkModal />
+<SoundPanel />
 <EdgeMenu />
 <PaneMenu />
 <FrameMenu />
