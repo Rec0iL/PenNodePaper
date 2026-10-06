@@ -187,3 +187,34 @@ describe('connections between canvases', () => {
     expect(run('get_graph').edges.find((e: any) => e.to === 'mid')).not.toHaveProperty('crossCanvas');
   });
 });
+
+describe('the active canvas', () => {
+  it('knows where the GM is looking, falls back sensibly, and new things land there', () => {
+    run('create_canvas', { name: 'Act II' });
+    scene('a1', 'act-ii');
+    expect(run('get_active_canvas')).toMatchObject({ canvas: { id: 'main' }, known: false, selectedNode: null, nodesOnIt: 0 }); // no GM view yet: the first canvas
+
+    store.setView({ canvas: 'act-ii', nodeId: 'a1' });
+    expect(run('get_active_canvas')).toMatchObject({ canvas: { id: 'act-ii', name: 'Act II' }, known: true, nodesOnIt: 1, selectedNode: { id: 'a1', title: 'a1', type: 'scene' } });
+
+    // anything created without a canvas goes where the GM is
+    const n = run('create_node', { type: 'scene', title: 'Here', id: 'here', place: 'canvas' }).id;
+    expect(store.state.graph.placements[n].canvas).toBe('act-ii');
+    run('create_node', { type: 'scene', title: 'Pooled', id: 'pooled' });
+    run('place_on_canvas', { id: 'pooled' });
+    expect(store.state.graph.placements.pooled.canvas).toBe('act-ii');
+    run('create_node', { type: 'scene', title: 'Elsewhere', id: 'elsewhere', place: 'canvas', canvas: 'main' }); // an explicit canvas still wins
+    expect(store.state.graph.placements.elsewhere.canvas).toBe('main');
+    expect(run('create_frame', { title: 'Frame' }).id).toBeTruthy();
+    expect(store.state.graph.frames[0].canvas).toBe('act-ii');
+
+    // an unknown canvas is ignored; a deleted one falls back to the first; a trashed selection is not reported
+    store.setView({ canvas: 'nope' });
+    expect(run('get_active_canvas').canvas.id).toBe('act-ii');
+    run('delete_canvas', { id: 'act-ii', moveTo: 'main' });
+    expect(run('get_active_canvas')).toMatchObject({ canvas: { id: 'main' }, known: false });
+    store.setView({ canvas: 'main', nodeId: 'a1' });
+    run('delete_node', { id: 'a1' });
+    expect(run('get_active_canvas').selectedNode).toBeNull();
+  });
+});

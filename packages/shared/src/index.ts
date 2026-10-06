@@ -387,3 +387,4 @@ export * from './story.js';
 export * from './wiki.js';
 export * from './tables.js';
 export * from './search.js';
+export * from './sounds.js';

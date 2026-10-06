@@ -91,6 +91,19 @@
     void incoming;
   });
 
+  // ---- LAN access ------------------------------------------------------------------------
+  let lan = $state<{ enabled: boolean; port: number; urls: string[]; code?: string; local: boolean } | null>(null);
+  onMount(async () => {
+    lan = await (await fetch('/api/lan')).json();
+  });
+  async function newCode() {
+    if (!confirm('Make a new access code? Every device that is logged in now has to enter the new one.')) return;
+    const r = (await (await fetch('/api/lan/new-code', { method: 'POST' })).json()) as { ok: boolean; code?: string; error?: string };
+    if (!r.ok) return say(r.error ?? 'Could not make a new code');
+    if (lan) lan.code = r.code;
+    say('New access code', 'ok');
+  }
+
   // ---- VTT link ------------------------------------------------------------------------
   let bridge = $state<{ bridgeUrl: string; token: string } | null>(null);
   let showToken = $state(false);
@@ -198,6 +211,21 @@
             </button>
           </div>
           <p class="hint">Both use the Krea 2 model you already have; precise needs no extra downloads. In the map editor, the Paint tab shows an estimate for the map in front of you (it gets accurate once ComfyUI has made an image on this computer), and you can stop a job at any time. Precise painting works on battle maps; region maps are always painted in one step.</p>
+        </section>
+
+        <section class="wide">
+          <h4>LAN access <span class="dot" class:on={lan?.enabled}></span>
+            <span class="dim">{lan?.enabled ? (lan.local ? 'on — other devices on your network can use this' : 'on — you are using it from another device') : 'off — only this computer'}</span></h4>
+          {#if lan?.enabled && lan.local}
+            <p class="hint">On the other device (laptop, tablet) open one of these addresses and type the access code once. The server, your files and the AI stay on this computer; the other device controls all of it.</p>
+            {#each lan.urls as u (u)}<div class="copy"><code>{u}</code><button class="btn sm" onclick={() => copy(u)}>copy</button></div>{/each}
+            <div class="copy" style="margin-top:4px"><span class="dim">access code</span> <code>{lan.code}</code><button class="btn sm" onclick={() => copy(lan!.code ?? '')}>copy</button><button class="btn sm" onclick={newCode} title="Log every other device out and use a new code">new code</button></div>
+            <p class="hint">Anyone on this network who knows the code can do everything you can here, so share it only with yourself and keep to a network you trust.</p>
+          {:else if lan?.enabled}
+            <p class="hint">You are connected over the network. The access code is shown on the computer that runs PenNodePaper.</p>
+          {:else}
+            <p class="hint">To work from another device (say, the laptop in the garden), start PenNodePaper in LAN mode: right-click its start-menu entry → <i>Start in LAN mode</i>, or use the tray icon. Then come back here for the address and the access code.</p>
+          {/if}
         </section>
 
         <section class="wide">

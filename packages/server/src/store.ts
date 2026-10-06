@@ -202,6 +202,18 @@ export class Store {
     this.mapListeners.add(fn);
     return () => this.mapListeners.delete(fn);
   }
+  /** What the GM is looking at right now, as reported by the open browser tab (not part of the campaign, never undoable). */
+  view: { canvas: string; nodeId?: string; at: number } | null = null;
+  setView(v: { canvas: string; nodeId?: string | null }) {
+    if (!this.state.graph.canvases.some((c) => c.id === v.canvas)) return;
+    this.view = { canvas: v.canvas, nodeId: v.nodeId && this.state.nodes[v.nodeId] ? v.nodeId : undefined, at: Date.now() };
+  }
+  /** The canvas the GM is on (so the AI works where they work); the first canvas when no view has reported yet or its canvas is gone. */
+  activeCanvasId(): string {
+    const v = this.view;
+    return v && this.state.graph.canvases.some((c) => c.id === v.canvas) ? v.canvas : this.state.graph.canvases[0].id;
+  }
+
   private viewListeners = new Set<(v: { canvas: string; nodeId?: string; actor: Actor }) => void>();
   /** The AI asked the GM's view to show a canvas (not part of the campaign, never undoable). */
   onView(fn: (v: { canvas: string; nodeId?: string; actor: Actor }) => void) {

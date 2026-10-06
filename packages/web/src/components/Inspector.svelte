@@ -2,6 +2,7 @@
   import { dieLabel, entryLine, parseEntryLines, rollLog, tableEntries, tableFaces, tableRanges, FLOW_TYPES, VISITABLE_TYPES, STATUS_CHOICES, visitsOf, groupsOf, sheetToText, type CampaignState, clockOf, isKnown, portalTarget, NODE_TYPES, NODE_STATUSES, NODE_TYPE_INFO, EDGE_KINDS, EDGE_KIND_INFO, type EdgeKind, type NodeType, type NodeStatus } from '@pnp/shared';
   import { app, cmd, focusNode, gotoPortal, openCrossLink, say, sendChat } from '../lib/app.svelte';
   import Chat from './Chat.svelte';
+  import SoundCues from './SoundCues.svelte';
   import ImagesPanel from './ImagesPanel.svelte';
   import MultiSelect from './MultiSelect.svelte';
   import CharacterSheet from './CharacterSheet.svelte';
@@ -14,9 +15,12 @@
 
   // npc/enemy sheets are edited in the schema-driven sheet form; map ids / sheet internals never belong in the raw list
   const hasRoles = $derived(!!app.vtt?.profile?.characters?.roles?.length);
-  const genericHidden = $derived(new Set(['role', 'preset', 'sheet', 'mapId', ...(node?.type === 'table' ? ['entries', 'last', 'history'] : []), ...(hasRoles && (node?.type === 'npc' || node?.type === 'enemy') ? Object.keys(node.fields) : [])]));
+  // bookkeeping the app manages itself (where the players are, the sound list, a portal's target …): not for typing into
+  const genericHidden = $derived(new Set(['role', 'preset', 'sheet', 'mapId', 'visits', 'sound', 'sounds', ...(node?.type === 'portal' ? ['canvas', 'nodeId'] : []), ...(node?.type === 'table' ? ['entries', 'last', 'history'] : []), ...(hasRoles && (node?.type === 'npc' || node?.type === 'enemy') ? Object.keys(node.fields) : [])]));
 
   const clock = $derived(node?.type === 'clock' ? clockOf(node) : null);
+  const customFields = $derived(node ? Object.entries(node.fields).filter(([k]) => !genericHidden.has(k)) : []);
+  const showSounds = $derived(!!node && !['pc', 'annotation', 'clock', 'table', 'portal'].includes(node.type));
   const portal = $derived(node?.type === 'portal' ? portalTarget({ nodes: app.nodes, graph: app.graph }, node) : null);
   const canvasNodes = (cid: string) => Object.entries(app.graph.placements).filter(([id, p]) => p.canvas === cid && app.nodes[id] && !app.nodes[id].trashed && id !== node?.id).map(([id]) => app.nodes[id]);
   const hasParty = $derived(Object.values(app.nodes).some((n) => n.type === 'pc' && !n.trashed && n.fields.present !== false));
@@ -294,6 +298,8 @@
       </div>
     {/if}
 
+    {#if showSounds}<SoundCues {node} />{/if}
+
     {#if showVtt}
       <div class="label">Show to the players</div>
       <div class="vttbox">
@@ -332,9 +338,11 @@
     <div class="label">Images</div>
     <ImagesPanel {node} {mapRenders} />
 
-    <div class="label">Fields</div>
+    <details class="adv" open={customFields.length > 0 && !!diffs.fields}>
+      <summary class="label">Advanced · custom fields <span class="chip">{customFields.length}</span></summary>
+      <div class="dim small">Free notes for special cases, as name and value. Most nodes need none.</div>
     <div class="kv" class:diff={diffs.fields}>
-      {#each Object.entries(node.fields).filter(([k]) => !genericHidden.has(k)) as [k, v] (k)}
+      {#each customFields as [k, v] (k)}
         <div class="kvrow">
           <code>{k}</code>
           <input class="field" value={str(v)} onchange={(e) => patch({ fields: { [k]: parseVal(e.currentTarget.value) } })} />
@@ -346,6 +354,7 @@
         <button class="btn" onclick={addField}>Add</button>
       </div>
     </div>
+    </details>
 
     <div class="label">Ask the AI about this node</div>
     {#key node.id}<Chat nodeId={node.id} />{/key}
@@ -431,6 +440,10 @@
   .segb:hover { color: var(--text); }
   .segb.on { background: var(--bg-4); color: var(--text); box-shadow: inset 0 0 0 1px var(--line-2); }
   .edges { display: grid; gap: 4px; }
+  details.adv > summary { cursor: pointer; list-style: none; }
+  details.adv > summary::-webkit-details-marker { display: none; }
+  details.adv > summary::before { content: '▸ '; color: var(--text-faint); }
+  details.adv[open] > summary::before { content: '▾ '; }
   .edge { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 6px; background: var(--bg-3); border-left: 2px solid var(--c); }
   .edge .kind { color: var(--c); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; }
   .edge .oth { flex: 1; text-align: left; background: transparent; border: 0; color: var(--text); padding: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

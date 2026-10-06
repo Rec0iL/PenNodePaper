@@ -1,26 +1,21 @@
 <script lang="ts">
   // Play music and sounds on the connected VTT with one click — the same cues the AI sends (play_track).
-  import { app, cmd, say } from '../lib/app.svelte';
+  import { app, cmd, loadTracks, say } from '../lib/app.svelte';
 
-  interface Track { id: string; title: string; category?: string; uploaded?: boolean }
+  type Track = { id: string; title: string; category?: string; uploaded?: boolean };
 
   const profile = $derived(app.vtt?.profile ?? null);
   const supported = $derived(!!profile?.push?.music_cue);
   const moods = $derived(!!profile?.push?.music_cue?.mood);
   const connected = $derived(!!app.vtt?.connected);
 
-  let tracks = $state<Track[] | null>(null);
+  const tracks = $derived<Track[] | null>(app.tracks);
   let query = $state('');
   let mood = $state('');
   let playing = $state('');
   let busy = $state(false);
 
-  async function load() {
-    tracks = null;
-    const r = await cmd<Track[]>('list_vtt_tracks');
-    tracks = Array.isArray(r) ? r : [];
-  }
-  $effect(() => { if (app.soundsOpen && connected && supported) void load(); });
+  $effect(() => { if (app.soundsOpen && connected && supported) void loadTracks(true); });
 
   const groups = $derived.by(() => {
     const q = query.trim().toLowerCase();

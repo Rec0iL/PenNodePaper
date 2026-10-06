@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocketServer } from 'ws';
-import { BRIDGE_PROTOCOL } from '@pnp/shared';
+import { BRIDGE_PROTOCOL, soundsOf } from '@pnp/shared';
 import { runCommand } from '../src/commands.js';
 import { toPng, renderSvg, newMap } from '../src/maps.js';
 import { Persistence } from '../src/persistence.js';
@@ -341,5 +341,51 @@ describe('drop-in client for vanilla-JS VTTs (docs/pnp-bridge-client.js)', () =>
     link.close();
     await until(() => !store.vtt.status().connected);
     expect(statuses.at(-1)).toBe('closed');
+  });
+});
+
+describe('sound cues of a node', () => {
+  const pushes = (c: { received: any[] }) => c.received.filter((m) => m.t === 'push');
+
+  it('stores the list on the node (replacing, cleaning, migrating the old loose field) and reads it back', () => {
+    const id = run('create_node', { type: 'scene', title: 'The bell', fields: { sound: { trackId: 'bell', titel: 'Gong / Glocke', wann: 'Beim Vorlesen: zwölf Schläge' } } }).id;
+    expect(soundsOf(store.state.nodes[id])).toEqual([{ trackId: 'bell', title: 'Gong / Glocke', note: 'Beim Vorlesen: zwölf Schläge' }]); // the old shape still reads
+    run('set_node_sounds', { nodeId: id, sounds: [{ trackId: 'bell', note: 'at midnight' }, { trackId: 'bell' }, { trackId: 'boss', title: 'Boss 1' }] });
+    const fields = store.state.nodes[id].fields;
+    expect(fields.sound).toBeUndefined();
+    expect(fields.sounds).toEqual([{ trackId: 'bell', note: 'at midnight' }, { trackId: 'boss', title: 'Boss 1' }]); // duplicate dropped
+    run('set_node_sounds', { nodeId: id, sounds: [] });
+    expect(store.state.nodes[id].fields.sounds).toBeUndefined();
+    store.undo();
+    expect(soundsOf(store.state.nodes[id]).map((s) => s.trackId)).toEqual(['bell', 'boss']);
+  });
+
+  it('play_node starts the cues in order and, if asked, hands out the node at the same time', async () => {
+    const c = await connect(ELDARAHQ_PROFILE);
+    const id = run('create_node', { type: 'scene', title: 'The bell tolls', readAloud: 'Twelve strokes ring over the harbour.' }).id;
+    run('set_node_sounds', { nodeId: id, sounds: [{ trackId: 'bell', title: 'Gong' }, { trackId: 'music_horror', title: 'Horror' }] });
+
+    const r = await run('play_node', { nodeId: id, handout: true });
+    expect(r).toMatchObject({ played: ['Gong', 'Horror'], handout: 'The bell tolls' });
+    const p = pushes(c);
+    expect(p.filter((m) => m.kind === 'music_cue').map((m) => m.payload)).toEqual([{ action: 'play', trackId: 'bell' }, { action: 'play', trackId: 'music_horror' }]);
+    expect(p.find((m) => m.kind === 'handout').payload).toMatchObject({ id: id, kind: 'text', reveal: true, text: 'Twelve strokes ring over the harbour.' });
+
+    c.received.length = 0;
+    await run('play_node', { nodeId: id }); // sound only
+    expect(pushes(c).map((m) => m.kind)).toEqual(['music_cue', 'music_cue']);
+    c.received.length = 0;
+    await run('play_node', { nodeId: id, trackId: 'music_horror' }); // one cue
+    expect(pushes(c).map((m) => m.payload.trackId)).toEqual(['music_horror']);
+  });
+
+  it('says what is wrong instead of failing silently', async () => {
+    await connect(ELDARAHQ_PROFILE);
+    const bare = run('create_node', { type: 'scene', title: 'Nothing here' }).id;
+    await expect(run('play_node', { nodeId: bare })).rejects.toThrow(/no sounds yet/);
+    await expect(run('play_node', { nodeId: bare, handout: true })).rejects.toThrow(/nothing to hand out|no read-aloud text/);
+    run('set_node_sounds', { nodeId: bare, sounds: [{ trackId: 'bell' }] });
+    const partial = await run('play_node', { nodeId: bare, handout: true }); // the sound works, the handout cannot
+    expect(partial).toMatchObject({ played: ['bell'], handout: null, problems: [expect.stringMatching(/^handout:/)] });
   });
 });

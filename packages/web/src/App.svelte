@@ -103,6 +103,17 @@
     creativityDraft = null;
   }
 
+  // tell the server which canvas (and node) the GM is looking at, so the AI can work where they work (get_active_canvas)
+  $effect(() => {
+    const canvas = app.canvasId;
+    const nodeId = app.selectedId;
+    if (!app.loaded || !app.connected) return;
+    const t = setTimeout(() => {
+      void fetch('/api/view', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ canvas, nodeId }) }).catch(() => {});
+    }, 250);
+    return () => clearTimeout(t);
+  });
+
   async function addCanvas() {
     const name = prompt('Name of the new canvas (e.g. “Act II”)');
     if (!name?.trim()) return;

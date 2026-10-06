@@ -96,6 +96,9 @@ export const app = $state({
   settingsOpen: false,
   /** the music & sounds panel (play on the connected VTT) */
   soundsOpen: false,
+  /** the connected VTT's tracks (null = not loaded) — shared by the sounds panel and the nodes' Sound & music section */
+  tracks: null as null | { id: string; title: string; category?: string; uploaded?: boolean }[],
+  tracksFor: '',
   /** AI changes waiting for Accept / Reject (review mode). */
   proposals: [] as Proposal[],
   /** A frame that was just created and wants its title typed in. */
@@ -242,6 +245,16 @@ export async function cmd<T = unknown>(name: string, args: Record<string, unknow
     say(`Server unreachable: ${e instanceof Error ? e.message : e}`);
     return undefined;
   }
+}
+
+/** Fetch the VTT's track list (once per connection; `force` asks again). */
+export async function loadTracks(force = false) {
+  const key = app.vtt?.connected ? (app.vtt.profile?.id ?? '') : '';
+  if (!key) { app.tracks = null; app.tracksFor = ''; return; }
+  if (!force && app.tracks && app.tracksFor === key) return;
+  app.tracksFor = key;
+  const r = await cmd<{ id: string; title: string; category?: string; uploaded?: boolean }[]>('list_vtt_tracks');
+  app.tracks = Array.isArray(r) ? r : [];
 }
 
 export async function sendChat(text: string, opts: { nodeId?: string; pins?: string[] } = {}): Promise<boolean> {

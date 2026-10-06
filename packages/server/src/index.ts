@@ -23,8 +23,10 @@ import { Persistence } from './persistence.js';
 import { seedDemo } from './seed.js';
 import { Store } from './store.js';
 import { watchCampaign } from './watcher.js';
+import { LanGuard, isLoopback, lanUrls, loginPage, newAccessCode, newSecret } from './lan.js';
 
 const cfg = loadConfig();
+const lan = new LanGuard({ enabled: cfg.lan, code: cfg.lanCode, secret: cfg.lanSecret });
 let mapPaintMode = loadMapPaintMode();
 const clients = new Set<WebSocket>();
 const send = (ws: WebSocket, msg: ServerMsg) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(msg));
@@ -92,6 +94,8 @@ const asActor = (v: unknown, d: Actor): Actor => (ACTORS.includes(v as Actor) ? 
 // --- guard: localhost only, no foreign origins (DNS-rebinding / CSRF) -------
 const LOCAL_HOST = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
 function originOk(req: http.IncomingMessage): boolean {
+  // another device in LAN mode: it may use any address of this computer, but only from its own page (same origin) — the login decides who it is
+  if (lan.enabled && !isLoopback(req)) return lan.sameOrigin(req);
   const host = req.headers.host ?? '';
   if (!LOCAL_HOST.test(host)) return false;
   const origin = req.headers.origin;
@@ -108,6 +112,7 @@ const app = new Hono();
 
 app.use('/api/*', async (c, next) => {
   const incoming = (c.env as { incoming?: http.IncomingMessage }).incoming;
+  if (incoming && !lan.authed(incoming)) return c.json({ error: 'login required' }, 401);
   if (incoming && !originOk(incoming)) return c.json({ error: 'forbidden' }, 403);
   await next();
 });
@@ -288,6 +293,13 @@ app.get('/api/info', (c) => {
       claude: `claude mcp add --transport http pennodepaper ${url}?actor=claude --header "Authorization: Bearer ${cfg.token}"`,
     },
   });
+});
+
+// the open browser tab tells us which canvas (and node) the GM is looking at, so the AI can work there
+app.post('/api/view', async (c) => {
+  const b = (await c.req.json().catch(() => ({}))) as { canvas?: string; nodeId?: string | null };
+  if (typeof b.canvas === 'string') store.setView({ canvas: b.canvas, nodeId: b.nodeId });
+  return c.json({ ok: true });
 });
 
 app.post('/api/command', async (c) => {
@@ -524,7 +536,27 @@ app.put('/api/maps/:id', async (c) => {
 });
 
 // --- VTT bridge ---------------------------------------------------------------------
-app.get('/api/vtt', (c) => c.json({ status: store.vtt.status(), bridgeUrl: `ws://127.0.0.1:${cfg.port}/bridge`, token: cfg.token }));
+app.get('/api/vtt', (c) => {
+  // a VTT opened on another device must reach this computer by the address that device used
+  const incoming = (c.env as { incoming?: http.IncomingMessage }).incoming;
+  const via = lan.enabled && incoming && !isLoopback(incoming) ? (incoming.headers.host ?? `127.0.0.1:${cfg.port}`) : `127.0.0.1:${cfg.port}`;
+  return c.json({ status: store.vtt.status(), bridgeUrl: `ws://${via}/bridge`, token: cfg.token });
+});
+
+// --- LAN mode: what another device needs to open this workspace ---------------------------------
+app.get('/api/lan', (c) => {
+  const incoming = (c.env as { incoming?: http.IncomingMessage }).incoming;
+  const here = !incoming || isLoopback(incoming); // the access code is only ever shown on this computer itself
+  return c.json({ enabled: lan.enabled, port: cfg.port, urls: lan.enabled ? lanUrls(cfg.port) : [], ...(here && lan.enabled ? { code: lan.state.code } : {}), local: here });
+});
+app.post('/api/lan/new-code', (c) => {
+  const incoming = (c.env as { incoming?: http.IncomingMessage }).incoming;
+  if (incoming && !isLoopback(incoming)) return c.json({ ok: false, error: 'A new code can only be made on the computer that runs PenNodePaper.' }, 403);
+  lan.state.code = newAccessCode();
+  lan.state.secret = newSecret(); // every device that was logged in has to enter the new code
+  saveConfig({ lanCode: lan.state.code, lanSecret: lan.state.secret });
+  return c.json({ ok: true, code: lan.state.code });
+});
 app.get('/api/exports/:file', (c) => {
   const file = path.basename(c.req.param('file'));
   const p = path.join(store.exportsDir, file);
@@ -597,11 +629,44 @@ if (fs.existsSync(webDist)) {
 
 const listener = getRequestListener(app.fetch);
 
+async function handleLogin(req: http.IncomingMessage, res: http.ServerResponse) {
+  const page = (status: number, opts: { error?: string; locked?: boolean } = {}) => res.writeHead(status, { 'content-type': 'text/html; charset=utf-8' }).end(loginPage(opts));
+  if (req.method !== 'POST') return page(200);
+  if (!lan.sameOrigin(req)) return void res.writeHead(403).end('forbidden');
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const ch of req) {
+    size += (ch as Buffer).length;
+    if (size > 2048) return void res.writeHead(413).end('too large');
+    chunks.push(ch as Buffer);
+  }
+  const code = new URLSearchParams(Buffer.concat(chunks).toString('utf8')).get('code') ?? '';
+  const r = lan.login(req.socket.remoteAddress ?? '?', code);
+  if (r.ok) {
+    res.writeHead(302, { location: '/', 'set-cookie': r.cookie }).end();
+    return;
+  }
+  await new Promise((done) => setTimeout(done, 400)); // a wrong guess costs time
+  page(r.locked ? 429 : 401, r.locked ? { locked: true } : { error: 'wrong' });
+}
+
 // --- server: /mcp (raw node), /ws (websocket), everything else -> hono -------
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', 'http://localhost');
+  // LAN mode: anything from another device needs the session (/mcp and /bridge have their own secret token)
+  if (lan.enabled && !isLoopback(req) && url.pathname !== '/mcp') {
+    if (url.pathname === '/login') {
+      await handleLogin(req, res);
+      return;
+    }
+    if (!lan.authed(req)) {
+      if (url.pathname.startsWith('/api/')) res.writeHead(401, { 'content-type': 'application/json' }).end('{"error":"login required"}');
+      else res.writeHead(302, { location: '/login' }).end();
+      return;
+    }
+  }
   if (url.pathname === '/mcp') {
-    if (!LOCAL_HOST.test(req.headers.host ?? '')) {
+    if (!lan.enabled && !LOCAL_HOST.test(req.headers.host ?? '')) {
       res.writeHead(403).end('forbidden');
       return;
     }
@@ -639,7 +704,7 @@ server.on('upgrade', (req, socket, head) => {
   const url = new URL(req.url ?? '/', 'http://localhost');
   if (url.pathname === '/bridge') {
     // VTT pages live on other origins (e.g. GitHub Pages), so no Origin check here: the secret token authenticates.
-    if (!LOCAL_HOST.test(req.headers.host ?? '') || url.searchParams.get('token') !== cfg.token) {
+    if ((!lan.enabled && !LOCAL_HOST.test(req.headers.host ?? '')) || url.searchParams.get('token') !== cfg.token) {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
       return;
@@ -647,7 +712,7 @@ server.on('upgrade', (req, socket, head) => {
     bridgeWss.handleUpgrade(req, socket, head, (ws) => bridgeWss.emit('connection', ws, req));
     return;
   }
-  if (url.pathname !== '/ws' || !originOk(req)) {
+  if (url.pathname !== '/ws' || !lan.authed(req) || !originOk(req)) {
     socket.destroy();
     return;
   }
@@ -659,7 +724,11 @@ server.on('upgrade', (req, socket, head) => {
 });
 
 
-server.listen(cfg.port, '127.0.0.1', () => {
+server.listen(cfg.port, lan.enabled ? '0.0.0.0' : '127.0.0.1', () => {
   console.log(`PenNodePaper server  http://127.0.0.1:${cfg.port}   campaign: ${path.basename(campaignDir)}`);
+  if (lan.enabled) {
+    console.log(`LAN mode             other devices open: ${lanUrls(cfg.port).join('   ')}`);
+    console.log(`                     access code: ${lan.state.code}`);
+  }
   console.log(`MCP endpoint         http://127.0.0.1:${cfg.port}/mcp   (Bearer token in ${CONFIG_PATH})`);
 });

@@ -1,5 +1,5 @@
 import { z, type ZodRawShape } from 'zod';
-import { DEFAULT_GROUP, dieLabel, entryLine, fragmentName, parseEntry, rollLog, rollTable, seeded, tableEntries, tableFaces, clockOf, lintStory, nextPlayedSeq, playedPath, playerWiki, wikiMarkdown, slugify, storyStatus, validateSheet, visitsOf, type Visit } from '@pnp/shared';
+import { DEFAULT_GROUP, dieLabel, soundsOf, entryLine, fragmentName, parseEntry, rollLog, rollTable, seeded, tableEntries, tableFaces, clockOf, lintStory, nextPlayedSeq, playedPath, playerWiki, wikiMarkdown, slugify, storyStatus, validateSheet, visitsOf, type Visit } from '@pnp/shared';
 import type { Actor, Backend, DoorKind, EdgeKind, EdgeSide, ImageKind, NodeStatus, NodeType, PropKind, StoryEdge, StoryNode, TerrainKind } from '@pnp/shared';
 import { DOOR_KINDS, EDGE_KINDS, EDGE_SIDES, IMAGE_KINDS, NODE_STATUSES, NODE_TYPES, PROP_KINDS, TERRAINS } from '@pnp/shared';
 import fs from 'node:fs';
@@ -216,7 +216,7 @@ def({
     };
     tx.putNode(node);
     if (a.place === 'canvas' || a.x !== undefined || a.nearNodeId) {
-      const canvas = a.canvas ?? tx.state.graph.canvases[0].id;
+      const canvas = a.canvas ?? tx.store.activeCanvasId();
       checkCanvas(tx, canvas);
       const pos = a.x !== undefined && a.y !== undefined ? { x: a.x, y: a.y } : freeSpot(tx, canvas, a.nearNodeId ?? a.linkFrom);
       tx.setPlacement(id, { canvas, ...pos });
@@ -320,7 +320,7 @@ def({
   run(tx, a) {
     const n = tx.requireNode(a.id);
     if (n.trashed) throw new Error('Node is trashed; restore it first');
-    const canvas = a.canvas ?? tx.state.graph.placements[a.id]?.canvas ?? tx.state.graph.canvases[0].id;
+    const canvas = a.canvas ?? tx.state.graph.placements[a.id]?.canvas ?? tx.store.activeCanvasId();
     checkCanvas(tx, canvas);
     const pos = a.x !== undefined && a.y !== undefined ? { x: a.x, y: a.y } : freeSpot(tx, canvas, a.nearNodeId);
     tx.setPlacement(a.id, { canvas, ...pos });
@@ -690,7 +690,7 @@ def({
       fields: { mapId: m.id }, images: [], poolHint: '', trashed: false, createdAt: t, updatedAt: t,
     });
     if (a.place === 'canvas') {
-      const canvas = tx.state.graph.canvases[0].id;
+      const canvas = tx.store.activeCanvasId();
       tx.setPlacement(id, { canvas, ...freeSpot(tx, canvas) });
     }
     tx.label = `Created map “${a.name}”`;
@@ -1014,6 +1014,71 @@ def({
 });
 
 def({
+  name: 'set_node_sounds',
+  description:
+    'Set the music / sound effects a node needs (the sound cues of a scene, an encounter, a place …), in the order they should start. Use trackIds from list_vtt_tracks. This REPLACES the node\'s list; give an empty list to clear it. Put WHEN to play something in `note` (e.g. “when the bell strikes”). The GM sees the list in the node\'s Sound & music section and plays it with one button (or you play it with play_node). Use this instead of inventing a custom field.',
+  shape: {
+    nodeId: z.string(),
+    sounds: z.array(z.object({ trackId: z.string().min(1), title: z.string().optional(), note: z.string().optional() })).max(20),
+  },
+  run(tx, a) {
+    const n = tx.requireNode(a.nodeId);
+    const seen = new Set<string>();
+    const sounds = a.sounds.filter((s) => !seen.has(s.trackId) && !!seen.add(s.trackId)).map((s) => ({
+      trackId: s.trackId.trim(),
+      ...(s.title?.trim() ? { title: s.title.trim() } : {}),
+      ...(s.note?.trim() ? { note: s.note.trim() } : {}),
+    }));
+    const fields = { ...n.fields };
+    delete fields.sound; // the older loose field: the list replaces it
+    if (sounds.length) fields.sounds = sounds;
+    else delete fields.sounds;
+    tx.putNode({ ...n, fields, updatedAt: now() });
+    tx.label = sounds.length ? `Sounds for ${describe(n)}: ${sounds.map((s) => s.title ?? s.trackId).join(', ')}` : `Cleared the sounds of ${describe(n)}`;
+    return { id: n.id, sounds: sounds.length };
+  },
+});
+
+def({
+  name: 'play_node',
+  description:
+    'Play a node\'s sound cues on the connected VTT, in their order (see set_node_sounds), and — with handout:true — show the node\'s handout (picture, else read-aloud text) to the players at the same time. trackId plays just that one cue. Only when the GM asked: it is heard and seen at the table right away.',
+  async: true,
+  shape: { nodeId: z.string(), handout: z.boolean().optional(), trackId: z.string().optional() },
+  async run(tx, a) {
+    const n = tx.requireNode(a.nodeId);
+    let cues = soundsOf(n);
+    if (a.trackId) cues = cues.filter((c) => c.trackId === a.trackId);
+    if (!cues.length && !a.handout) throw new Error(`“${n.title}” has no sounds yet — add some with set_node_sounds (the GM does it in the node's Sound & music section).`);
+    const played: string[] = [];
+    const problems: string[] = [];
+    let handout: string | null = null;
+    const why = (e: unknown) => (e instanceof Error ? e.message : String(e));
+    const jobs: Promise<void>[] = [];
+    if (a.handout) {
+      jobs.push((async () => {
+        try {
+          const h = handoutFromNode(tx.store, tx.store.imagesDir, a.nodeId, { reveal: true });
+          await tx.store.vtt.push({ kind: 'handout', payload: h });
+          handout = h.title;
+        } catch (e) { problems.push(`handout: ${why(e)}`); }
+      })());
+    }
+    jobs.push((async () => {
+      for (const c of cues) {
+        try {
+          await tx.store.vtt.push({ kind: 'music_cue', payload: { action: 'play', trackId: c.trackId } });
+          played.push(c.title ?? c.trackId);
+        } catch (e) { problems.push(`${c.title ?? c.trackId}: ${why(e)}`); }
+      }
+    })());
+    await Promise.all(jobs);
+    if (!played.length && !handout) throw new Error(problems.join('; ') || 'Nothing was played.');
+    return { played, handout, ...(problems.length ? { problems } : {}) };
+  },
+});
+
+def({
   name: 'export_vtt_bundle',
   description:
     'Offline export for a VTT. format "kinetik-session" = a fresh KINETIK VTT session file (load it on the GM start screen — NOTE it replaces that VTT’s session): maps as scenes (with tokens), a picture of each place as a grid-less backdrop scene, handouts, enemies as combat NPCs, and NPCs as map tokens with portrait and note on the scene of the place they belong to. "upf" = the universal bundle other VTTs can import. Select handouts / maps / backdrops (location node ids) / characters (enemy or NPC node ids); omit all four to export everything that is ready: every handout node, every map, every location with a picture, every enemy and NPC node whose sheet is valid. Returns the file path and a download URL.',
@@ -1093,7 +1158,7 @@ function markPlayed(tx: Tx, a: { nodeId: string; status?: 'active' | 'done' | 's
       const from = a.after ?? here[0]?.id;
       if (!tx.state.graph.placements[n.id]) {
         const ref = from ? tx.state.graph.placements[from] : undefined;
-        const canvas = ref?.canvas ?? tx.state.graph.canvases[0].id;
+        const canvas = ref?.canvas ?? tx.store.activeCanvasId();
         tx.setPlacement(n.id, { canvas, ...freeSpot(tx, canvas, from) });
         placedNow = true;
       }
@@ -1490,6 +1555,28 @@ function canvasById(tx: Tx, id: string) {
 }
 
 def({
+  name: 'get_active_canvas',
+  description:
+    'Which canvas the GM is looking at right now (and which node they have selected). Ask this when the GM says “here”, “on this canvas”, “this scene”, or does not name a canvas. Anything you create without a canvas lands on this one. If no GM view is open, it answers with the first canvas and known:false.',
+  readOnly: true,
+  shape: {},
+  run(tx) {
+    const v = tx.store.view;
+    const known = !!v && tx.state.graph.canvases.some((c) => c.id === v.canvas);
+    const c = canvasById(tx, tx.store.activeCanvasId());
+    const sel = known && v?.nodeId ? tx.node(v.nodeId) : undefined;
+    return {
+      canvas: { id: c.id, name: c.name },
+      known,
+      nodesOnIt: Object.values(tx.state.graph.placements).filter((p) => p.canvas === c.id).length,
+      selectedNode: sel && !sel.trashed ? { id: sel.id, title: sel.title, type: sel.type } : null,
+      canvases: tx.state.graph.canvases.length,
+      ...(known ? {} : { note: 'No GM view has reported yet (no browser tab open?) — assuming the first canvas.' }),
+    };
+  },
+});
+
+def({
   name: 'rename_canvas',
   description: 'Rename a canvas (its id stays the same, so portals and placements keep working).',
   shape: { id: z.string(), name: z.string().min(1) },
@@ -1588,7 +1675,7 @@ def({
     const fromNode = a.from ? tx.requireNode(a.from) : null;
     const fp = a.from ? tx.state.graph.placements[a.from] : undefined;
     if (fromNode && !fp) throw new Error(`“${fromNode.title}” is in the pool — place it on a canvas first.`);
-    const canvas = a.canvas ?? fp?.canvas ?? tx.state.graph.canvases[0].id;
+    const canvas = a.canvas ?? fp?.canvas ?? tx.store.activeCanvasId();
     checkCanvas(tx, canvas);
     if (canvas === target.id) throw new Error('The portal and its target are on the same canvas — just link the nodes instead.');
     const title = a.title?.trim() || `→ ${target.name}`;
@@ -1632,7 +1719,7 @@ def({
     id: z.string().optional(),
   },
   run(tx, a) {
-    let canvas = a.canvas ?? tx.state.graph.canvases[0].id;
+    let canvas = a.canvas ?? tx.store.activeCanvasId();
     let box: { x: number; y: number; w: number; h: number };
     if (a.nodeIds?.length) {
       const ps = a.nodeIds.map((id) => ({ id, p: tx.state.graph.placements[id] })).map((x) => {

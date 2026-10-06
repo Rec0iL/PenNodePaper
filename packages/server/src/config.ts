@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { newAccessCode, newSecret } from './lan.js';
 import type { MapPaintMode } from '@pnp/shared';
 
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -11,6 +12,10 @@ export interface RecentCampaign { dir: string; openedAt: string }
 
 export interface AppConfig {
   port: number;
+  /** LAN mode: listen on the network and ask other devices for the access code (PNP_LAN=1 turns it on for one run). */
+  lan: boolean;
+  lanCode: string;
+  lanSecret: string;
   /** Bearer token required by the MCP endpoint (agy / Claude connect with it). */
   token: string;
   campaignsDir: string;
@@ -42,11 +47,15 @@ export function loadConfig(): AppConfig {
   const token = saved.token ?? randomBytes(24).toString('hex');
   const cfg: AppConfig = {
     port: Number(process.env.PNP_PORT ?? saved.port ?? 4317),
+    lan: process.env.PNP_LAN ? process.env.PNP_LAN === '1' : !!saved.lan,
+    lanCode: saved.lanCode ?? newAccessCode(),
+    lanSecret: saved.lanSecret ?? newSecret(),
     token,
     campaignsDir: process.env.PNP_CAMPAIGNS_DIR ?? saved.campaignsDir ?? path.join(REPO_ROOT, 'campaigns'),
     campaign: process.env.PNP_CAMPAIGN ?? saved.campaign ?? 'demo',
   };
   if (!saved.token) saveConfig({ port: cfg.port, token: cfg.token });
+  if (!saved.lanCode || !saved.lanSecret) saveConfig({ lanCode: cfg.lanCode, lanSecret: cfg.lanSecret });
   return cfg;
 }
 

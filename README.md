@@ -2,7 +2,7 @@
 
 # 🗺️ PenNodePaper
 
-**Build your pen & paper world and story on an infinite canvas, with an AI co-GM that works right in front of you.**
+**Build your pen & paper world and story on an infinite canvas — write it all by hand, or let an optional AI co-GM work right in front of you.**
 
 <img src="https://img.shields.io/badge/node-%E2%89%A520-339933?style=for-the-badge&logo=nodedotjs&logoColor=white" alt="Node">
 <img src="https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript">
@@ -28,14 +28,15 @@
 
 </div>
 
-AI-assisted world & story building for pen & paper. An infinite node canvas for the story, a sidebar **pool** for prepared nodes that don't have a fixed place yet (the tavern the players may or may not visit), and an AI co-GM (Claude or agy) that edits the campaign through an MCP server — every change animated live.
+World & story building for pen & paper. An infinite node canvas for the story, a sidebar **pool** for prepared nodes that don't have a fixed place yet (the tavern the players may or may not visit), maps, images, handouts and a live link to your tabletop app — all of it works **by hand, with no AI at all**. If you want a helper, an **optional** AI co-GM (Claude or agy) can edit the same campaign through an MCP server, every change animated live. You and the AI work on the same plain files, so you can use it for a single chore or not at all.
 
 ## ✨ Highlights
 
 * 🧩 **Node canvas + pool** — scenes, NPCs, places, clues, items and more as typed nodes with typed connections; prepared material waits in the pool until it is needed.
-* 🤖 **AI co-GM** — Claude or agy edit the campaign through MCP and you watch every change happen; each request is one undo step, or review it first.
-* 📚 **Rulebooks & world books** — the AI looks rules up instead of inventing them.
-* 🎨 **Images & maps** — portraits, scenes and handouts via your local ComfyUI; battle and region maps you or the AI edit, painted on request.
+* ✍️ **Fully usable by hand** — you can build, connect, write, map, roll and run a campaign without ever touching the AI; the few conveniences that do need it (like turning imported notes into nodes) say so.
+* 🤖 **Optional AI co-GM** — if you want one, Claude or agy edit the campaign through MCP and you watch every change happen; each request is one undo step, or review it first.
+* 📚 **Rulebooks & world books** — your rules and lore, searchable by you; the AI (if you use it) looks things up instead of inventing them.
+* 🎨 **Images & maps** — portraits, scenes and handouts via your local ComfyUI (also optional); battle and region maps you edit yourself, painted on request.
 * 🔌 **Live VTT bridge** — push handouts, scenes, NPCs and music to KINETIK VTT (or any VTT that speaks the small bridge protocol), or export a file.
 * 🎭 **Running the session** — split the party, track where each group is, get back on track, share a spoiler-safe wiki with your players.
 * 📘 **GM binder** — the whole campaign as one printable A4 PDF with page references on every connection.
@@ -58,6 +59,18 @@ The story lives on an infinite canvas; the **pool** on the left holds everything
 
 Connections have kinds (leads to, if …, reveals, belongs to, foreshadows, bridge), each with its own colour that you can switch on and off from the bar at the bottom.
 
+### ✍️ Writing by hand
+
+You never need the AI to build a campaign. The usual way:
+
+* **Make nodes** with the bar at the top left of the canvas (pick a type, type a title, *+ Canvas* or *+ Pool*), by right-clicking the empty canvas, or by dragging a card out of the pool.
+* **Fill them in** in the Inspector on the right: title, summary, notes (GM only), the read-aloud text for your players, tags, status, and a character sheet for NPCs and enemies (the fields come from your VTT, with pick lists wherever it offers choices). Pictures are made with your local ComfyUI (also optional); you write the prompt yourself or let the AI do it.
+* **Connect them** by dragging from one card's handle to another; choose the kind in the bar at the bottom. Right-click a connection or a node for the rest.
+* **Maps, random tables, frames, canvases** have their own editors and buttons; **handouts, music and sounds** go to your VTT from the Inspector and the ♪ button.
+* **Undo** (`Ctrl+Z`) works for everything you do, not only for the AI.
+
+The AI is a shortcut for the same actions, never the only way to them.
+
 ## 🚀 Install & run
 
 ```bash
@@ -68,13 +81,19 @@ npm run build && npm start   # production: server serves the built UI on :4317
 
 First launch seeds a small demo campaign in `campaigns/demo/`. The server starts with the campaign you used last; switch, create or branch campaigns from the campaign menu in the top bar (or force one with `PNP_CAMPAIGN=<folder>`).
 
-**What you need:** Node 20+. Optional, each unlocks one feature: the `claude` and/or `agy` CLI (AI chat), a local **ComfyUI** with Krea 2 (images, painted maps), **WeasyPrint** (`pip install weasyprint`, GM binder PDF), **ImageMagick** (image thumbnails), `unzip` + `pdftotext` (importing .docx / .pdf notes), `git` (optional local git commits).
+**What you need:** Node 20+ — that is enough to write and run a whole campaign by hand. Optional, each unlocks one feature: the `claude` and/or `agy` CLI (the AI chat; without them the AI tab simply stays unused), a local **ComfyUI** with Krea 2 (images, painted maps), **WeasyPrint** (`pip install weasyprint`, GM binder PDF), **ImageMagick** (image thumbnails), `unzip` + `pdftotext` (importing .docx / .pdf notes), `git` (optional local git commits).
 
-**Start-menu launcher (Linux):** `scripts/install-launcher.sh` adds a *PenNodePaper* entry to your application menu — it starts the server in the background (building the UI when needed) and opens the browser; right-click the entry for *Stop PenNodePaper*. Or run `scripts/pennodepaper.sh start|stop|open|status` yourself. The log is in `~/.local/state/pennodepaper/server.log`.
+**Start-menu launcher (Linux):** `scripts/install-launcher.sh` adds a *PenNodePaper* entry to your application menu — it starts the server in the background (building the UI when needed), opens the browser and shows a **tray icon**. Right-click the menu entry for *Start in LAN mode*, *Show LAN address and access code*, *Open in browser*, *Stop* and *Show tray icon*. Or run `scripts/pennodepaper.sh start|start-lan|stop|open|status|lan-info|tray` yourself. The log is in `~/.local/state/pennodepaper/server.log`.
+
+**Tray icon** (needs PyQt6 or PySide6, `PNP_NO_TRAY=1` leaves it out): a status dot — grey stopped, green running for this computer only, blue open to your network. Left-click opens PenNodePaper; the menu starts/stops it, switches LAN mode, and copies the address and access code.
+
+**Use it from another device (LAN mode):** by default only this computer can reach PenNodePaper. Start it in LAN mode (start menu → right-click, the tray icon, or `PNP_LAN=1 npm start`) and open the address it shows (e.g. `http://192.168.0.153:4317`) on the laptop or tablet; type the **access code** once (shown in the tray menu, ⚙ Settings → LAN access, and `pennodepaper.sh lan-info`). The server, your campaign files, ComfyUI and the AI keep running on this computer — the other device just controls them, so it can do everything you can. This computer itself needs no login. Five wrong codes lock a device out for five minutes; *new code* in Settings logs every device out. Use it on a network you trust (plain http, no encryption); for anything wider use a VPN such as Tailscale instead of opening a port. A VTT or Claude Code on the other device can use the same address (`/bridge`, `/mcp`) with their own tokens.
 
 > 📖 **Step-by-step guides for Linux, macOS and Windows** (including every optional tool, the AI CLIs, ComfyUI and troubleshooting): **[docs/INSTALL.md](docs/INSTALL.md)**
 
-## 🤖 The AI
+## 🤖 The AI (optional)
+
+Everything above works without it. If you install the `claude` and/or `agy` CLI you get a co-GM that can do the same things you can do by hand — create and link nodes, write text, look things up in your rulebooks and world books, draw maps, queue images, play music — and you watch it happen. Use it for a single chore (“fill this random table”, “write a prompt for this portrait”), for a first draft, or not at all. You stay in charge: every AI action is one undo step, and *review mode* holds its changes back until you keep them.
 
 
 <div align="center">
@@ -190,7 +209,7 @@ Each VTT ships its own small bridge client, and PenNodePaper learns what it can 
 
 * **Right-click a node** → *Move players here*: tick which players go there (or pick *Whole party* / a group). The party can split up — each part keeps its own coloured marker and trail, groups are named after who is together (“Anna & Ben”), and when they meet again they become the plain “party”. Select **several nodes** (Shift-click or Shift-drag, or Ctrl/Cmd-click) to mark the players as being at all of them at once — e.g. in the tavern while the bell is ringing — or to set all their statuses together. The same menu sets the **status** (untouched / active / done / skipped; *active* is a marker only — several nodes can be active — and doesn't move anyone). Right-click a **connection** to take the played-path highlight off it (the players went back and forth), change its kind or reverse it; right-click the **empty canvas** to add a node right there.
 * **Campaigns** — the campaign name in the top bar is a menu: open another campaign, create a new one, jump back to a recently used one, or open any campaign folder by path. (Switching waits until the AI and image queue are idle; the VTT reconnects by itself.) The server starts with the campaign you used last.
-* **Import notes** (Library tab) — bring in your existing prep as .md, .txt, .docx, .pdf or pasted text. The text is kept in the campaign's `imports/` folder; one button lets the AI read it in chunks (`list_imports`, `read_import`) and create typed nodes — places, NPCs, items and clues go to the pool, an ordered run of scenes onto the canvas, linked by kind. It never invents facts and tells you what was unclear.
+* **Import notes** (Library tab, *needs the AI*) — bring in your existing prep as .md, .txt, .docx, .pdf or pasted text. The text is kept in the campaign's `imports/` folder; one button lets the AI read it in chunks (`list_imports`, `read_import`) and create typed nodes — places, NPCs, items and clues go to the pool, an ordered run of scenes onto the canvas, linked by kind. It never invents facts and tells you what was unclear.
 * **Backups & sync** (campaign menu → *Backups & sync…*) — snapshots of the whole campaign folder as `.tar.gz` in `snapshots/`: automatic ones while you work (only when something changed, light = no images, the oldest are pruned; leaving a campaign also saves it), manual ones with a label (with images), and a *before restore* safety snapshot every time you restore. Restoring puts nodes, graph, maps and books back. Every snapshot can also be copied to a **mirror folder** (Dropbox / Syncthing / USB), the whole campaign can be exported as **one file** and opened on another machine, and an optional **local git** repo gets a commit per snapshot (pushing is yours to do — nothing is ever sent anywhere by itself). The AI can take a safety snapshot before risky bulk edits (`create_snapshot`) but cannot restore.
 * **Random tables** — a *Random table* node holds one entry per line (`3× Fog` = three times as likely; the die is the number of faces: 6 entries = d6). 🎲 on the card (or right-click → Roll) rolls it, the last result stays on the card and a short history in the Inspector. **✦ Fill with AI** writes entries from your world books (names, rumours, loot, weather, complications). The AI can fill and roll tables itself (`set_table`, `roll_table`).
 * **GM binder** (campaign menu → *GM binder (PDF)…*) — the whole campaign as one printable A4 PDF made with WeasyPrint: cover, contents with page numbers, the story map as a picture, the story beat by beat in reading order (read-aloud in a shaded box, your GM notes, where each beat leads — every connection also names the chapter and page of its target, so it works on paper too), prepared material, places with their maps, people with character sheets, things and secrets, handouts (one per page), random tables and the party. Choose the sections, leave out your GM notes (for a co-GM), or drop the pictures for a small file. The AI can make it too (`export_binder`). Needs `weasyprint` (`pip install weasyprint`).
