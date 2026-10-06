@@ -5,3 +5,5 @@ dist/
 # campaigns are your own data (the demo is re-created on first start): never part of the code repository
 campaigns/
 .DS_Store
+# the design notes stay on this machine only
+docs/design-plan.md

@@ -5,7 +5,7 @@
     type Node, type Edge, type Connection,
   } from '@xyflow/svelte';
   import { NODE_TYPES, NODE_TYPE_INFO, EDGE_KINDS, EDGE_KIND_INFO, groupColor, trailEdges, type CampaignState, type NodeType, type EdgeKind } from '@pnp/shared';
-  import { NODE_H, NODE_W, app, cmd, closeMenus, noteZoom, openCrossLink, screenToFlow, selectEdge, selectNode, viewCenter } from '../lib/app.svelte';
+  import { NODE_H, NODE_W, app, closeEnlarged, cmd, closeMenus, noteZoom, openCrossLink, screenToFlow, selectEdge, selectNode, viewCenter } from '../lib/app.svelte';
   import NodeCard from './NodeCard.svelte';
   import StoryEdge from './StoryEdge.svelte';
   import FlowBridge from './FlowBridge.svelte';
@@ -47,6 +47,7 @@
         position: { x: p.x, y: p.y },
         data: { node: n },
         class: app.fx[id]?.glide ? 'fx-glide' : '',
+        zIndex: app.enlarged?.id === id ? 5000 : undefined, // an enlarged card lies over its neighbours
       });
     }
     for (const [id, g] of Object.entries(app.ghosts)) {
@@ -82,12 +83,15 @@
       const tn = app.nodes[there];
       const hp = app.graph.placements[here];
       if (!tp || !tn || tn.trashed || !hp) continue;
-      // next to the node (right for outgoing, left for incoming), moving up/down until it is free
-      const px = out ? hp.x + NODE_W + 90 : hp.x - STUB_W - 90;
-      let py = hp.y;
-      for (let i = 0; i < 24; i++) {
-        const cand = hp.y + (i % 2 ? -1 : 1) * Math.ceil(i / 2) * (STUB_H + 8);
-        if (!taken.some((b) => hit(b, { x: px, y: cand, w: STUB_W, h: STUB_H }))) { py = cand; break; }
+      // where the GM put it, else next to the node (right for outgoing, left for incoming), moving up/down until it is free
+      const saved = e.markers?.[canvas];
+      let px = saved ? saved.x : out ? hp.x + NODE_W + 90 : hp.x - STUB_W - 90;
+      let py = saved ? saved.y : hp.y;
+      if (!saved) {
+        for (let i = 0; i < 24; i++) {
+          const cand = hp.y + (i % 2 ? -1 : 1) * Math.ceil(i / 2) * (STUB_H + 8);
+          if (!taken.some((b) => hit(b, { x: px, y: cand, w: STUB_W, h: STUB_H }))) { py = cand; break; }
+        }
       }
       taken.push({ x: px, y: py, w: STUB_W, h: STUB_H });
       const sid = STUB + e.id;
@@ -95,8 +99,8 @@
         ...(prev.get(sid) ?? {}),
         id: sid, type: 'stub',
         position: { x: px, y: py },
-        data: { targetId: there, title: tn.title, canvas: app.graph.canvases.find((c) => c.id === tp.canvas)?.name ?? tp.canvas, kind: e.kind, out },
-        draggable: false, selectable: false, connectable: false, deletable: false,
+        data: { edgeId: e.id, targetId: there, title: tn.title, canvas: app.graph.canvases.find((c) => c.id === tp.canvas)?.name ?? tp.canvas, kind: e.kind, out, moved: !!saved },
+        draggable: true, dragHandle: '.grip', selectable: false, connectable: false, deletable: false,
       });
       es.push({ id: e.id, source: out ? e.from : sid, target: out ? sid : e.to, type: 'story', data });
     }
@@ -106,6 +110,23 @@
         es.push({ id: `ghost:${g.edge.id}`, source: g.edge.from, target: g.edge.to, type: 'story', data: { kind: g.edge.kind, label: g.edge.label, ghost: true }, selectable: false });
     }
     edges = es;
+  });
+
+  // an enlarged card shrinks again as soon as you click anywhere else (or press Esc, or switch canvas)
+  $effect(() => {
+    const id = app.enlarged?.id;
+    if (!id) return;
+    const down = (e: PointerEvent) => {
+      const t = e.target as Element | null;
+      if (t?.closest?.(`.svelte-flow__node[data-id="${CSS.escape(id)}"]`)) return;
+      closeEnlarged(!t?.closest?.('.tabs'), true); // a click on a canvas tab must not drag the camera back on the new canvas
+    };
+    document.addEventListener('pointerdown', down, true);
+    return () => document.removeEventListener('pointerdown', down, true);
+  });
+  $effect(() => {
+    app.canvasId;
+    untrack(() => closeEnlarged(false));
   });
 
   // selection from outside (timeline click, chat card) -> flow
@@ -177,6 +198,11 @@
   }
 
   function onnodedragstop({ nodes: movedAll, event }: { nodes: Node[]; event: MouseEvent | TouchEvent }) {
+    // a jump marker was dragged by its grip: remember where it now sits (on this canvas)
+    for (const n of movedAll.filter((x) => x.id.startsWith(STUB))) {
+      const d = n.data as { edgeId: string };
+      void cmd('move_edge_marker', { edgeId: d.edgeId, canvas: app.canvasId, x: n.position.x, y: n.position.y });
+    }
     const fr = movedAll.find((n) => n.id.startsWith(FRAME));
     if (fr && carry && fr.id === FRAME + carry.id) {
       const dx = Math.round(fr.position.x - carry.sx), dy = Math.round(fr.position.y - carry.sy);
@@ -185,7 +211,7 @@
       if (dx || dy) void cmd('move_frame', { id, dx, dy });
       return;
     }
-    const moved = movedAll.filter((n) => !n.id.startsWith(FRAME));
+    const moved = movedAll.filter((n) => !n.id.startsWith(FRAME) && !n.id.startsWith(STUB));
     if (!moved.length) return;
     if (overPool(event)) {
       void cmd('batch', { ops: moved.map((n) => ({ command: 'move_to_pool', args: { id: n.id } })), label: `Moved ${moved.length} node(s) to the pool` });
@@ -225,6 +251,8 @@
     if (r) selectNode(r.id);
   }
 </script>
+
+<svelte:window onkeydown={(e) => e.key === 'Escape' && app.enlarged && closeEnlarged()} />
 
 <div class="canvas" role="application" {ondragover} {ondrop}>
   <SvelteFlow

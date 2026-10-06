@@ -218,3 +218,30 @@ describe('the active canvas', () => {
     expect(run('get_active_canvas').selectedNode).toBeNull();
   });
 });
+
+describe('jump marker positions', () => {
+  it('remembers where the GM dragged a marker, per canvas, with undo; the AI cannot move markers', () => {
+    run('create_canvas', { name: 'Act II' });
+    scene('hook', 'main'); scene('arrive', 'act-ii');
+    const e = run('link', { from: 'hook', to: 'arrive' }).edgeId;
+    const edge = () => store.state.graph.edges.find((x) => x.id === e)!;
+    expect(edge().markers).toBeUndefined();
+
+    runCommand(store, 'move_edge_marker', { edgeId: e, canvas: 'main', x: 412.4, y: 90.6 }, 'user');
+    runCommand(store, 'move_edge_marker', { edgeId: e, canvas: 'act-ii', x: 10, y: 20 }, 'user');
+    expect(edge().markers).toEqual({ main: { x: 412, y: 91 }, 'act-ii': { x: 10, y: 20 } }); // one position per canvas, rounded
+    run('relink', { edgeId: e, label: 'sail' }); // other edits keep the positions
+    expect(edge().markers).toEqual({ main: { x: 412, y: 91 }, 'act-ii': { x: 10, y: 20 } });
+
+    runCommand(store, 'move_edge_marker', { edgeId: e, canvas: 'main', reset: true }, 'user');
+    expect(edge().markers).toEqual({ 'act-ii': { x: 10, y: 20 } });
+    runCommand(store, 'move_edge_marker', { edgeId: e, canvas: 'act-ii', reset: true }, 'user');
+    expect(edge().markers).toBeUndefined();
+    store.undo();
+    expect(edge().markers).toEqual({ 'act-ii': { x: 10, y: 20 } });
+
+    expect(() => runCommand(store, 'move_edge_marker', { edgeId: e, canvas: 'nope', x: 1, y: 1 }, 'user')).toThrow(/not found/);
+    expect(() => runCommand(store, 'move_edge_marker', { edgeId: e, canvas: 'main' }, 'user')).toThrow(/x and y/);
+    expect(() => runCommand(store, 'move_edge_marker', { edgeId: e, canvas: 'main', x: 1, y: 1 }, 'claude')).toThrow(/GM only/);
+  });
+});

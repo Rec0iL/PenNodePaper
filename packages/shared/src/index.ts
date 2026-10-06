@@ -54,6 +54,8 @@ export interface StoryEdge {
   label: string;
   /** The GM switched the played-path highlight off for this connection. */
   noTrail?: boolean;
+  /** Where the GM dragged this connection's jump marker to, per canvas (canvas id → position); unset = placed automatically. */
+  markers?: Record<string, { x: number; y: number }>;
 }
 
 export interface Placement {

@@ -8,8 +8,8 @@ import {
   EDGE_KIND_INFO, FLOW_TYPES, NODE_TYPE_INFO, dieLabel, sheetToText, tableEntries, tableFaces, tableRanges,
   type CampaignState, type StoryEdge, type StoryNode,
 } from '@pnp/shared';
-import { illustrationsOf, sheetOf } from './vtt.js';
-import { renderSvg, toPng } from './maps.js';
+import { illustrationsOf, imageDimensions, sheetOf } from './vtt.js';
+import { imageSize, renderSvg, toPng } from './maps.js';
 import type { Store } from './store.js';
 
 export const BINDER_SECTIONS = ['map', 'story', 'pool', 'places', 'people', 'things', 'handouts', 'tables', 'party'] as const;
@@ -21,6 +21,63 @@ export interface BinderOptions {
   notes?: boolean;
   /** pictures are included unless false (smaller file) */
   images?: boolean;
+  /**
+   * 'binder' (default): the binder only · 'both': the binder, and the table prints at the end · 'prints': only the table prints
+   * (the pages to hand out and lay on the table: every handout, map and place picture on a page of its own).
+   */
+  mode?: 'binder' | 'both' | 'prints';
+  /** how many copies of every handout / map / place picture the table prints hold (0 or missing = none of that kind) */
+  copies?: { handouts?: number; maps?: number; places?: number };
+}
+
+export const MAX_COPIES = 30;
+export interface PrintSummary { handouts: number; maps: number; places: number; pages: number }
+
+const copiesOf = (n: unknown) => Math.max(0, Math.min(MAX_COPIES, Math.floor(Number(n) || 0)));
+
+/** The table prints: each handout, map and place picture on a page of its own (portrait or landscape by its shape), the copies one after the other. */
+function tablePrints(store: Store, copies: NonNullable<BinderOptions['copies']>): { html: string; summary: PrintSummary } {
+  const s = store.state;
+  const sum: PrintSummary = { handouts: 0, maps: 0, places: 0, pages: 0 };
+  const out: string[] = [];
+  const add = (n: number, page: string) => { out.push(page.repeat(n)); sum.pages += n; };
+  const file = (f: string) => `images/${encodeURIComponent(path.basename(f))}`;
+  const dims = (f: string) => { try { return imageDimensions(fs.readFileSync(path.join(store.imagesDir, path.basename(f)))); } catch { return null; } };
+  const page = (src: string, d: { w: number; h: number } | null, caption?: string) =>
+    `<section class="print${d && d.w > d.h ? ' land' : ''}"><img src="${src}" alt="">${caption ? `<div class="cap">${esc(caption)}</div>` : ''}</section>`;
+  const live = Object.values(s.nodes).filter((n) => !n.trashed);
+
+  const nh = copiesOf(copies.handouts);
+  if (nh) {
+    for (const n of live.filter((x) => x.type === 'handout')) {
+      const pic = illustrationsOf(store, n)[0] ?? n.images[0];
+      const text = n.readAloud.trim() || n.summary.trim();
+      if (pic) add(nh, page(file(pic), dims(pic)));
+      else if (text) add(nh, `<section class="print text"><h3>${esc(n.title)}</h3><div class="htext">${mdToHtml(text)}</div></section>`);
+      else continue;
+      sum.handouts++;
+    }
+  }
+  const nm = copiesOf(copies.maps);
+  if (nm) {
+    for (const info of store.maps.list()) {
+      try {
+        const m = store.maps.get(info.id);
+        const render = m.renders.at(-1);
+        const d = render ? dims(render) : imageSize(m);
+        const src = render ? file(render) : `data:image/png;base64,${toPng(renderSvg(m, 'preview'), 1700).toString('base64')}`;
+        add(nm, page(src, d && 'w' in d ? { w: d.w, h: d.h } : null, m.kind === 'battle' ? `${m.name} · 1 square = ${m.grid.unit} ft` : m.name));
+        sum.maps++;
+      } catch { /* map file missing */ }
+    }
+  }
+  const np = copiesOf(copies.places);
+  if (np) {
+    for (const n of live.filter((x) => x.type === 'location').sort((a, b) => a.title.localeCompare(b.title))) {
+      for (const pic of illustrationsOf(store, n)) { add(np, page(file(pic), dims(pic))); sum.places++; }
+    }
+  }
+  return { html: out.join('\n'), summary: sum };
 }
 
 const esc = (s: unknown) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -123,7 +180,18 @@ export function storyOrder(s: CampaignState): StoryNode[] {
 }
 
 export function binderHtml(store: Store, opts: BinderOptions = {}): string {
+  return binderParts(store, opts).html;
+}
+
+/** The binder HTML plus what the table prints hold. */
+export function binderParts(store: Store, opts: BinderOptions = {}): { html: string; prints: PrintSummary | null } {
   const s = store.state;
+  const mode = opts.mode ?? 'binder';
+  const prints = mode === 'binder' ? null : tablePrints(store, opts.copies ?? {});
+  if (mode === 'prints') {
+    const body = prints!.html || '<section class="chapter"><p>Nothing to print: set at least one copy and make sure there are handouts, maps or place pictures.</p></section>';
+    return { prints: prints!.summary, html: `<!doctype html><html lang="${esc(s.meta.language || 'en')}"><head><meta charset="utf-8"><title>${esc(s.meta.name)} — table prints</title><style>${CSS}</style></head><body>${body}</body></html>` };
+  }
   const want = new Set<BinderSection>(opts.sections?.length ? opts.sections : BINDER_SECTIONS);
   const notes = opts.notes !== false;
   const pics = opts.images !== false;
@@ -255,12 +323,15 @@ export function binderHtml(store: Store, opts: BinderOptions = {}): string {
     section('party', pick.party.label, pick.party.list.map((n) => card(n, `${n.fields.playerName ? `<p class="when">Player: ${esc(n.fields.playerName)}</p>` : ''}${sheetText(n)}`)).join(''));
   }
 
+  if (prints?.html) toc.push({ id: 'tableprints', label: 'Table prints (to hand out)', level: 1 });
   const date = new Date().toLocaleDateString('en-GB', { year: 'numeric', month: 'long', day: 'numeric' });
   const tocHtml = `<section class="toc"><h2>Contents</h2><ol>${toc.map((t) => `<li><a href="#${t.id}">${esc(t.label)}</a></li>`).join('')}</ol></section>`;
-  return `<!doctype html><html lang="${esc(s.meta.language || 'en')}"><head><meta charset="utf-8"><title>${esc(s.meta.name)} — GM binder</title><style>${CSS}</style></head><body>
+  const printHtml = prints?.html ? prints.html.replace('<section class="print', '<section id="tableprints" class="print') : '';
+  const html = `<!doctype html><html lang="${esc(s.meta.language || 'en')}"><head><meta charset="utf-8"><title>${esc(s.meta.name)} — GM binder</title><style>${CSS}</style></head><body>
     <section class="cover"><div class="kicker">GM binder</div><h1>${esc(s.meta.name)}</h1><div class="date">${esc(date)}</div></section>
-    ${tocHtml}${parts.join('\n') || '<section class="chapter"><p>Nothing to print yet.</p></section>'}
+    ${tocHtml}${parts.join('\n') || (printHtml ? '' : '<section class="chapter"><p>Nothing to print yet.</p></section>')}${printHtml}
   </body></html>`;
+  return { html, prints: prints?.summary ?? null };
 }
 
 const CSS = `
@@ -296,6 +367,13 @@ code { font-family: 'DejaVu Sans Mono', monospace; font-size: 9pt; background: #
 .legend { display: flex; gap: 5mm; font-size: 8pt; color: #555; margin-top: 3mm; } .legend i { display: inline-block; width: 8mm; border-top: 3px solid; vertical-align: middle; margin-right: 1.5mm; }
 .handout { break-before: page; text-align: center; } h2 + .handout { break-before: auto; } .handoutimg { max-width: 100%; max-height: 190mm; border: 1px solid #ccc; } .htext { text-align: left; max-width: 140mm; margin: 6mm auto; font-size: 12pt; }
 .table { break-inside: avoid; margin-bottom: 7mm; } .die { font: 700 9pt 'DejaVu Sans', sans-serif; color: #5870c8; border: 1px solid #aab8ee; border-radius: 3mm; padding: 0 2mm; margin-left: 2mm; }
+@page tp { size: A4; margin: 10mm; @bottom-center { content: none; } @bottom-left { content: none; } }
+@page tpl { size: A4 landscape; margin: 10mm; @bottom-center { content: none; } @bottom-left { content: none; } }
+.print { page: tp; break-before: page; height: 268mm; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.print.land { page: tpl; height: 181mm; }
+.print img { max-width: 100%; max-height: 258mm; object-fit: contain; } .print.land img { max-height: 171mm; }
+.print .cap { font: 7pt 'DejaVu Sans', sans-serif; color: #999; margin-top: 2mm; }
+.print.text { justify-content: flex-start; } .print.text h3 { font: 700 20pt 'DejaVu Sans', sans-serif; margin: 12mm 0 6mm; } .print.text .htext { max-width: 150mm; font-size: 13pt; line-height: 1.6; }
 .table table { border-collapse: collapse; width: 100%; font-size: 10pt; } .table td { border-bottom: 1px solid #e4e4ea; padding: 1mm 2mm; } .table td.r { width: 16mm; color: #888; font-family: 'DejaVu Sans', sans-serif; }
 `;
 

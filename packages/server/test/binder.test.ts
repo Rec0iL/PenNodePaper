@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { binderHtml, mdToHtml, storyMapSvg, storyOrder } from '../src/binder.js';
+import { binderHtml, binderParts, mdToHtml, storyMapSvg, storyOrder } from '../src/binder.js';
+import { newMap, renderSvg, toPng } from '../src/maps.js';
 import { runCommand } from '../src/commands.js';
 import { Persistence } from '../src/persistence.js';
 import { Store } from '../src/store.js';
@@ -79,11 +80,82 @@ describe('GM binder', () => {
     expect(svg).not.toContain('paint-order'); // WeasyPrint ignores it: labels used to vanish
   });
 
+  describe('table prints', () => {
+    /** a handout with a picture, a handout with only text, a place with two pictures and a battle map */
+    function printable() {
+      fs.mkdirSync(store.imagesDir, { recursive: true });
+      const wide = toPng(renderSvg(newMap('w', 'w', 'battle', 12, 6), 'preview'), 600); // landscape
+      const tall = toPng(renderSvg(newMap('t', 't', 'battle', 6, 12), 'preview'), 600); // portrait
+      fs.writeFileSync(path.join(store.imagesDir, 'letter.png'), tall);
+      fs.writeFileSync(path.join(store.imagesDir, 'harbour.png'), wide);
+      fs.writeFileSync(path.join(store.imagesDir, 'harbour-night.png'), wide);
+      run('batch', { ops: [node('letter', 'handout', 'The torn letter', { place: 'pool' }), node('rumour', 'handout', 'A rumour', { place: 'pool', readAloud: 'They say the bell tolls twelve.' })] });
+      store.state.nodes.letter.images = ['letter.png'];
+      store.state.nodes.tavern.images = ['harbour.png', 'harbour-night.png'];
+      run('create_map', { name: 'Cellar', kind: 'battle', nodeId: 'tavern', cols: 8, rows: 6, unit: 5 });
+    }
+    const pageCount = (html: string) => (html.match(/<section[^>]*class="print/g) ?? []).length;
+
+    it('prints every handout, map and place picture on a page of its own, the copies one after the other', () => {
+      printable();
+      const { html, prints } = binderParts(store, { mode: 'prints', copies: { handouts: 3, maps: 2, places: 1 } });
+      expect(prints).toEqual({ handouts: 2, maps: 1, places: 2, pages: 2 * 3 + 1 * 2 + 2 * 1 });
+      expect(pageCount(html)).toBe(10);
+      expect(html.match(/images\/letter\.png/g)).toHaveLength(3);                // three copies of the letter...
+      expect(html.indexOf('images/letter.png')).toBeLessThan(html.indexOf('The torn letter') + 1e9);
+      const firstThree = html.split('<section class="print').slice(1, 4).join('');
+      expect(firstThree.match(/letter\.png/g)).toHaveLength(3);                    // ...one after the other (a stack to hand out)
+      expect(html).toContain('<h3>A rumour</h3>');                                   // a handout without picture is printed as text
+      expect(html).toContain('They say the bell tolls twelve.');
+      expect(html).toContain('Cellar · 1 square = 5 ft');
+      expect(html).toContain('class="print land"');                                  // a wide picture gets a landscape page
+      expect(html).toMatch(/<section class="print">\s*<img src="images\/letter\.png"/);  // a tall one stays portrait
+      expect(html).not.toContain('class="cover"');                                   // prints only: no cover, no contents
+      expect(html).not.toContain('Arrival &lt;in&gt; fog');
+    });
+
+    it('a kind with no copies is left out; zero everywhere says what is missing', () => {
+      printable();
+      const onlyMaps = binderParts(store, { mode: 'prints', copies: { maps: 1 } });
+      expect(onlyMaps.prints).toEqual({ handouts: 0, maps: 1, places: 0, pages: 1 });
+      expect(onlyMaps.html).not.toContain('letter.png');
+      const none = binderParts(store, { mode: 'prints', copies: { handouts: 0 } });
+      expect(none.prints!.pages).toBe(0);
+      expect(none.html).toContain('Nothing to print');
+      expect(binderParts(store, { mode: 'prints', copies: { handouts: 999 } }).prints!.pages).toBe(2 * 30); // capped at 30 copies
+    });
+
+    it('"both" puts the prints at the end of the binder with a contents entry; the plain binder has none', () => {
+      printable();
+      const both = binderParts(store, { mode: 'both', copies: { handouts: 2 } });
+      expect(both.html).toContain('class="cover"');
+      expect(both.html).toContain('Arrival &lt;in&gt; fog');
+      expect(both.html).toContain('Table prints (to hand out)');
+      expect(both.html).toContain('id="tableprints"');
+      expect(both.html.lastIndexOf('class="print')).toBeGreaterThan(both.html.indexOf('The story'));
+      const plain = binderParts(store, { copies: { handouts: 2 } }); // copies alone change nothing without a mode
+      expect(plain.prints).toBeNull();
+      expect(plain.html).not.toContain('class="print');
+    });
+  });
+
   const hasWeasy = spawnSync('weasyprint', ['--version']).status === 0;
   it.skipIf(!hasWeasy)('writes a real PDF through export_binder', () => {
     const r = run('export_binder', {});
     const buf = fs.readFileSync(path.join(store.exportsDir, r.file));
     expect(buf.subarray(0, 4).toString()).toBe('%PDF');
     expect(buf.length).toBeGreaterThan(5000);
+  }, 60000);
+
+  it.skipIf(!hasWeasy)('a prints-only PDF has exactly the pages asked for', () => {
+    fs.mkdirSync(store.imagesDir, { recursive: true });
+    run('batch', { ops: [node('a', 'handout', 'Note A', { place: 'pool', readAloud: 'Text A' }), node('b', 'handout', 'Note B', { place: 'pool', readAloud: 'Text B' })] });
+    const r = run('export_binder', { mode: 'prints', copies: { handouts: 3 } });
+    const buf = fs.readFileSync(path.join(store.exportsDir, r.file));
+    expect(buf.subarray(0, 4).toString()).toBe('%PDF');
+    expect(r.prints).toEqual({ handouts: 2, maps: 0, places: 0, pages: 6 });
+    const info = spawnSync('pdfinfo', [path.join(store.exportsDir, r.file)], { encoding: 'utf8' });
+    if (info.status === 0) expect(Number(/Pages:\s+(\d+)/.exec(info.stdout)?.[1])).toBe(6); // checked when poppler's pdfinfo is installed
+    expect(r.file).toContain('table-prints');
   }, 60000);
 });

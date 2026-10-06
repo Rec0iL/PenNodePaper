@@ -1,12 +1,18 @@
 <script lang="ts">
   import { Handle, Position, type NodeProps } from '@xyflow/svelte';
   import { DEFAULT_GROUP, NODE_TYPE_INFO, clockOf, dieLabel, groupColor, isKnown, portalTarget, tableEntries, tableFaces, visitsOf, type StoryNode } from '@pnp/shared';
-  import { app, cmd, gotoPortal } from '../lib/app.svelte';
+  import { app, closeEnlarged, cmd, gotoPortal, toggleEnlarge } from '../lib/app.svelte';
+  import { md } from '../lib/md';
 
   const openMap = () => {
-    if (data.node.type === 'portal' && !data.ghost) return gotoPortal(data.node);
-    const id = data.node.fields?.mapId;
-    if (typeof id === 'string' && id && !data.ghost) app.mapEditor = { mapId: id };
+    const mid = data.node.fields?.mapId;
+    if (typeof mid === 'string' && mid && !data.ghost) app.mapEditor = { mapId: mid };
+  };
+  // double-click: a portal jumps; every other card is enlarged (notes, read-aloud, a bigger picture) until you click elsewhere
+  const onDbl = () => {
+    if (data.ghost) return;
+    if (data.node.type === 'portal') return gotoPortal(data.node);
+    void toggleEnlarge(id);
   };
 
   let { id, data, selected }: NodeProps & { data: { node: StoryNode; ghost?: boolean } } = $props();
@@ -30,13 +36,16 @@
   const proposal = $derived(app.proposals.find((p) => p.nodes.includes(id)));
   const hasMap = $derived(typeof node.fields?.mapId === 'string' && !!node.fields.mapId);
   const known = $derived(node.type === 'clue' && isKnown(node));
+  const big = $derived(app.enlarged?.id === id && !data.ghost);
+  const gmNotes = $derived(big ? md(node.body) : '');
   const portal = $derived(node.type === 'portal' ? portalTarget({ nodes: app.nodes, graph: app.graph }, node) : null);
 </script>
 
 <div
   class="card"
   role="presentation"
-  ondblclick={openMap}
+  ondblclick={onDbl}
+  class:big
   class:selected
   class:spawn={fx.spawn}
   class:flash={fx.flash}
@@ -47,7 +56,7 @@
   class:here={here}
   class:inplay={inPlay}
   class:proposed={!!proposal && !data.ghost}
-  class:compact={app.lod === 'compact'}
+  class:compact={app.lod === 'compact' && !big}
   style="--tc:{info.color};--glow:{info.color}88;--hc:{hereColor}"
 >
   {#if here}
@@ -71,7 +80,7 @@
   <div class="bar"></div>
   <div class="inner">
     <div class="top">
-      <span class="type"><i>{info.icon}</i>{info.label}{#if seq}<b class="seq" title="Order in which the players reached it">#{seq}</b>{/if}{#if known}<b class="known" title="The players know this">◉ known</b>{/if}{#if hasMap}<b class="mapbadge" title="This place has a map — double-click to open it">⌗ map</b>{/if}</span>
+      <span class="type"><i>{info.icon}</i>{info.label}{#if seq}<b class="seq" title="Order in which the players reached it">#{seq}</b>{/if}{#if known}<b class="known" title="The players know this">◉ known</b>{/if}{#if hasMap}<button class="mapbadge nodrag" title="This place has a map — click to open it" onclick={(e) => { e.stopPropagation(); openMap(); }}>⌗ map</button>{/if}</span>
       {#if pending.length}<span class="gen" class:wait={!painting} title={painting ? 'An image is being generated' : 'An image is waiting in the queue'}>{painting ? `◌ ${Math.round(painting.progress * 100)}%` : '⏳ queued'}{#if pending.length > 1} ×{pending.length}{/if}</span>{/if}
       {#if node.status !== 'untouched'}
         <span class="status s-{node.status}">{node.status}</span>
@@ -79,6 +88,17 @@
     </div>
     <div class="title">{node.title}</div>
     {#if node.summary}<div class="summary">{node.summary}</div>{/if}
+    {#if big}
+      <!-- enlarged with a double-click: scrolls inside (nowheel), text can be selected (nodrag) -->
+      <div class="bigbody nowheel nodrag nopan">
+        {#if cover}<img class="bigimg" src={`/api/images/${cover}?w=1000`} alt="" draggable="false" />{/if}
+        {#if node.readAloud.trim()}<div class="sect ra"><div class="h">Read aloud</div><div class="t">{node.readAloud}</div></div>{/if}
+        {#if node.body.trim()}<div class="sect gm"><div class="h">GM notes</div><div class="t md">{@html gmNotes}</div></div>{/if}
+        {#if !cover && !node.readAloud.trim() && !node.body.trim()}<div class="sect"><div class="t dim">Nothing written here yet — add notes and read-aloud text in the inspector.</div></div>{/if}
+        {#if node.images.length > 1}<div class="strip">{#each node.images.slice(1, 7) as f (f)}<img src={`/api/images/${f}?w=240`} alt="" draggable="false" />{/each}</div>{/if}
+      </div>
+      <button class="close nodrag" title="Back to normal size (Esc)" onclick={(e) => { e.stopPropagation(); closeEnlarged(); }}>×</button>
+    {/if}
     {#if table}
       <div class="tbl">
         <button class="roll nodrag" disabled={!table.faces} onclick={(e) => { e.stopPropagation(); void cmd('roll_table', { nodeId: node.id }); }} title={table.faces ? `Roll the table (${dieLabel(table.faces)})` : 'No entries yet — open the node and add some'}>🎲 {table.faces ? dieLabel(table.faces) : 'empty'}</button>
@@ -129,6 +149,28 @@
   .card:hover { border-color: #3a4560; }
   .card.selected { border-color: var(--tc); box-shadow: 0 0 0 1px var(--tc), 0 0 24px -4px var(--glow); }
   .card.hidden { opacity: 0; }
+  .card.big { width: 640px; max-height: 820px; box-shadow: 0 0 0 1px var(--tc), 0 24px 70px rgba(0, 0, 0, 0.7), 0 0 40px -6px var(--glow); }
+  .card.big .inner { display: flex; flex-direction: column; min-height: 0; padding: 12px 16px 14px; }
+  .card.big .title { font-size: 20px; margin: 4px 0 4px; padding-right: 26px; }
+  .card.big .summary { display: block; -webkit-line-clamp: unset; line-clamp: unset; font-size: 13.5px; }
+  .card.big .thumb { display: none; }
+  .bigbody { margin-top: 10px; overflow: auto; max-height: 600px; display: grid; gap: 10px; align-content: start; user-select: text; cursor: text; }
+  .bigimg { width: 100%; max-height: 380px; object-fit: contain; background: #0b0d12; border: 1px solid var(--line-2); border-radius: 8px; }
+  .sect { padding: 8px 12px; border-radius: 8px; border-left: 3px solid var(--tc); background: rgba(0, 0, 0, 0.25); }
+  .sect.ra { border-left-color: #e8d9a8; background: rgba(232, 217, 168, 0.07); }
+  .sect .h { font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-faint); margin-bottom: 4px; }
+  .sect .t { font-size: 13.5px; line-height: 1.55; color: var(--text); white-space: pre-wrap; word-break: break-word; }
+  .sect .t.md { white-space: normal; }
+  .sect .t.md :global(p) { margin: 0 0 8px; } .sect .t.md :global(p:last-child) { margin-bottom: 0; }
+  .sect .t.md :global(h3), .sect .t.md :global(h4) { margin: 8px 0 4px; font-size: 13.5px; color: var(--text); }
+  .sect .t.md :global(ul), .sect .t.md :global(ol) { margin: 0 0 8px; padding-left: 20px; }
+  .sect .t.md :global(code) { font-family: var(--mono); font-size: 12px; background: var(--bg); padding: 0 4px; border-radius: 4px; }
+  .strip { display: flex; gap: 6px; overflow: auto; }
+  .strip img { height: 76px; border-radius: 6px; border: 1px solid var(--line-2); }
+  .close { position: absolute; top: 8px; right: 10px; width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--line-2); background: var(--bg-4); color: var(--text-dim); line-height: 1; }
+  .close:hover { color: var(--text); border-color: var(--tc); }
+  .mapbadge { background: transparent; border: 1px solid var(--line-2); color: var(--text-dim); border-radius: 99px; padding: 0 6px; font-size: 10px; cursor: pointer; }
+  .mapbadge:hover { color: var(--text); border-color: var(--tc); }
   .card.spawn { animation: pnp-spawn 1s var(--ease); }
   .card.flash { animation: pnp-flash 1.2s ease-out; }
   .card.ghost { animation: pnp-dissolve 0.8s ease-in forwards; pointer-events: none; }

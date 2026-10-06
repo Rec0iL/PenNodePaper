@@ -4,7 +4,7 @@ import type { Actor, Backend, DoorKind, EdgeKind, EdgeSide, ImageKind, NodeStatu
 import { DOOR_KINDS, EDGE_KINDS, EDGE_SIDES, IMAGE_KINDS, NODE_STATUSES, NODE_TYPES, PROP_KINDS, TERRAINS } from '@pnp/shared';
 import fs from 'node:fs';
 import path from 'node:path';
-import { BINDER_SECTIONS, binderHtml, renderPdf } from './binder.js';
+import { BINDER_SECTIONS, MAX_COPIES, binderParts, renderPdf } from './binder.js';
 import { buildBundle, characterFromNode, handoutFromNode, illustrationsOf, kinetikSession, roleFor, sceneFromImage, sceneFromMap, sheetOf, wantsPlayerStarts } from './vtt.js';
 import { CONTROL_LEGEND, REGION_LEGEND, applyOps, groupProps, imageSize, renderSvg, toPng, type MapOp } from './maps.js';
 import { propsRunner, readTerrain, terrainRunner, estimatePaint, type Fidelity } from './mappaint.js';
@@ -400,6 +400,30 @@ def({
         : !!next.noTrail !== !!cur.noTrail
           ? next.noTrail ? 'Unmarked a connection on the played path' : 'Marked a connection on the played path again'
           : 'Changed a connection’s kind';
+    return { edgeId: a.edgeId };
+  },
+});
+
+def({
+  name: 'move_edge_marker',
+  description: 'The GM dragged the jump marker of a connection that leads to another canvas (UI only). reset:true goes back to automatic placement.',
+  internal: true,
+  shape: { edgeId: z.string(), canvas: z.string(), x: z.number().optional(), y: z.number().optional(), reset: z.boolean().optional() },
+  run(tx, a) {
+    const cur = tx.state.graph.edges.find((e) => e.id === a.edgeId);
+    if (!cur) throw new Error(`Edge "${a.edgeId}" not found`);
+    checkCanvas(tx, a.canvas);
+    const markers = { ...(cur.markers ?? {}) };
+    if (a.reset) delete markers[a.canvas];
+    else {
+      if (a.x === undefined || a.y === undefined) throw new Error('x and y are needed (or reset:true).');
+      markers[a.canvas] = { x: Math.round(a.x), y: Math.round(a.y) };
+    }
+    const next: StoryEdge = { ...cur };
+    if (Object.keys(markers).length) next.markers = markers;
+    else delete next.markers;
+    tx.putEdge(next);
+    tx.label = a.reset ? 'Reset a jump marker' : 'Moved a jump marker';
     return { edgeId: a.edgeId };
   },
 });
@@ -1364,15 +1388,19 @@ def({
 
 def({
   name: 'export_binder',
-  description: 'Make the GM binder: the whole campaign as one printable PDF in the exports folder (cover, contents, story map, the story beat by beat with read-aloud boxes and GM notes, prepared material, places with their maps, people with sheets, things, handouts, random tables, the party). `sections` picks parts (map, story, pool, places, people, things, handouts, tables, party); notes:false leaves out the GM notes (e.g. for a co-GM handout); images:false makes it smaller. Takes a few seconds.',
-  shape: { sections: z.array(z.enum(BINDER_SECTIONS)).optional(), notes: z.boolean().optional(), images: z.boolean().optional() },
+  description: 'Make the GM binder: the whole campaign as one printable PDF in the exports folder (cover, contents, story map, the story beat by beat with read-aloud boxes and GM notes, prepared material, places with their maps, people with sheets, things, handouts, random tables, the party). `sections` picks parts (map, story, pool, places, people, things, handouts, tables, party); notes:false leaves out the GM notes (e.g. for a co-GM handout); images:false makes it smaller. TABLE PRINTS: `copies` {handouts, maps, places} = how many copies of every handout / map (battle and region) / place picture to print, each on a page of its own, to hand out and lay on the table; `mode` "both" adds them at the end of the binder, "prints" makes a PDF of only the table prints. Takes a few seconds.',
+  shape: {
+    sections: z.array(z.enum(BINDER_SECTIONS)).optional(), notes: z.boolean().optional(), images: z.boolean().optional(),
+    mode: z.enum(['binder', 'both', 'prints']).optional(),
+    copies: z.object({ handouts: z.number().int().min(0).max(MAX_COPIES).optional(), maps: z.number().int().min(0).max(MAX_COPIES).optional(), places: z.number().int().min(0).max(MAX_COPIES).optional() }).optional(),
+  },
   run(tx, a) {
-    const html = binderHtml(tx.store, a);
+    const { html, prints } = binderParts(tx.store, a);
     const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 16);
-    const file = `${slugify(tx.state.meta.name)}-binder-${stamp}.pdf`;
+    const file = `${slugify(tx.state.meta.name)}-${a.mode === 'prints' ? 'table-prints' : 'binder'}-${stamp}.pdf`;
     renderPdf(html, tx.store.persistence.dir, path.join(tx.store.exportsDir, file));
     const bytes = fs.statSync(path.join(tx.store.exportsDir, file)).size;
-    return { file, url: `/api/exports/${file}`, mb: Math.round(bytes / 1e5) / 10 };
+    return { file, url: `/api/exports/${file}`, mb: Math.round(bytes / 1e5) / 10, ...(prints ? { prints } : {}) };
   },
 });
 

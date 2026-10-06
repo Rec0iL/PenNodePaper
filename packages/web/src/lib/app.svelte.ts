@@ -25,6 +25,10 @@ export interface FlowApi {
   centerOn(p: { x: number; y: number }, duration?: number): Promise<unknown>;
   fit?(): Promise<unknown>;
   zoom(): number;
+  getViewport(): { x: number; y: number; zoom: number };
+  setViewport(v: { x: number; y: number; zoom: number }, duration?: number): Promise<unknown>;
+  /** Zoom and move the camera so that this box (flow coordinates) fills the view. */
+  fitBox(box: { x: number; y: number; width: number; height: number }, duration?: number): Promise<unknown>;
 }
 
 const emptyGraph = (): GraphFile => ({ version: 1, canvases: [{ id: 'main', name: 'Main story' }], placements: {}, edges: [], frames: [] });
@@ -120,6 +124,8 @@ export const app = $state({
   /** Right-click menu on a node (screen position). */
   nodeMenu: null as null | { nodeId: string; x: number; y: number },
   edgeMenu: null as null | { edgeId: string; x: number; y: number },
+  /** a node the GM enlarged with a double-click (shows notes, read-aloud and a bigger picture); `view` = the camera to go back to */
+  enlarged: null as null | { id: string; view: { x: number; y: number; zoom: number } | null },
   /** the "connect to a node on another canvas" dialog */
   crossLink: null as null | { fromId: string; dir: 'out' | 'in'; canvas?: string },
   /** Right-click on empty canvas: screen position for the menu, flow position for the new node. */
@@ -198,6 +204,48 @@ export function noteZoom(z: number) {
 export function openCrossLink(fromId: string, dir: 'out' | 'in' = 'out', canvas?: string) {
   closeMenus();
   app.crossLink = { fromId, dir, canvas };
+}
+
+/** Double-click on a node: enlarge it in place and zoom the camera onto it; again (or Esc, ×, a click on the canvas) puts everything back. */
+export async function toggleEnlarge(id: string) {
+  if (app.enlarged?.id === id) return closeEnlarged();
+  const p = app.graph.placements[id];
+  if (!p || p.canvas !== app.canvasId || !flowApi) return;
+  const view = app.enlarged?.view ?? flowApi.getViewport();
+  app.enlarged = { id, view };
+  selectNode(id);
+  await tick();
+  await sleep(140); // the card needs a moment to grow before it can be measured
+  if (app.enlarged?.id !== id) return;
+  const el = document.querySelector(`.svelte-flow__node[data-id="${CSS.escape(id)}"]`);
+  if (!el || !flowApi) return;
+  const r = el.getBoundingClientRect();
+  const a = flowApi.screenToFlow({ x: r.left, y: r.top });
+  const b = flowApi.screenToFlow({ x: r.right, y: r.bottom });
+  void flowApi.fitBox({ x: a.x, y: a.y, width: b.x - a.x, height: b.y - a.y }, 450);
+}
+
+/** restore: go back to where the camera was before (not when the canvas was switched meanwhile).
+ *  fromPointer: the close was caused by a mouse press (a click on the canvas starts xyflow's pan handling, which would cancel the
+ *  camera move) — so the camera goes back when the button is released, and only if you did not move the view yourself meanwhile. */
+export function closeEnlarged(restore = true, fromPointer = false) {
+  const e = app.enlarged;
+  if (!e) return;
+  app.enlarged = null;
+  if (!restore || !e.view || !flowApi) return;
+  const back = e.view;
+  if (!fromPointer) return void flowApi.setViewport(back, 400);
+  const v0 = flowApi.getViewport();
+  let done = false;
+  const go = () => {
+    if (done) return;
+    done = true;
+    window.removeEventListener('pointerup', go, true);
+    const v1 = flowApi?.getViewport();
+    if (!v1 || (Math.abs(v1.x - v0.x) < 2 && Math.abs(v1.y - v0.y) < 2 && Math.abs(v1.zoom - v0.zoom) < 0.005)) void flowApi?.setViewport(back, 400);
+  };
+  window.addEventListener('pointerup', go, true);
+  setTimeout(go, 400); // touch or a missed release: do not hang around
 }
 
 export function closeMenus() {
@@ -345,6 +393,7 @@ function resetForCampaign() {
   app.nodeMenu = null;
   app.edgeMenu = null;
   app.crossLink = null;
+  app.enlarged = null;
   app.paneMenu = null;
   app.mapEditor = null;
   app.lightbox = null;
@@ -522,7 +571,10 @@ async function applyEvent(ev: ChangeEvent, actor: Actor): Promise<string | undef
       const i = app.graph.edges.findIndex((e) => e.id === ev.edge.id);
       if (i >= 0) app.graph.edges[i] = ev.edge;
       else app.graph.edges.push(ev.edge);
-      setEdgeFx(ev.edge.id, ev.type === 'edge.rewired' ? 'rewire' : 'flash', 1300);
+      // dragging a jump marker only changes `markers`: no flash for that
+      const b = ev.before, e = ev.edge;
+      const onlyMarker = ev.type === 'edge.updated' && b.from === e.from && b.to === e.to && b.kind === e.kind && b.label === e.label && !!b.noTrail === !!e.noTrail;
+      if (!onlyMarker) setEdgeFx(ev.edge.id, ev.type === 'edge.rewired' ? 'rewire' : 'flash', 1300);
       if (ev.before.label !== ev.edge.label) {
         const id = ev.edge.id;
         app.edgeDiffs[id] = { from: ev.before.label, until: Date.now() + (ai ? 9000 : 2500) };
