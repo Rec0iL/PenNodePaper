@@ -112,22 +112,36 @@
     edges = es;
   });
 
-  // an enlarged card shrinks again as soon as you click anywhere else (or press Esc, or switch canvas)
+  // An enlarged card shrinks again when you double-click the empty canvas, pick another card, press Esc, use its × or switch canvas —
+  // a plain click on the canvas leaves it alone.
   $effect(() => {
     const id = app.enlarged?.id;
     if (!id) return;
     const down = (e: PointerEvent) => {
-      const t = e.target as Element | null;
-      if (t?.closest?.(`.svelte-flow__node[data-id="${CSS.escape(id)}"]`)) return;
-      closeEnlarged(!t?.closest?.('.tabs'), true); // a click on a canvas tab must not drag the camera back on the new canvas
+      const other = (e.target as Element | null)?.closest?.('.svelte-flow__node')?.getAttribute('data-id');
+      if (!other || other === id || /^(frame|stub|ghost):/.test(other)) return;
+      closeEnlarged(true, true); // another card was grabbed
     };
     document.addEventListener('pointerdown', down, true);
     return () => document.removeEventListener('pointerdown', down, true);
+  });
+  // the selection moved to another node some other way (inspector, chat, search, pool, a jump marker): the one who moved it also moves the camera
+  $effect(() => {
+    const sel = app.selectedId;
+    untrack(() => {
+      if (app.enlarged && sel && sel !== app.enlarged.id) closeEnlarged(false);
+    });
   });
   $effect(() => {
     app.canvasId;
     untrack(() => closeEnlarged(false));
   });
+  function onPaneDblClick(e: MouseEvent) {
+    if (!app.enlarged) return;
+    const t = e.target as Element;
+    if (t.closest('.svelte-flow__node, .svelte-flow__edge, .svelte-flow__controls, .svelte-flow__minimap, .svelte-flow__panel')) return;
+    if (t.closest('.svelte-flow__pane, .svelte-flow__background')) closeEnlarged();
+  }
 
   // selection from outside (timeline click, chat card) -> flow
   $effect(() => {
@@ -254,7 +268,7 @@
 
 <svelte:window onkeydown={(e) => e.key === 'Escape' && app.enlarged && closeEnlarged()} />
 
-<div class="canvas" role="application" {ondragover} {ondrop}>
+<div class="canvas" role="application" {ondragover} {ondrop} ondblclick={onPaneDblClick}>
   <SvelteFlow
     bind:nodes
     bind:edges

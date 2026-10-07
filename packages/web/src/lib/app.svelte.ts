@@ -207,15 +207,40 @@ export function openCrossLink(fromId: string, dir: 'out' | 'in' = 'out', canvas?
 }
 
 /** Double-click on a node: enlarge it in place and zoom the camera onto it; again (or Esc, ×, a click on the canvas) puts everything back. */
+/** Wait until an element has its final size: its pictures are loaded and the size has not changed for a few frames. */
+async function settled(el: Element, maxMs = 4000) {
+  const t0 = performance.now();
+  let last = '';
+  let steady = 0;
+  while (performance.now() - t0 < maxMs) {
+    const r = el.getBoundingClientRect();
+    const sig = `${Math.round(r.width)}x${Math.round(r.height)}`;
+    const loading = [...el.querySelectorAll('img')].some((i) => !i.complete);
+    steady = !loading && sig === last ? steady + 1 : 0;
+    last = sig;
+    if (steady >= 4) return;
+    await sleep(50);
+  }
+}
+
+/** a camera move back to where the view was, still pending after a click that closed an enlarged card (see closeEnlarged) */
+let restoring: { view: { x: number; y: number; zoom: number }; until: number } | null = null;
+
 export async function toggleEnlarge(id: string) {
   if (app.enlarged?.id === id) return closeEnlarged();
   const p = app.graph.placements[id];
   if (!p || p.canvas !== app.canvasId || !flowApi) return;
-  const view = app.enlarged?.view ?? flowApi.getViewport();
+  // from one enlarged card straight to the next the camera still goes back to the ORIGINAL view when it is all over
+  const pending = restoring && Date.now() < restoring.until ? restoring.view : null;
+  restoring = null;
+  const view = app.enlarged?.view ?? pending ?? flowApi.getViewport();
   app.enlarged = { id, view };
   selectNode(id);
   await tick();
-  await sleep(140); // the card needs a moment to grow before it can be measured
+  // the card grows and then loads its pictures, which changes its size again: zoom only once it has settled
+  await sleep(60);
+  const wrap = document.querySelector(`.svelte-flow__node[data-id="${CSS.escape(id)}"]`);
+  if (wrap) await settled(wrap);
   if (app.enlarged?.id !== id) return;
   const el = document.querySelector(`.svelte-flow__node[data-id="${CSS.escape(id)}"]`);
   if (!el || !flowApi) return;
@@ -236,11 +261,13 @@ export function closeEnlarged(restore = true, fromPointer = false) {
   const back = e.view;
   if (!fromPointer) return void flowApi.setViewport(back, 400);
   const v0 = flowApi.getViewport();
+  const mine = (restoring = { view: back, until: Date.now() + 900 });
   let done = false;
   const go = () => {
     if (done) return;
     done = true;
     window.removeEventListener('pointerup', go, true);
+    if (restoring !== mine) return; // another card was enlarged meanwhile and carries the original view on
     const v1 = flowApi?.getViewport();
     if (!v1 || (Math.abs(v1.x - v0.x) < 2 && Math.abs(v1.y - v0.y) < 2 && Math.abs(v1.zoom - v0.zoom) < 0.005)) void flowApi?.setViewport(back, 400);
   };

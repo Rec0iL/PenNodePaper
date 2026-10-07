@@ -177,6 +177,9 @@
   .card.done { opacity: 0.72; }
   .card.skipped { opacity: 0.5; }
   .card.skipped .title { text-decoration: line-through; }
+  /* an enlarged card is for reading: never faded, whatever its status */
+  .card.big.done, .card.big.skipped { opacity: 1; }
+  .card.big.skipped .title { text-decoration: none; }
 
   .card.here { border-color: var(--hc); box-shadow: 0 0 0 1px var(--hc), 0 0 30px -4px var(--hc); animation: pnp-here 2.4s ease-in-out infinite; }
   @keyframes pnp-here { 50% { box-shadow: 0 0 0 1px var(--hc), 0 0 44px 0 var(--hc); } }
