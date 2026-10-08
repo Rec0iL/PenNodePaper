@@ -169,25 +169,26 @@ Connect a tabletop app (KINETIK VTT, or any VTT that implements the small bridge
 
 ✅ supported · ❌ not supported (yet)
 
-| | 🥋 **[KINETIK VTT](https://github.com/Rec0iL/KINETIK-PNP)** | 🏴‍☠️ **[EldaraHQ](https://github.com/DonDavis-vibe/EldaraHQ)**<br><sub>Extended How to be a Hero</sub> | 🦸 **[HeroHQ](https://github.com/DonDavis-vibe/how-to-be-a-hero-character-sheet)**<br><sub>How to be a Hero</sub> |
-|---|:---:|:---:|:---:|
-| 📜 Handouts: text | ✅ | ✅ | ✅ |
-| 🖼️ Handouts: picture | ✅ | ✅ | ✅ |
-| 👁️ Show a handout to the players right away | ✅ | ✅ | ✅ |
-| 🗺️ Maps & scenes (square grid, token starts) | ✅ | ✅ | ❌ |
-| 🧙 NPC entries | ✅ | ✅ | ✅ |
-| 🎭 NPC portrait, used as the map token | ✅ | ✅ | ❌ |
-| 👹 Enemy stat blocks (tiers goon → nemesis, moves) | ✅ | ❌ | ❌ |
-| ⚔️ Enemies in the combat tracker | ✅ | ✅ | ❌ |
-| 🎵 Music cues (tracks and moods) | ✅ | ✅ | ✅ |
-| 👥 Party sync (the players' characters, read-only) | ✅ | ✅ | ✅ |
+| | 🥋 **[KINETIK VTT](https://github.com/Rec0iL/KINETIK-PNP)** | 🏴‍☠️ **[EldaraHQ](https://github.com/DonDavis-vibe/EldaraHQ)**<br><sub>Extended How to be a Hero</sub> | 🦸 **[HeroHQ](https://github.com/DonDavis-vibe/how-to-be-a-hero-character-sheet)**<br><sub>How to be a Hero</sub> | 🐭 **[Pips & Paws](https://github.com/DonDavis-vibe/pips-and-paws)**<br><sub>Mausritter</sub> |
+|---|:---:|:---:|:---:|:---:|
+| 📜 Handouts: text | ✅ | ✅ | ✅ | ✅ |
+| 🖼️ Handouts: picture | ✅ | ✅ | ✅ | ✅ |
+| 👁️ Show a handout to the players right away | ✅ | ✅ | ✅ | ✅ |
+| 🗺️ Maps & scenes (square grid, token starts) | ✅ | ✅ | ❌ | ✅ |
+| 🧙 NPC entries | ✅ | ✅ | ✅ | ✅ |
+| 🎭 NPC portrait, used as the map token | ✅ | ✅ | ❌ | ❌ |
+| 👹 Enemy stat blocks (tiers goon → nemesis, moves) | ✅ | ❌ | ❌ | ✅ |
+| ⚔️ Enemies in the combat tracker | ✅ | ✅ | ❌ | ✅ |
+| 🎵 Music cues (tracks and moods) | ✅ | ✅ | ✅ | ✅ |
+| 👥 Party sync (the players' characters, read-only) | ✅ | ✅ | ✅ | ✅ |
 
 What an NPC entry holds depends on the game:
 
 * **KINETIK VTT** — name, note and token size; enemies get full stat blocks with the tier ladder, level, bonus, protection, willpower, energy and moves.
 * **EldaraHQ** and **HeroHQ** — the GM's NPC list: place, role, attitude, what stands out, motivation and kind of being. *How to be a Hero* has no enemy stat blocks, so enemies are NPC entries too. In EldaraHQ an NPC also gets a map token size, and with hit points and a side it joins the combat tracker; HeroHQ stores no portrait.
+* **Pips & Paws** (Mausritter) — creatures and opponents as stat blocks: hit protection, armour, largest attack die, WIL for the morale save, an attack line and special abilities; the SRD creatures come as presets. They go straight into the combat tracker (there is no separate NPC list) and there are no portraits. Maps keep square grids only; music cues play a built-in effect or one of the GM's own uploads.
 
-Each VTT ships its own small bridge client, and PenNodePaper learns what it can do from the capability profile it announces on connect (the real ones for EldaraHQ and HeroHQ are in [`docs/profiles/`](docs/profiles)). The AI only offers what the connected VTT supports and writes characters in that game's own terms. No live link? **⚙ Settings → VTT link → export a file** works with the cached profile (a KINETIK session file today).
+Each VTT ships its own small bridge client, and PenNodePaper learns what it can do from the capability profile it announces on connect (the real ones for EldaraHQ, HeroHQ and Pips & Paws are in [`docs/profiles/`](docs/profiles)). The AI only offers what the connected VTT supports and writes characters in that game's own terms. No live link? **⚙ Settings → VTT link → export a file** works with the cached profile (a KINETIK session file today).
 
 > Building or adapting a VTT? The protocol is small and versioned: [`docs/vtt-bridge-spec.md`](docs/vtt-bridge-spec.md), with a drop-in vanilla-JS client and a mock VTT for testing.
 

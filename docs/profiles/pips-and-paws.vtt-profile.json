@@ -1,0 +1,465 @@
+{
+  "id": "pips-and-paws",
+  "name": "Pips & Paws (Mausritter)",
+  "version": "0.4.0",
+  "protocol": 1,
+  "push": {
+    "handout": {
+      "text": true,
+      "image": true,
+      "toPlayer": true
+    },
+    "scene": {
+      "grids": [
+        "square"
+      ],
+      "tokens": true
+    },
+    "character": {},
+    "music_cue": {
+      "tracks": true,
+      "mood": true
+    }
+  },
+  "provides": {
+    "party": true
+  },
+  "requests": [
+    "tracks",
+    "party"
+  ],
+  "images": {
+    "maxBytes": 8000000,
+    "formats": [
+      "png",
+      "jpg",
+      "webp"
+    ]
+  },
+  "characters": {
+    "roles": [
+      {
+        "id": "creature",
+        "label": "Creature / opponent",
+        "description": "A creature or opponent of the Mausritter combat tracker (hit protection, armour, one attack die, WIL for morale). Mausritter has no full sheets for monsters: keep it to the stat block; special abilities go into \"special\". NPCs without combat relevance may keep the defaults.",
+        "for": [
+          "enemy",
+          "npc"
+        ],
+        "fields": [
+          {
+            "key": "hp",
+            "label": "Hit protection",
+            "type": "number",
+            "group": "Stats",
+            "min": 1,
+            "max": 200,
+            "default": 3,
+            "help": "Hit protection (HP). Mice have 1-6, a cat 15."
+          },
+          {
+            "key": "armour",
+            "label": "Defence",
+            "type": "number",
+            "group": "Stats",
+            "min": 0,
+            "max": 3,
+            "default": 0,
+            "help": "Armour value 0-3, subtracted from incoming damage."
+          },
+          {
+            "key": "dmg",
+            "label": "Damage",
+            "type": "select",
+            "group": "Stats",
+            "default": "6",
+            "options": [
+              {
+                "value": "4",
+                "label": "d4"
+              },
+              {
+                "value": "6",
+                "label": "d6"
+              },
+              {
+                "value": "8",
+                "label": "d8"
+              },
+              {
+                "value": "10",
+                "label": "d10"
+              },
+              {
+                "value": "12",
+                "label": "d12"
+              }
+            ],
+            "help": "Largest attack die. Rolled by the \"Attack\" button of the combat tracker."
+          },
+          {
+            "key": "wil",
+            "label": "Will (WIL)",
+            "type": "number",
+            "group": "Stats",
+            "min": 1,
+            "max": 20,
+            "default": 8,
+            "help": "WIL for the morale save (d20 at or under = holds)."
+          },
+          {
+            "key": "str",
+            "label": "Strength (STR)",
+            "type": "number",
+            "group": "Stats",
+            "min": 1,
+            "max": 20,
+            "help": "Optional. Shown in the note only."
+          },
+          {
+            "key": "dex",
+            "label": "Dexterity (DEX)",
+            "type": "number",
+            "group": "Stats",
+            "min": 1,
+            "max": 20,
+            "help": "Optional. Shown in the note only."
+          },
+          {
+            "key": "attack",
+            "label": "Attack",
+            "type": "text",
+            "group": "Stats",
+            "help": "Attack description, e.g. \"d6 swipe, d8 bite\"."
+          },
+          {
+            "key": "special",
+            "label": "Special",
+            "type": "longtext",
+            "group": "Stats",
+            "help": "Critical effects and special abilities, e.g. \"Flies 3x speed, knows two spells\"."
+          }
+        ],
+        "presets": [
+          {
+            "id": "cat",
+            "label": "Cat",
+            "values": {
+              "hp": 15,
+              "armour": 1,
+              "dmg": "8",
+              "wil": 10,
+              "attack": "d6 swipe, d8 bite"
+            },
+            "ranges": {
+              "hp": [
+                12,
+                18
+              ]
+            },
+            "help": "Warband scale. STR 15, DEX 15, WIL 10."
+          },
+          {
+            "id": "centipede",
+            "label": "Centipede",
+            "values": {
+              "hp": 8,
+              "armour": 1,
+              "dmg": "6",
+              "wil": 8,
+              "attack": "d6 venomous bite (damages DEX)"
+            },
+            "ranges": {
+              "hp": [
+                5,
+                11
+              ]
+            },
+            "help": "Critical: venom takes effect, d12 STR damage."
+          },
+          {
+            "id": "crow",
+            "label": "Crow",
+            "values": {
+              "hp": 12,
+              "armour": 1,
+              "dmg": "8",
+              "wil": 15,
+              "attack": "d8 peck"
+            },
+            "ranges": {
+              "hp": [
+                9,
+                15
+              ]
+            },
+            "help": "Flies 3x speed, knows two songs."
+          },
+          {
+            "id": "faerie",
+            "label": "Faerie",
+            "values": {
+              "hp": 6,
+              "armour": 0,
+              "dmg": "8",
+              "wil": 15,
+              "attack": "d8 silver rapier"
+            },
+            "ranges": {
+              "hp": [
+                3,
+                9
+              ]
+            },
+            "help": "Knows one spell."
+          },
+          {
+            "id": "frog",
+            "label": "Frog",
+            "values": {
+              "hp": 6,
+              "armour": 1,
+              "dmg": "10",
+              "wil": 9,
+              "attack": "d10 spear or d6 tongue"
+            },
+            "ranges": {
+              "hp": [
+                3,
+                9
+              ]
+            },
+            "help": "Goes first unless surprised, leaps 2x. Critical: leaps out of reach."
+          },
+          {
+            "id": "ghost",
+            "label": "Ghost",
+            "values": {
+              "hp": 9,
+              "armour": 0,
+              "dmg": "8",
+              "wil": 10,
+              "attack": "d8 chilling touch (damages WIL)"
+            },
+            "ranges": {
+              "hp": [
+                6,
+                12
+              ]
+            },
+            "help": "Only harmed by silver or magic weapons. Critical: possesses the creature."
+          },
+          {
+            "id": "mouse",
+            "label": "Mouse",
+            "values": {
+              "hp": 3,
+              "armour": 0,
+              "dmg": "6",
+              "wil": 9,
+              "attack": "d6 sword or d6 bow"
+            },
+            "ranges": {
+              "hp": [
+                1,
+                6
+              ]
+            },
+            "help": "STR 9, DEX 9, WIL 9."
+          },
+          {
+            "id": "owl",
+            "label": "Owl",
+            "values": {
+              "hp": 15,
+              "armour": 1,
+              "dmg": "10",
+              "wil": 15,
+              "attack": "d10 bite"
+            },
+            "ranges": {
+              "hp": [
+                12,
+                18
+              ]
+            },
+            "help": "Flies 3x speed, knows two spells."
+          },
+          {
+            "id": "rat",
+            "label": "Rat",
+            "values": {
+              "hp": 3,
+              "armour": 0,
+              "dmg": "6",
+              "wil": 8,
+              "attack": "d6 cleaver"
+            },
+            "ranges": {
+              "hp": [
+                1,
+                6
+              ]
+            },
+            "help": "STR 12, DEX 8, WIL 8."
+          },
+          {
+            "id": "snake",
+            "label": "Snake",
+            "values": {
+              "hp": 12,
+              "armour": 2,
+              "dmg": "8",
+              "wil": 10,
+              "attack": "d8 bite"
+            },
+            "ranges": {
+              "hp": [
+                9,
+                15
+              ]
+            },
+            "help": "Critical: swallow whole, d4 STR per Round until rescued."
+          },
+          {
+            "id": "spider",
+            "label": "Spider",
+            "values": {
+              "hp": 6,
+              "armour": 1,
+              "dmg": "6",
+              "wil": 10,
+              "attack": "d6 poison bite (damages DEX)"
+            },
+            "ranges": {
+              "hp": [
+                3,
+                9
+              ]
+            },
+            "help": "Critical: carry away in web."
+          }
+        ]
+      },
+      {
+        "id": "pc",
+        "label": "Player mouse",
+        "description": "The sheet of a connected mouse (read-only: public fields, no notes).",
+        "for": [
+          "pc"
+        ],
+        "portrait": true,
+        "fields": [
+          {
+            "key": "background",
+            "label": "Background",
+            "type": "text",
+            "group": "Person"
+          },
+          {
+            "key": "birthsign",
+            "label": "Birthsign",
+            "type": "text",
+            "group": "Person"
+          },
+          {
+            "key": "disposition",
+            "label": "Disposition",
+            "type": "text",
+            "group": "Person"
+          },
+          {
+            "key": "coat",
+            "label": "Coat",
+            "type": "text",
+            "group": "Person"
+          },
+          {
+            "key": "detail",
+            "label": "Physical detail",
+            "type": "text",
+            "group": "Person"
+          },
+          {
+            "key": "level",
+            "label": "Level",
+            "type": "number",
+            "group": "Stats"
+          },
+          {
+            "key": "hpCurrent",
+            "label": "Hit protection",
+            "type": "number",
+            "group": "Stats"
+          },
+          {
+            "key": "hpMax",
+            "label": "Hit protection Max",
+            "type": "number",
+            "group": "Stats"
+          },
+          {
+            "key": "str",
+            "label": "Strength (STR)",
+            "type": "number",
+            "group": "Stats"
+          },
+          {
+            "key": "strMax",
+            "label": "Strength (STR) Max",
+            "type": "number",
+            "group": "Stats"
+          },
+          {
+            "key": "dex",
+            "label": "Dexterity (DEX)",
+            "type": "number",
+            "group": "Stats"
+          },
+          {
+            "key": "dexMax",
+            "label": "Dexterity (DEX) Max",
+            "type": "number",
+            "group": "Stats"
+          },
+          {
+            "key": "wil",
+            "label": "Will (WIL)",
+            "type": "number",
+            "group": "Stats"
+          },
+          {
+            "key": "wilMax",
+            "label": "Will (WIL) Max",
+            "type": "number",
+            "group": "Stats"
+          },
+          {
+            "key": "pips",
+            "label": "Pips",
+            "type": "number",
+            "group": "Gear"
+          },
+          {
+            "key": "conditions",
+            "label": "Conditions",
+            "type": "tags",
+            "group": "Stats"
+          },
+          {
+            "key": "items",
+            "label": "Inventory",
+            "type": "tags",
+            "group": "Gear"
+          },
+          {
+            "key": "hirelings",
+            "label": "Hirelings",
+            "type": "tags",
+            "group": "Gear"
+          }
+        ]
+      }
+    ]
+  }
+}
