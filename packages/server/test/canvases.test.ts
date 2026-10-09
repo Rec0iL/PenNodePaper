@@ -19,6 +19,19 @@ beforeEach(() => {
 afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
 describe('canvases', () => {
+  it('frames: new ones cycle the palette, the colour can be changed by the GM or the AI and undone', () => {
+    const first = run('create_frame', { title: 'One' }).id;
+    const second = run('create_frame', { title: 'Two' }).id;
+    const colour = (id: string) => store.state.graph.frames.find((f) => f.id === id)!.color;
+    expect(colour(first)).not.toBe(colour(second));
+    run('update_frame', { id: first, color: '#112233' });
+    expect(colour(first)).toBe('#112233');
+    expect(colour(second)).not.toBe('#112233');
+    expect(() => run('update_frame', { id: first, color: 'red' })).toThrow();
+    store.undo();
+    expect(colour(first)).not.toBe('#112233');
+  });
+
   it('renames a canvas without breaking anything that points at it', () => {
     run('create_canvas', { name: 'Act II' });
     scene('a1', 'act-ii');

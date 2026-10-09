@@ -62,6 +62,9 @@ export interface Placement {
   y: number;
 }
 
+/** The colours offered for frames (a frame's colour is any #rrggbb; the AI may pick any as well). */
+export const FRAME_PALETTE = ['#7aa2ff', '#7fe0a0', '#ffb454', '#ff7a9c', '#b89cff', '#5fd4c4', '#ffd166', '#8b93a7'] as const;
+
 export interface Canvas {
   id: string;
   name: string;

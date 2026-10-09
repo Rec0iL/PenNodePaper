@@ -6,8 +6,10 @@
   import ImagesPanel from './ImagesPanel.svelte';
   import MultiSelect from './MultiSelect.svelte';
   import CharacterSheet from './CharacterSheet.svelte';
+  import FramePanel from './FramePanel.svelte';
 
   const node = $derived(app.selectedId ? app.nodes[app.selectedId] : undefined);
+  const frameSel = $derived(app.selectedFrame ? app.graph.frames.find((f) => f.id === app.selectedFrame && f.canvas === app.canvasId) : undefined);
   const placement = $derived(node ? app.graph.placements[node.id] : undefined);
   const info = $derived(node ? NODE_TYPE_INFO[node.type] : undefined);
   const edges = $derived(node ? app.graph.edges.filter((e) => e.from === node.id || e.to === node.id) : []);
@@ -115,6 +117,8 @@
 
 {#if app.multi.length > 1}
   <MultiSelect />
+{:else if frameSel && !node && !edge}
+  <FramePanel frame={frameSel} />
 {:else if edge && !node}
   {@const ek = EDGE_KIND_INFO[edge.kind]}
   <div class="insp" style="--tc:{ek.color}">

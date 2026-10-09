@@ -5,7 +5,7 @@
     type Node, type Edge, type Connection,
   } from '@xyflow/svelte';
   import { NODE_TYPES, NODE_TYPE_INFO, EDGE_KINDS, EDGE_KIND_INFO, groupColor, trailEdges, type CampaignState, type NodeType, type EdgeKind } from '@pnp/shared';
-  import { NODE_H, NODE_W, app, closeEnlarged, cmd, closeMenus, noteZoom, openCrossLink, screenToFlow, selectEdge, selectNode, viewCenter } from '../lib/app.svelte';
+  import { NODE_H, NODE_W, app, closeEnlarged, cmd, closeMenus, noteZoom, openCrossLink, screenToFlow, selectEdge, selectFrame, selectNode, viewCenter } from '../lib/app.svelte';
   import NodeCard from './NodeCard.svelte';
   import StoryEdge from './StoryEdge.svelte';
   import FlowBridge from './FlowBridge.svelte';
@@ -293,7 +293,7 @@
     {onnodedragstop}
     multiSelectionKey={['Shift', 'Control', 'Meta']}
     onselectionchange={({ nodes: sel }) => { const ids = sel.filter((n) => !n.data.ghost && !n.id.startsWith(FRAME) && !n.id.startsWith(STUB)).map((n) => n.id); app.multi = ids.length > 1 ? ids : []; }}
-    onnodeclick={({ node, event }) => { if (node.id.startsWith(FRAME) || node.id.startsWith(STUB)) return; if (!(event.shiftKey || event.ctrlKey || event.metaKey)) selectNode(node.id); }}
+    onnodeclick={({ node, event }) => { if (node.id.startsWith(FRAME)) { if (!(event.shiftKey || event.ctrlKey || event.metaKey)) selectFrame(node.id.slice(FRAME.length)); return; } if (node.id.startsWith(STUB)) return; if (!(event.shiftKey || event.ctrlKey || event.metaKey)) selectNode(node.id); }}
     onnodecontextmenu={({ node, event }) => {
       event.preventDefault();
       closeMenus();

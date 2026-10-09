@@ -1,7 +1,7 @@
 import { z, type ZodRawShape } from 'zod';
 import { DEFAULT_GROUP, dieLabel, soundsOf, entryLine, fragmentName, parseEntry, rollLog, rollTable, seeded, tableEntries, tableFaces, clockOf, lintStory, nextPlayedSeq, playedPath, playerWiki, wikiMarkdown, slugify, storyStatus, validateSheet, visitsOf, type Visit } from '@pnp/shared';
 import type { Actor, Backend, DoorKind, EdgeKind, EdgeSide, ImageKind, NodeStatus, NodeType, PropKind, StoryEdge, StoryNode, TerrainKind } from '@pnp/shared';
-import { DOOR_KINDS, EDGE_KINDS, EDGE_SIDES, IMAGE_KINDS, NODE_STATUSES, NODE_TYPES, PROP_KINDS, TERRAINS } from '@pnp/shared';
+import { DOOR_KINDS, EDGE_KINDS, FRAME_PALETTE, EDGE_SIDES, IMAGE_KINDS, NODE_STATUSES, NODE_TYPES, PROP_KINDS, TERRAINS } from '@pnp/shared';
 import fs from 'node:fs';
 import path from 'node:path';
 import { BINDER_SECTIONS, MAX_COPIES, binderParts, renderPdf } from './binder.js';
@@ -1671,7 +1671,9 @@ def({
 
 // ------------------------------- frames ---------------------------------------
 // A frame is a labelled coloured area behind a group of nodes on a canvas (an act, a chapter, "the harbour").
-const FRAME_COLORS = ['#7aa2ff', '#7fe0a0', '#ffb454', '#ff7a9c', '#b89cff', '#5fd4c4', '#ffd166'];
+// New frames cycle through the palette unless a colour is given; the GM can pick any colour in the inspector.
+const FRAME_COLORS = FRAME_PALETTE.slice(0, 7);
+const FRAME_COLOR_HINT = `a #rrggbb colour (the GM's palette: ${FRAME_PALETTE.join(', ')}; any other works too)`;
 const FRAME_PAD = 40;
 const NODE_W_ = 280;
 const NODE_H_ = 92;
@@ -1689,7 +1691,7 @@ def({
     nodeIds: z.array(z.string()).optional(),
     canvas: z.string().optional(),
     x: z.number().optional(), y: z.number().optional(), w: z.number().min(120).optional(), h: z.number().min(80).optional(),
-    color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+    color: z.string().regex(/^#[0-9a-fA-F]{6}$/).describe(FRAME_COLOR_HINT).optional(),
     id: z.string().optional(),
   },
   run(tx, a) {
@@ -1718,7 +1720,7 @@ def({
   name: 'update_frame',
   description: 'Rename, recolour, resize or move a frame (this does NOT move the nodes inside it — use move_frame for that).',
   shape: {
-    id: z.string(), title: z.string().min(1).max(60).optional(), color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+    id: z.string(), title: z.string().min(1).max(60).optional(), color: z.string().regex(/^#[0-9a-fA-F]{6}$/).describe(FRAME_COLOR_HINT).optional(),
     x: z.number().optional(), y: z.number().optional(), w: z.number().min(120).optional(), h: z.number().min(80).optional(),
   },
   run(tx, a) {
@@ -1726,7 +1728,8 @@ def({
     if (!f) throw new Error(`No frame "${a.id}"`);
     const { id: _id, ...patch } = a;
     tx.putFrame({ ...f, ...Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)) });
-    tx.label = patch.title && patch.title !== f.title ? `Renamed the frame “${f.title}” → “${patch.title}”` : `Changed the frame “${f.title}”`;
+    tx.label = patch.title && patch.title !== f.title ? `Renamed the frame “${f.title}” → “${patch.title}”`
+      : patch.color && patch.color.toLowerCase() !== f.color.toLowerCase() ? `Recoloured the frame “${f.title}”` : `Changed the frame “${f.title}”`;
     return { id: f.id };
   },
 });

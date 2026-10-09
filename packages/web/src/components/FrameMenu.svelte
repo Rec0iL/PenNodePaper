@@ -1,7 +1,8 @@
 <script lang="ts">
+  import { FRAME_PALETTE } from '@pnp/shared';
   import { app, cmd, closeMenus } from '../lib/app.svelte';
 
-  const COLORS = ['#7aa2ff', '#7fe0a0', '#ffb454', '#ff7a9c', '#b89cff', '#5fd4c4', '#ffd166', '#8b93a7'];
+  const COLORS = FRAME_PALETTE;
   const menu = $derived(app.frameMenu);
   const frame = $derived(menu ? app.graph.frames.find((f) => f.id === menu.frameId) : undefined);
   const inside = $derived(

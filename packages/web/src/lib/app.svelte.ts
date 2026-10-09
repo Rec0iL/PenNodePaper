@@ -83,6 +83,8 @@ export const app = $state({
   canvasId: 'main',
   selectedId: null as string | null,
   selectedEdge: null as string | null,
+  /** a frame chosen by clicking its title tab (the inspector then shows its colour and name) */
+  selectedFrame: null as string | null,
   /** Several nodes selected at once on the canvas (empty unless 2+). */
   multi: [] as string[],
   /** Which part of the party the table controls refer to (parties can split up). */
@@ -360,12 +362,22 @@ export function selectEdge(id: string | null) {
   app.selectedEdge = id;
   if (id) {
     app.selectedId = null;
+    app.selectedFrame = null;
+    app.tab = 'inspector';
+  }
+}
+export function selectFrame(id: string | null) {
+  app.selectedFrame = id;
+  if (id) {
+    app.selectedId = null;
+    app.selectedEdge = null;
     app.tab = 'inspector';
   }
 }
 
 export function selectNode(id: string | null, tab?: 'inspector' | 'chat') {
   app.selectedId = id;
+  app.selectedFrame = null;
   if (id) app.selectedEdge = null;
   if (id && tab !== 'chat') app.tab = 'inspector';
 }
@@ -408,6 +420,7 @@ function showCanvasFromAi(canvas: string, nodeId: string | undefined, actor: Act
 function resetForCampaign() {
   app.selectedId = null;
   app.selectedEdge = null;
+  app.selectedFrame = null;
   app.multi = [];
   app.nodeMenu = null;
   app.edgeMenu = null;
