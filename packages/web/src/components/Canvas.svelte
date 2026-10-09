@@ -34,7 +34,7 @@
     for (const f of app.graph.frames ?? []) {
       if (f.canvas !== canvas) continue;
       const old = prev.get(FRAME + f.id);
-      next.push({ ...(old ?? {}), id: FRAME + f.id, type: 'frame', position: { x: f.x, y: f.y }, width: f.w, height: f.h, data: { frame: f }, zIndex: -1, dragHandle: '.frame-bar', connectable: false });
+      next.push({ ...(old ?? {}), id: FRAME + f.id, type: 'frame', position: { x: f.x, y: f.y }, width: f.w, height: f.h, data: { frame: f }, zIndex: -1, dragHandle: '.frame-bar', connectable: false, class: 'frame-node' });
     }
     for (const [id, p] of Object.entries(app.graph.placements)) {
       const n = app.nodes[id];

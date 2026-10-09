@@ -158,3 +158,8 @@ textarea.field { resize: vertical; min-height: 70px; line-height: 1.5; }
 .ctx-sub { display: flex; flex-direction: column; margin: 0 0 2px 14px; padding-left: 6px; border-left: 1px solid var(--line-2); }
 .ctx-sep { height: 1px; background: var(--line); margin: 4px 0; }
 .ctx-hint { padding: 2px 10px 6px; font-size: 11px; color: var(--text-dim); line-height: 1.4; }
+
+/* A frame is a backdrop: xyflow's wrapper around it would catch every click on its whole area, so panning and clicking the canvas
+   stopped working inside a frame. The wrapper lets everything through; only the title bar and the resize handles take clicks. */
+.svelte-flow__node.frame-node { pointer-events: none !important; }
+.svelte-flow__node.frame-node .frame-bar, .svelte-flow__node.frame-node .svelte-flow__resize-control { pointer-events: auto; }
