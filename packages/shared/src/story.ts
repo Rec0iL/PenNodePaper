@@ -9,7 +9,7 @@ import type { CampaignState, StoryNode } from './index.js';
 // ---------------------------------------------------------------------------
 
 /** Nodes that take part in the story's flow (the rest are reference material). */
-export const FLOW_TYPES = new Set(['scene', 'encounter', 'event', 'clue', 'decision', 'portal']);
+export const FLOW_TYPES = new Set(['scene', 'encounter', 'event', 'clue', 'decision']);
 const FLOW_EDGES = new Set(['leads-to', 'conditional', 'bridge']);
 const SECRET_TYPES = new Set(['clue']);
 
@@ -181,16 +181,6 @@ export function adjacency(s: CampaignState, flowOnly = false): Adj {
   return { out, in: inn };
 }
 
-/** Where a portal node leads: its canvas (if it still exists) and, optionally, the node it arrives at on that canvas. */
-export function portalTarget(s: Pick<CampaignState, 'nodes' | 'graph'>, n: StoryNode): { canvas: { id: string; name: string } | null; nodeId: string | null; node: StoryNode | null } {
-  const cid = typeof n.fields.canvas === 'string' ? n.fields.canvas : '';
-  const canvas = s.graph.canvases.find((c) => c.id === cid) ?? null;
-  const nodeId = typeof n.fields.nodeId === 'string' && n.fields.nodeId ? n.fields.nodeId : null;
-  const target = nodeId ? s.nodes[nodeId] : undefined;
-  const node = target && !target.trashed && canvas && s.graph.placements[nodeId!]?.canvas === canvas.id ? target : null;
-  return { canvas, nodeId, node };
-}
-
 // ------------------------------------------------------------------ linter ---
 
 export function lintStory(s: CampaignState): Issue[] {
@@ -208,7 +198,7 @@ export function lintStory(s: CampaignState): Issue[] {
     const reveals = (all.out.get(n.id) ?? []).filter((e) => e.kind === 'reveals');
 
     if (n.type === 'decision' && outs.length < 2) add('warn', 'decision-branches', n, `Decision “${n.title}” has ${outs.length} way(s) forward — a decision needs at least two.`);
-    else if (!outs.length && !reveals.length && n.status !== 'done' && flow.length > 1 && !(n.type === 'portal' && portalTarget(s, n).canvas)) add('info', 'dead-end', n, `“${n.title}” leads nowhere (end of this branch).`);
+    else if (!outs.length && !reveals.length && n.status !== 'done' && flow.length > 1) add('info', 'dead-end', n, `“${n.title}” leads nowhere (end of this branch).`);
 
     if (n.type === 'clue') {
       const finders = ins.filter((e) => e.kind !== 'foreshadows');
@@ -227,11 +217,6 @@ export function lintStory(s: CampaignState): Issue[] {
   }
 
   for (const n of nodes) {
-    if (n.type === 'portal') {
-      const t = portalTarget(s, n);
-      if (!t.canvas) add('warn', 'portal-target', n, `Portal “${n.title}” leads to a canvas that does not exist (any more) — point it at another one.`);
-      else if (t.nodeId && !t.node) add('warn', 'portal-target', n, `Portal “${n.title}” points to a node that is gone or no longer on “${t.canvas.name}”.`);
-    }
     if (n.type === 'clock') {
       const c = clockOf(n);
       if (c.full && n.status !== 'done') add('warn', 'clock-full', n, `Clock “${n.title}” is full — its consequence is due${c.consequence ? `: ${c.consequence}` : ''}.`);

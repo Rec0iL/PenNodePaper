@@ -4,6 +4,7 @@ import path from 'node:path';
 import YAML from 'yaml';
 import type { CampaignMeta, CampaignState, GraphFile, StoryNode } from '@pnp/shared';
 import { NODE_STATUSES, NODE_TYPES } from '@pnp/shared';
+import { replacePortals } from './legacy.js';
 
 const READ_ALOUD_MARK = '<!-- read-aloud -->';
 
@@ -37,6 +38,12 @@ export function serializeNode(n: StoryNode): string {
   let out = `---\n${YAML.stringify(fm).trimEnd()}\n---\n\n${n.body.trim()}\n`;
   if (n.readAloud.trim()) out += `\n${READ_ALOUD_MARK}\n${n.readAloud.trim()}\n`;
   return out;
+}
+
+/** Campaigns from before portals were removed: the node file says `type: portal` (parseNode would turn it into a scene). */
+export function isLegacyPortal(raw: string): boolean {
+  const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(raw);
+  return !!m && /^type:\s*['"]?portal['"]?\s*$/m.test(m[1]);
 }
 
 export function parseNode(raw: string, fallbackId: string): StoryNode | null {
@@ -113,16 +120,36 @@ export class Persistence {
       } catch { /* keep empty */ }
     }
     const nodes: Record<string, StoryNode> = {};
+    const portals: string[] = [];
     for (const f of fs.readdirSync(this.nodesDir)) {
       if (!f.endsWith('.md')) continue;
       const id = f.slice(0, -3);
-      const n = parseNode(fs.readFileSync(path.join(this.nodesDir, f), 'utf8'), id);
-      if (n) nodes[n.id] = n;
+      const raw = fs.readFileSync(path.join(this.nodesDir, f), 'utf8');
+      const n = parseNode(raw, id);
+      if (n) {
+        nodes[n.id] = n;
+        if (isLegacyPortal(raw)) portals.push(n.id);
+      }
     }
     // heal: placements/edges that point to missing nodes
     for (const id of Object.keys(graph.placements)) if (!nodes[id] || nodes[id].trashed) delete graph.placements[id];
     graph.edges = graph.edges.filter((e) => nodes[e.from] && nodes[e.to]);
+    if (portals.length) this.convertPortals(nodes, graph, portals);
     return { meta, nodes, graph };
+  }
+
+  /** Portal nodes no longer exist: their connections become direct ones (drawn as jump markers); the old files are kept in nodes/.legacy-portals/. */
+  private convertPortals(nodes: Record<string, StoryNode>, graph: GraphFile, ids: string[]) {
+    const r = replacePortals({ nodes, graph }, ids);
+    const keep = path.join(this.nodesDir, '.legacy-portals');
+    fs.mkdirSync(keep, { recursive: true });
+    for (const id of r.removed) {
+      const from = this.nodePath(id);
+      this.selfWrites.set(from, '__deleted__');
+      try { fs.renameSync(from, path.join(keep, `${id}.md`)); } catch { /* already gone */ }
+    }
+    this.writeGraph(graph);
+    console.log(`[migrate] ${path.basename(this.dir)}: ${r.removed.length} portal node(s) replaced by ${r.connections} connection(s) between canvases (old files in nodes/.legacy-portals/)`);
   }
 
   writeMeta(meta: CampaignMeta) {

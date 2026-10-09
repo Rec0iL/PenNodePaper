@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { dieLabel, entryLine, parseEntryLines, rollLog, tableEntries, tableFaces, tableRanges, FLOW_TYPES, VISITABLE_TYPES, STATUS_CHOICES, visitsOf, groupsOf, sheetToText, type CampaignState, clockOf, isKnown, portalTarget, NODE_TYPES, NODE_STATUSES, NODE_TYPE_INFO, EDGE_KINDS, EDGE_KIND_INFO, type EdgeKind, type NodeType, type NodeStatus } from '@pnp/shared';
-  import { app, cmd, focusNode, gotoPortal, openCrossLink, say, sendChat } from '../lib/app.svelte';
+  import { dieLabel, entryLine, parseEntryLines, rollLog, tableEntries, tableFaces, tableRanges, FLOW_TYPES, VISITABLE_TYPES, STATUS_CHOICES, visitsOf, groupsOf, sheetToText, type CampaignState, clockOf, isKnown, NODE_TYPES, NODE_STATUSES, NODE_TYPE_INFO, EDGE_KINDS, EDGE_KIND_INFO, type EdgeKind, type NodeType, type NodeStatus } from '@pnp/shared';
+  import { app, cmd, focusNode, openCrossLink, say, sendChat } from '../lib/app.svelte';
   import Chat from './Chat.svelte';
   import SoundCues from './SoundCues.svelte';
   import ImagesPanel from './ImagesPanel.svelte';
@@ -15,14 +15,12 @@
 
   // npc/enemy sheets are edited in the schema-driven sheet form; map ids / sheet internals never belong in the raw list
   const hasRoles = $derived(!!app.vtt?.profile?.characters?.roles?.length);
-  // bookkeeping the app manages itself (where the players are, the sound list, a portal's target …): not for typing into
-  const genericHidden = $derived(new Set(['role', 'preset', 'sheet', 'mapId', 'visits', 'sound', 'sounds', ...(node?.type === 'portal' ? ['canvas', 'nodeId'] : []), ...(node?.type === 'table' ? ['entries', 'last', 'history'] : []), ...(hasRoles && (node?.type === 'npc' || node?.type === 'enemy') ? Object.keys(node.fields) : [])]));
+  // bookkeeping the app manages itself (where the players are, the sound list …): not for typing into
+  const genericHidden = $derived(new Set(['role', 'preset', 'sheet', 'mapId', 'visits', 'sound', 'sounds', ...(node?.type === 'table' ? ['entries', 'last', 'history'] : []), ...(hasRoles && (node?.type === 'npc' || node?.type === 'enemy') ? Object.keys(node.fields) : [])]));
 
   const clock = $derived(node?.type === 'clock' ? clockOf(node) : null);
   const customFields = $derived(node ? Object.entries(node.fields).filter(([k]) => !genericHidden.has(k)) : []);
-  const showSounds = $derived(!!node && !['pc', 'annotation', 'clock', 'table', 'portal'].includes(node.type));
-  const portal = $derived(node?.type === 'portal' ? portalTarget({ nodes: app.nodes, graph: app.graph }, node) : null);
-  const canvasNodes = (cid: string) => Object.entries(app.graph.placements).filter(([id, p]) => p.canvas === cid && app.nodes[id] && !app.nodes[id].trashed && id !== node?.id).map(([id]) => app.nodes[id]);
+  const showSounds = $derived(!!node && !['pc', 'annotation', 'clock', 'table'].includes(node.type));
   const hasParty = $derived(Object.values(app.nodes).some((n) => n.type === 'pc' && !n.trashed && n.fields.present !== false));
   const playing = (status: 'active' | 'done' | 'skipped') => node && cmd('mark_played', { nodeId: node.id, status });
   const pcText = $derived.by(() => {
@@ -243,22 +241,6 @@
         {/if}
         {#if node.type === 'clue' || node.type === 'lore' || node.type === 'npc' || node.type === 'location' || node.type === 'item' || node.type === 'faction'}
           <label class="chk"><input type="checkbox" checked={isKnown(node)} onchange={(e) => cmd('set_known', { nodeId: node.id, known: e.currentTarget.checked })} /> the players know this</label>
-        {/if}
-        {#if portal && node}
-          <div class="label tight2">Leads to canvas</div>
-          <select class="field" value={portal.canvas?.id ?? ''} onchange={(e) => patch({ fields: { canvas: e.currentTarget.value, nodeId: null } })}>
-            <option value="" disabled>— choose —</option>
-            {#each app.graph.canvases as c (c.id)}<option value={c.id}>{c.name}</option>{/each}
-          </select>
-          {#if portal.canvas}
-            <div class="label tight2">Arrives at <span class="dim">(optional)</span></div>
-            <select class="field" value={portal.nodeId ?? ''} onchange={(e) => patch({ fields: { nodeId: e.currentTarget.value || null } })}>
-              <option value="">the canvas as a whole</option>
-              {#each canvasNodes(portal.canvas.id) as t (t.id)}<option value={t.id}>{t.title}</option>{/each}
-            </select>
-            <div class="trow"><button class="btn" onclick={() => gotoPortal(node)}>↠ Go there</button></div>
-            <div class="dim">The story flow continues through the portal only if it is connected to what you arrive at — drag a connection from the portal to that node (or let the AI do it with create_portal).</div>
-          {/if}
         {/if}
         {#if clock}
           <div class="trow">

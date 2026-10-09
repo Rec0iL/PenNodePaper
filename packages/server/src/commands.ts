@@ -349,7 +349,7 @@ def({
 
 def({
   name: 'link',
-  description: 'Create an edge between two nodes. kind: leads-to (story flow), conditional, reveals, belongs-to, foreshadows, bridge. The nodes may be on DIFFERENT canvases (next act, side quest): the GM then sees a jump marker next to each end, and the story flow, linter and played path simply continue across. Use create_portal instead when you want a visible doorway node.',
+  description: 'Create an edge between two nodes. kind: leads-to (story flow), conditional, reveals, belongs-to, foreshadows, bridge. The nodes may be on DIFFERENT canvases (next act, side quest): the GM then sees a jump marker next to each end, and the story flow, linter and played path simply continue across. This is THE way to lead from one canvas to another (next act, side quest, flashback): link the last node here to the first node there; there is no separate doorway node.',
   shape: { from: z.string(), to: z.string(), kind: edgeKindEnum.optional(), label: z.string().optional() },
   run(tx, a) {
     const e = link(tx, a.from, a.to, a.kind ?? 'leads-to', a.label ?? '');
@@ -1606,7 +1606,7 @@ def({
 
 def({
   name: 'rename_canvas',
-  description: 'Rename a canvas (its id stays the same, so portals and placements keep working).',
+  description: 'Rename a canvas (its id stays the same, so placements keep working).',
   shape: { id: z.string(), name: z.string().min(1) },
   run(tx, a) {
     const c = canvasById(tx, a.id);
@@ -1619,7 +1619,7 @@ def({
 def({
   name: 'delete_canvas',
   description:
-    'Delete a canvas. Its nodes are NOT lost: they go back to the sidebar pool, or — with moveTo — onto another canvas (placed below what is already there, frames come along, portals that led here are re-pointed). Without moveTo, portals that led here lose their target (the linter flags them). The last canvas cannot be deleted. One undo step brings everything back.',
+    'Delete a canvas. Its nodes are NOT lost: they go back to the sidebar pool, or — with moveTo — onto another canvas (placed below what is already there, frames come along; connections to other canvases stay and are drawn as jump markers again). The last canvas cannot be deleted. One undo step brings everything back.',
   shape: { id: z.string(), moveTo: z.string().optional().describe('Canvas that receives the nodes and frames instead of the pool.') },
   run(tx, a) {
     const c = canvasById(tx, a.id);
@@ -1644,18 +1644,9 @@ def({
       if (a.moveTo !== undefined) tx.putFrame({ ...f, canvas: a.moveTo, y: f.y + dy });
       else tx.removeFrame(f.id);
     }
-    let portals = 0;
-    for (const n of Object.values(tx.state.nodes)) {
-      if (n.type !== 'portal' || n.trashed || n.fields.canvas !== a.id) continue;
-      const fields = { ...n.fields };
-      if (a.moveTo !== undefined) fields.canvas = a.moveTo;
-      else { delete fields.canvas; delete fields.nodeId; }
-      tx.putNode({ ...n, fields, updatedAt: now() });
-      portals++;
-    }
     tx.removeCanvas(a.id);
     tx.label = `Deleted canvas “${c.name}”`;
-    return { deleted: a.id, nodes: mine.length, nodesWent: a.moveTo ?? 'pool', frames: frames.length, portalsAffected: portals };
+    return { deleted: a.id, nodes: mine.length, nodesWent: a.moveTo ?? 'pool', frames: frames.length };
   },
 });
 
@@ -1675,51 +1666,6 @@ def({
     }
     tx.store.emitView({ canvas: canvas.id, nodeId: a.nodeId, actor: tx.actor });
     return { shown: canvas.name, canvas: canvas.id };
-  },
-});
-
-def({
-  name: 'create_portal',
-  description:
-    'Put a PORTAL on a canvas: a doorway node that leads to another canvas — into the next act, a side quest, a flashback. The GM clicks it to jump over. The story flow continues through it, so the linter, the played path and "where can the story go" see across canvases. `from` = the node it hangs off (edge from → portal); `toNodeId` = the node you arrive at on the other canvas (portal → it, a bridge edge). For a side quest make two: one from the hook into the first side-quest node, and one at its end back into the main line (point it at the scene AFTER the hook, so the story does not loop). Without toNodeId the portal just opens the canvas.',
-  shape: {
-    toCanvas: z.string().describe('Canvas id the portal leads to.'),
-    toNodeId: z.string().optional().describe('Node on that canvas to arrive at.'),
-    from: z.string().optional().describe('Node on this side that leads into the portal.'),
-    canvas: z.string().optional().describe('Canvas to put the portal on (default: the canvas of `from`, else the first).'),
-    title: z.string().optional().describe('Default: “→ <canvas name>”.'),
-    summary: z.string().optional().describe('What the players do or see when they cross (e.g. “Sail for Tortuga”).'),
-    edgeLabel: z.string().optional(),
-    nearNodeId: z.string().optional(),
-    x: z.number().optional(), y: z.number().optional(),
-    id: z.string().optional(),
-  },
-  run(tx, a) {
-    const target = canvasById(tx, a.toCanvas);
-    if (a.toNodeId) {
-      const t = tx.requireNode(a.toNodeId);
-      if (tx.state.graph.placements[a.toNodeId]?.canvas !== target.id) throw new Error(`“${t.title}” is not on canvas “${target.name}” — place it there first.`);
-    }
-    const fromNode = a.from ? tx.requireNode(a.from) : null;
-    const fp = a.from ? tx.state.graph.placements[a.from] : undefined;
-    if (fromNode && !fp) throw new Error(`“${fromNode.title}” is in the pool — place it on a canvas first.`);
-    const canvas = a.canvas ?? fp?.canvas ?? tx.store.activeCanvasId();
-    checkCanvas(tx, canvas);
-    if (canvas === target.id) throw new Error('The portal and its target are on the same canvas — just link the nodes instead.');
-    const title = a.title?.trim() || `→ ${target.name}`;
-    const id = tx.newNodeId(title, a.id);
-    const t = now();
-    const node: StoryNode = {
-      id, type: 'portal', title, summary: a.summary ?? '', body: '', readAloud: '', tags: [], status: 'untouched',
-      fields: { canvas: target.id, ...(a.toNodeId ? { nodeId: a.toNodeId } : {}) }, images: [], poolHint: '', trashed: false, createdAt: t, updatedAt: t,
-    };
-    tx.putNode(node);
-    const pos = a.x !== undefined && a.y !== undefined ? { x: a.x, y: a.y } : freeSpot(tx, canvas, a.nearNodeId ?? a.from);
-    tx.setPlacement(id, { canvas, ...pos });
-    if (a.from) link(tx, a.from, id, 'leads-to', a.edgeLabel ?? '');
-    if (a.toNodeId) link(tx, id, a.toNodeId, 'bridge', '');
-    tx.label = `Portal “${title}”`;
-    return { id, canvas, leadsTo: target.id, ...(a.toNodeId ? { arrivesAt: a.toNodeId } : {}) };
   },
 });
 

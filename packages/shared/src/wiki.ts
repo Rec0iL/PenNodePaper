@@ -39,7 +39,7 @@ export function playerWiki(s: CampaignState): PlayerWiki {
   const split = new Set(Object.values(s.nodes).flatMap((n) => visitsOf(n).map((v) => v.group))).size > 1;
 
   const story = nodes
-    .filter((n) => FLOW_TYPES.has(n.type) && n.type !== 'clue' && n.type !== 'portal' && visitsOf(n).length)
+    .filter((n) => FLOW_TYPES.has(n.type) && n.type !== 'clue' && visitsOf(n).length)
     .sort((a, b) => firstSeq(a) - firstSeq(b))
     .map((n) => entry(n, split ? visitsOf(n).sort((x, y) => x.seq - y.seq)[0].group : undefined));
   const byTitle = (a: WikiEntry, b: WikiEntry) => a.title.localeCompare(b.title);

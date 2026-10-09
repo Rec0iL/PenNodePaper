@@ -5,8 +5,6 @@ import type { MapDoc } from './mapdata.js';
 export const NODE_TYPES = [
   // story
   'scene', 'encounter', 'event', 'clue', 'decision',
-  // a doorway into another canvas (next act, side quest)
-  'portal',
   // world
   'pc', 'npc', 'enemy', 'location', 'faction', 'item', 'lore',
   // play helpers
@@ -228,7 +226,6 @@ export const NODE_TYPE_INFO: Record<NodeType, { label: string; group: 'story' | 
   event:      { label: 'Event',       group: 'story',  color: '#ffb454', icon: '⚡' },
   clue:       { label: 'Clue/Secret', group: 'story',  color: '#b89cff', icon: '◉' },
   decision:   { label: 'Decision',    group: 'story',  color: '#5fd4c4', icon: '⑂' },
-  portal:     { label: 'Portal',      group: 'story',  color: '#c58bff', icon: '↠' },
   pc:         { label: 'Player character', group: 'world', color: '#5fb8ff', icon: '♞' },
   npc:        { label: 'NPC',         group: 'world',  color: '#f2a1c8', icon: '☺' },
   enemy:      { label: 'Enemy',       group: 'story',  color: '#ff5d73', icon: '☠' },

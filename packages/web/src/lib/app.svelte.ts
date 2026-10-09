@@ -391,14 +391,6 @@ export function focusNode(id: string) {
   }
 }
 
-/** The GM clicked a portal: jump to what it leads to (the arrival node if it has one, else the canvas). */
-export function gotoPortal(node: StoryNode) {
-  const cid = typeof node.fields.canvas === 'string' ? node.fields.canvas : '';
-  const tid = typeof node.fields.nodeId === 'string' ? node.fields.nodeId : '';
-  if (tid && app.graph.placements[tid]) return focusNode(tid);
-  if (app.graph.canvases.some((c) => c.id === cid)) app.canvasId = cid;
-}
-
 /** The AI asked to show a canvas (show_canvas). Respects "follow the AI". */
 function showCanvasFromAi(canvas: string, nodeId: string | undefined, actor: Actor) {
   if (!app.followAi || !app.graph.canvases.some((c) => c.id === canvas)) return;
