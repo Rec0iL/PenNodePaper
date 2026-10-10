@@ -343,14 +343,50 @@ describe('precise painting (two steps)', () => {
     expect(wfs).toHaveLength(3);
     expect(wfs.map((w) => w['10'].inputs.text).join('|')).toMatch(/oak barrels/);
     expect(wfs.map((w) => w['10'].inputs.text).join('|')).not.toMatch(/AI says/);
-    // explicit prompts: no AI call at all
+    // prompts for every group: no AI call at all, the wording is used as it is
     wfs.length = 0;
     aiCalls.length = 0;
     aiMode = 'ok';
-    run('paint_map_props', { mapId, prompts: { g1: 'my own long table description' } });
+    run('paint_map_props', { mapId, prompts: { g1: 'my own long table description', g2: 'two squat kegs', g3: 'an iron-bound chest' } });
     await idle();
     expect(aiCalls).toEqual([]);
     expect(wfs.map((w) => w['10'].inputs.text).join('|')).toContain('my own long table description');
+    expect(wfs.map((w) => w['10'].inputs.text).join('|')).toContain('two squat kegs');
+  });
+
+  it('the GM can write the prompt of single groups in the editor: those are kept as they are, the AI writes only the others and its words are shown for editing', async () => {
+    const mapId = setup();
+    run('render_map', { mapId, prompt: PLACE });
+    await idle();
+    const m = store.maps.get(mapId);
+    m.terrainPick = m.terrains![0];
+    m.propPrompts = {
+      g1: { kind: 'table', text: 'one long banquet table of black oak, scarred' }, // the GM's wording
+      g2: { kind: 'chest', text: 'stale: this group is a barrel row now' }, // a group that changed kind: not used
+    };
+    store.maps.save(m, { backup: 'none' });
+    wfs.length = 0;
+    aiCalls.length = 0;
+    run('paint_map_props', { mapId });
+    await idle();
+    const text = wfs.map((w) => w['10'].inputs.text).join('|');
+    expect(text).toContain('one long banquet table of black oak, scarred');
+    expect(text).not.toContain('stale:');
+    // the AI was asked about the two other groups only
+    const req = aiCalls.find((c) => c.includes('GROUPS (JSON)'))!;
+    expect(req).not.toContain('"id":"g1"');
+    expect(req).toContain('"id":"g2"');
+    expect(req).toContain('"id":"g3"');
+    // what it wrote is kept (flagged) so the editor can show it; the GM's own text is untouched
+    const pp = store.maps.get(mapId).propPrompts!;
+    expect(pp.g1).toEqual({ kind: 'table', text: 'one long banquet table of black oak, scarred' });
+    expect(pp.g2).toMatchObject({ kind: 'barrel', ai: true });
+    expect(pp.g2.text).toMatch(/AI says/);
+    // a next run does not treat the AI's words as the GM's: it writes new ones (the place may have changed)
+    aiCalls.length = 0;
+    run('paint_map_props', { mapId });
+    await idle();
+    expect(aiCalls.some((c) => c.includes('GROUPS (JSON)'))).toBe(true);
   });
 
   it('can be stopped between groups; nothing half-done is attached', async () => {

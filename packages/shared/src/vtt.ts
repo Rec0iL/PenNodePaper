@@ -47,7 +47,12 @@ export interface UpfScene {
   };
   /** start positions; x/y are CELL coordinates (0,0 = top-left cell) */
   /** kinds: pc = player start marker (see profile.push.scene.playerStarts), npc/enemy = figures */
-  tokens: { x: number; y: number; kind: 'pc' | 'npc' | 'enemy'; label?: string }[];
+  /**
+   * `character`: the id of the pushed character (UpfCharacter.id) this token stands for. The characters are pushed right
+   * after the scene (with `scene` set to this scene's id), so a VTT can tie the token to its combat entry / NPC entry
+   * instead of leaving the GM to create the opponent for a bare marker.
+   */
+  tokens: { x: number; y: number; kind: 'pc' | 'npc' | 'enemy'; label?: string; character?: string }[];
   /** make it the active scene for the players */
   activate?: boolean;
 }
@@ -117,7 +122,7 @@ export interface UpfCharacter {
   /** role "pc": the player at the table, and whether they are connected right now */
   playerName?: string;
   online?: boolean;
-  /** offline bundles only: the id of the scene this character belongs on (the map of the place they live in) */
+  /** the id of the scene this character belongs on (the map of the place they live in): offline bundles name it; a live push sets it when the character was pushed together with its map — the scene's tokens with `character` = this id are its tokens, so do not place a second one */
   scene?: string;
 }
 
@@ -153,7 +158,7 @@ export interface VttProfile {
   push: {
     handout?: { text?: boolean; image?: boolean; toPlayer?: boolean };
     /** playerStarts: the VTT wants player start markers (pc tokens). Default false: players are added in the VTT itself. */
-    scene?: { grids: ('square' | 'hex')[]; tokens?: boolean; playerStarts?: boolean };
+    scene?: { grids: ('square' | 'hex')[]; tokens?: boolean; playerStarts?: boolean; /** tokens may carry `character`: the VTT ties them to the pushed character (combat entry / NPC entry) */ characterTokens?: boolean };
     /** the VTT can receive pushed characters (the structure itself is in `profile.characters`) */
     character?: Record<string, never>;
     music_cue?: { tracks?: boolean; mood?: boolean };

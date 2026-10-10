@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { WebSocket } from 'ws';
 import {
-  BRIDGE_PROTOCOL, imageSize, renderSvg, pickRole, validateSheet,
+  BRIDGE_PROTOCOL, imageSize, renderSvg, pickRole, validateSheet, isCharacterNode, tokenKindOf,
   type BridgeFromVtt, type BridgeToVtt, type StoryNode, type CharacterRole, type UpfCharacter, type UpfHandout, type UpfImage, type UpfPush, type UpfScene,
   type UpfTrack, type VttProfile, type VttStatus,
 } from '@pnp/shared';
@@ -247,7 +247,7 @@ export function sceneFromImage(store: Store, imagesDir: string, nodeId: string, 
   };
 }
 
-export function sceneFromMap(store: Store, imagesDir: string, mapId: string, opts: { image?: 'painted' | 'plan'; activate?: boolean; players?: boolean } = {}): UpfScene {
+export function sceneFromMap(store: Store, imagesDir: string, mapId: string, opts: { image?: 'painted' | 'plan'; activate?: boolean; players?: boolean; /** node ids whose character goes along with the map: their tokens carry `character` */ characters?: Set<string> } = {}): UpfScene {
   const m = store.maps.get(mapId);
   const { w, h, cell } = imageSize(m);
   const want = opts.image ?? (m.renders.length ? 'painted' : 'plan');
@@ -265,9 +265,40 @@ export function sceneFromMap(store: Store, imagesDir: string, mapId: string, opt
     name: m.name,
     image, width: w, height: h,
     grid: { type: m.grid.type, size, offsetX: 0, offsetY: 0, unitsPerCell: m.grid.unit, unit: 'ft' },
-    tokens: m.tokens.filter((t) => t.kind !== 'pc' || opts.players).map((t) => ({ x: t.x, y: t.y, kind: t.kind, label: t.label })),
+    tokens: m.tokens.filter((t) => t.kind !== 'pc' || opts.players).map((t) => {
+      // a token that stands for a character takes its name (and kind) from the node; it is tied to the pushed character only when that goes along
+      const n = t.node ? store.state.nodes[t.node] : undefined;
+      const live = isCharacterNode(n) ? n : undefined;
+      return {
+        x: t.x, y: t.y, kind: live ? tokenKindOf(live) : t.kind, label: t.label ?? live?.title,
+        ...(live && opts.characters?.has(live.id) ? { character: live.id } : {}),
+      };
+    }),
     activate: opts.activate,
   };
+}
+
+/**
+ * The characters that go along with a battle map: every NPC / enemy node a token of the map stands for, as the VTT's
+ * own sheet structure wants it. Nodes whose sheet the VTT would reject are listed as `skipped` (their token stays a plain marker).
+ */
+export function mapCast(store: Store, imagesDir: string, mapId: string, profile: VttProfile | null, opts: { offline?: boolean } = {}): { characters: UpfCharacter[]; skipped: { nodeId: string; name: string; reason: string }[]; warnings: string[] } {
+  const out = { characters: [] as UpfCharacter[], skipped: [] as { nodeId: string; name: string; reason: string }[], warnings: [] as string[] };
+  // live: only a VTT that receives characters; an offline file only needs to know how its sheets are built
+  if (opts.offline ? !profile?.characters?.roles?.length : !profile?.push.character) return out;
+  const m = store.maps.get(mapId);
+  for (const id of [...new Set(m.tokens.map((t) => t.node).filter((x): x is string => !!x))]) {
+    const n = store.state.nodes[id];
+    if (!isCharacterNode(n)) continue;
+    try {
+      const { character, warnings } = characterFromNode(store, imagesDir, id, profile);
+      out.characters.push({ ...character, scene: mapId });
+      out.warnings.push(...warnings.map((w) => `${n.title}: ${w}`));
+    } catch (e) {
+      out.skipped.push({ nodeId: id, name: n.title, reason: e instanceof Error ? e.message : String(e) });
+    }
+  }
+  return out;
 }
 
 /** A square, top-biased crop of an image at `max` px (faces stay in frame) — small enough to push and to store in a VTT. */
@@ -331,8 +362,8 @@ export interface UpfBundle {
 function sceneOfNpc(store: Store, nodeId: string, scenes: UpfScene[]): string | undefined {
   const s = store.state;
   for (const e of s.graph.edges) {
-    if (e.kind !== 'belongs-to' || e.from !== nodeId) continue;
-    const place = s.nodes[e.to];
+    if (e.kind !== 'belongs-to' || (e.from !== nodeId && e.to !== nodeId)) continue;
+    const place = s.nodes[e.from === nodeId ? e.to : e.from];
     if (!place || place.trashed) continue;
     const mapId = typeof place.fields.mapId === 'string' ? place.fields.mapId : '';
     const hit = scenes.find((sc) => sc.id === mapId) ?? scenes.find((sc) => sc.id.startsWith(`${place.id}:`));
@@ -342,19 +373,26 @@ function sceneOfNpc(store: Store, nodeId: string, scenes: UpfScene[]): string | 
 }
 
 export function buildBundle(store: Store, imagesDir: string, sel: { handouts?: string[]; maps?: string[]; backdrops?: string[]; characters?: string[] }, profile?: VttProfile | null, opts: { includePlayers?: boolean } = {}): UpfBundle {
+  // the characters that stand on a map travel with it, and their tokens are tied to them
+  const cast = new Map<string, UpfCharacter>();
   const scenes = [
-    ...(sel.maps ?? []).map((id) => sceneFromMap(store, imagesDir, id, { players: wantsPlayerStarts(profile, opts.includePlayers) })),
+    ...(sel.maps ?? []).map((id) => {
+      const c = mapCast(store, imagesDir, id, profile ?? null, { offline: true });
+      for (const ch of c.characters) if (!cast.has(ch.id)) cast.set(ch.id, ch);
+      return sceneFromMap(store, imagesDir, id, { players: wantsPlayerStarts(profile, opts.includePlayers), characters: new Set(c.characters.map((x) => x.id)) });
+    }),
     ...(sel.backdrops ?? []).map((id) => sceneFromImage(store, imagesDir, id, undefined)),
   ];
+  const chosen = (sel.characters ?? []).filter((id) => !cast.has(id)).map((id) => {
+    const c = characterFromNode(store, imagesDir, id, profile ?? null).character;
+    const scene = c.role === 'npc' ? sceneOfNpc(store, id, scenes) : undefined;
+    return scene ? { ...c, scene } : c;
+  });
   return {
     upf: 1, app: 'pennodepaper', campaign: store.state.meta.name, exportedAt: new Date().toISOString(),
     handouts: (sel.handouts ?? []).map((id) => handoutFromNode(store, imagesDir, id)),
     scenes,
-    characters: (sel.characters ?? []).map((id) => {
-      const c = characterFromNode(store, imagesDir, id, profile ?? null).character;
-      const scene = c.role === 'npc' ? sceneOfNpc(store, id, scenes) : undefined;
-      return scene ? { ...c, scene } : c;
-    }),
+    characters: [...chosen, ...cast.values()],
   };
 }
 
@@ -397,18 +435,35 @@ export function kinetikSession(b: UpfBundle) {
     return h;
   };
   const uid = () => randomBytes(5).toString('hex');
+  const byId = new Map(b.characters.map((c) => [c.id, c]));
+  const portrait = (c: UpfCharacter | undefined) => (c?.portrait ? `data:${c.portrait.mime};base64,${c.portrait.b64}` : undefined);
+  const tied = new Set<string>(); // NPCs that already stand on a map as a token
   const scenes = b.scenes.map((s) => ({
     id: s.id, name: s.name, asset: add(s.image), width: s.width, height: s.height, rev: 1,
     grid: { show: !s.grid.hidden, size: s.grid.size, ox: s.grid.offsetX, oy: s.grid.offsetY, color: '#00e5ff', opacity: 0.35, unit: s.grid.unit, unitsPerCell: s.grid.unitsPerCell },
     fog: { enabled: false, ops: [] },
-    tokens: s.tokens.map((t): Record<string, unknown> => ({
-      id: uid(), name: t.label ?? (t.kind === 'pc' ? 'Spieler' : 'Gegner'),
-      x: Math.round((t.x + 0.5) * s.grid.size), y: Math.round((t.y + 0.5) * s.grid.size), size: 1,
-      color: { pc: '#00e5ff', npc: '#3ddc97', enemy: '#ff4d6d' }[t.kind], kind: t.kind === 'pc' ? 'pc' : 'npc', hidden: false,
-    })),
+    tokens: s.tokens.map((t): Record<string, unknown> => {
+      const c = t.character ? byId.get(t.character) : undefined;
+      const base = {
+        id: uid(), name: t.label ?? (c?.name ?? (t.kind === 'pc' ? 'Spieler' : 'Gegner')),
+        x: Math.round((t.x + 0.5) * s.grid.size), y: Math.round((t.y + 0.5) * s.grid.size), size: 1,
+        color: { pc: '#00e5ff', npc: '#3ddc97', enemy: '#ff4d6d' }[t.kind], kind: t.kind === 'pc' ? 'pc' : 'npc', hidden: false,
+      };
+      if (!c) return base;
+      // an enemy's token is tied to its combat entry (same id as in combat.npcs) and rolls with it
+      if (c.role === 'enemy') {
+        // a boss or nemesis stands 2x2 like one set up from KINETIK's own menu (its top-left cell stays the cell on the plan)
+        const big = c.sheet.tier === 'boss' || c.sheet.tier === 'nemesis';
+        const at = big ? { x: Math.round((t.x + 1) * s.grid.size), y: Math.round((t.y + 1) * s.grid.size), size: 2 } : {};
+        return { ...base, ...at, npcId: c.id, src: `pnp:${c.id}`, ...(portrait(c) ? { img: portrait(c) } : {}) };
+      }
+      tied.add(c.id);
+      const note = String(c.sheet.note ?? '').replace(/\s*\n+\s*/g, ' ').trim().slice(0, 80);
+      return { ...base, size: Math.max(1, Math.min(4, Math.round(num(c.sheet.size, 1)))), src: `pnp:${c.id}`, ...(note ? { note } : {}), ...(portrait(c) ? { img: portrait(c) } : {}) };
+    }),
   }));
   // NPCs become tokens with portrait and note (like a live push): on the scene of the place they belong to, else the first one
-  const npcs = b.characters.filter((c) => c.role === 'npc');
+  const npcs = b.characters.filter((c) => c.role === 'npc' && !tied.has(c.id));
   const placed = new Map<string, number>();
   for (const c of npcs) {
     const sc = scenes.find((x) => x.id === c.scene) ?? scenes[0];

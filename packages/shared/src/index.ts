@@ -396,3 +396,4 @@ export * from './tables.js';
 export * from './search.js';
 export * from './sounds.js';
 export * from './tutorial.js';
+export * from './characters.js';

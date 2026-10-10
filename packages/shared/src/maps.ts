@@ -20,12 +20,12 @@ export type MapOp =
   | { op: 'prop'; kind: PropKind; x: number; y: number; w?: number; h?: number; rot?: number; label?: string; id?: string }
   | { op: 'remove_prop'; id: string }
   | { op: 'label'; x: number; y: number; text: string }
-  | { op: 'token'; x: number; y: number; kind: 'pc' | 'npc' | 'enemy'; label?: string }
+  | { op: 'token'; x: number; y: number; kind: 'pc' | 'npc' | 'enemy'; label?: string; node?: string }
   | { op: 'remove_label'; x: number; y: number }
   | { op: 'remove_token'; x: number; y: number }
   | { op: 'move_area'; x: number; y: number; w: number; h: number; dx: number; dy: number; copy?: boolean }
   | { op: 'edit_prop'; id: string; kind?: PropKind; x?: number; y?: number; w?: number; h?: number; rot?: number | null; label?: string | null }
-  | { op: 'edit_token'; x: number; y: number; to?: [number, number]; kind?: 'pc' | 'npc' | 'enemy'; label?: string | null }
+  | { op: 'edit_token'; x: number; y: number; to?: [number, number]; kind?: 'pc' | 'npc' | 'enemy'; label?: string | null; node?: string | null }
   | { op: 'edit_label'; x: number; y: number; to?: [number, number]; text?: string }
   | { op: 'resize'; cols: number; rows: number }
   | { op: 'shape'; type: 'polygon' | 'path' | 'ellipse' | 'pin'; kind: TerrainKind; points: [number, number][]; r?: number; width?: number; label?: string; id?: string }
@@ -172,7 +172,7 @@ export function applyOps(m: MapDoc, ops: MapOp[]): { ok: number; notes: string[]
         m.tokens = m.tokens.filter((t) => !(t.x === o.x && t.y === o.y));
         break;
       case 'token':
-        m.tokens.push({ x: o.x, y: o.y, kind: o.kind, label: o.label });
+        m.tokens.push({ x: o.x, y: o.y, kind: o.kind, label: o.label, ...(o.node ? { node: o.node } : {}) });
         break;
       case 'move_area': {
         const { x, y, w, h, dx, dy } = o;
@@ -235,6 +235,7 @@ export function applyOps(m: MapDoc, ops: MapOp[]): { ok: number; notes: string[]
         }
         if (o.kind) t.kind = o.kind;
         if (o.label !== undefined) { if (o.label === null || !o.label.trim()) delete t.label; else t.label = o.label.trim(); }
+        if (o.node !== undefined) { if (o.node === null || !o.node.trim()) delete t.node; else t.node = o.node.trim(); }
         break;
       }
       case 'edit_label': {
@@ -406,6 +407,8 @@ function renderBattle(m: MapDoc, style: MapStyle, maxSide: number): string {
     const tc = { pc: '#4fd1ff', npc: '#7fe08a', enemy: '#ff6a6a' };
     for (const t of m.tokens) {
       o.push(`<circle cx="${(t.x + 0.5) * c}" cy="${(t.y + 0.5) * c}" r="${c * 0.4}" fill="${tc[t.kind]}" stroke="#0b0c10" stroke-width="2"/>`);
+      // a token that stands for a character of the campaign (its sheet goes along to the VTT) wears a white ring
+      if (t.node) o.push(`<circle cx="${(t.x + 0.5) * c}" cy="${(t.y + 0.5) * c}" r="${c * 0.46}" fill="none" stroke="#ffffff" stroke-width="2.5"/>`);
       if (t.label) o.push(`<text x="${(t.x + 0.5) * c}" y="${(t.y + 0.5) * c + c * 0.12}" text-anchor="middle" font-size="${c * 0.34}" font-family="sans-serif" fill="#0b0c10" font-weight="700">${esc(t.label.slice(0, 2))}</text>`);
     }
   }

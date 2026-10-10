@@ -615,6 +615,11 @@ app.put('/api/maps/:id', async (c) => {
   doc.terrains = cur.terrains;
   doc.terrainPick = cur.terrainPick;
   doc.paintPrompt = cur.paintPrompt;
+  // the GM's prompts come from the editor; what the AI wrote meanwhile is kept where the editor has nothing yet
+  const aiWritten = Object.fromEntries(Object.entries(cur.propPrompts ?? {}).filter(([, e]) => e.ai));
+  const pp = { ...aiWritten, ...(doc.propPrompts ?? {}) };
+  if (Object.keys(pp).length) doc.propPrompts = pp;
+  else delete doc.propPrompts;
   doc.updatedAt = new Date().toISOString();
   store.maps.save(doc, { backup: 'throttled' });
   store.emitMap(doc, 'user');

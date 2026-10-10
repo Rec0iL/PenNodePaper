@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { FLOORS, derivedWalls, describeGroups, groupMasks, groupProps, cropFor, imageSize, renderSvg, terrainLegend, toPng, type Backend, type FloorChar, type GroupInfo, type MapDoc, type PropGroup } from './maps.js';
+import { FLOORS, derivedWalls, describeGroups, fallbackGroupPrompt, groupMasks, groupProps, cropFor, imageSize, renderSvg, terrainLegend, toPng, type Backend, type FloorChar, type GroupInfo, type MapDoc, type PropGroup } from './maps.js';
 import { ComfyError } from './comfy.js';
 import type { RunCtx } from './images.js';
 import type { ImageApi } from './store.js';
@@ -33,20 +33,7 @@ const PROP_STYLE =
   'Hand-painted fantasy RPG battlemap, top-down orthographic view from directly above. A bold, clearly readable game object with a thick dark ink outline, rich colour, high contrast and a strong cast shadow on the floor around it, painted in exactly the same art style and lighting as the rest of the map:';
 const PROP_NEGATIVE = 'blurry, text, watermark';
 
-const FALLBACK_PROP: Record<string, string> = {
-  table: 'a sturdy dark wooden table with scratched planks', chair: 'wooden chairs, each a square seat with a backrest bar on one side', bed: 'a bed with a blue blanket and a white pillow', chest: 'a wooden treasure chest with iron bands',
-  barrel: 'oak barrels, each with a round lid and dark iron hoops', crate: 'wooden crates with diagonal slats and iron corners', pillar: 'a round dark stone pillar with a stepped base', statue: 'a weathered dark stone statue on a plinth',
-  altar: 'a dark stone altar slab with a carved rim', fireplace: 'a big stone fireplace with burning logs and glowing embers', stairs_up: 'stone steps going up', stairs_down: 'stone steps going down into darkness',
-  well: 'a round stone well with a wooden cover', tree: 'round leafy tree canopies in ordinary greens', rock: 'grey boulders', bookshelf: 'tall dark wooden bookshelves full of books',
-  throne: 'an ornate dark wooden throne with a high backrest', cauldron: 'a black iron cauldron with bubbling contents', trap: 'a hidden spiked pressure plate in the floor', fountain: 'a stone fountain with clear water',
-  campfire: 'a campfire with logs and bright flames', boat: 'a small wooden rowing boat with benches and oars',
-};
-
-/** The painting prompt for a group when the AI is not available (or forgot one). */
-export function fallbackGroupPrompt(g: Pick<GroupInfo, 'kind' | 'count'>): string {
-  const what = FALLBACK_PROP[g.kind] ?? g.kind.replace(/_/g, ' ');
-  return g.count > 1 ? `${g.count} separate items in a row: ${what}, each clearly distinct` : what;
-}
+export { fallbackGroupPrompt };
 
 // ------------------------------- prompts written by the AI ---------------------------------
 
@@ -139,23 +126,32 @@ export function terrainRunner(images: ImageApi, m: MapDoc, place: string, fideli
 }
 
 /** Step 2 as a queue job runner: write the prompts, then inpaint the groups one after the other onto the accepted terrain. */
-export function propsRunner(images: ImageApi, m: MapDoc, terrainFile: Buffer, place: string, ai: PaintAi, given?: Record<string, string>) {
+export function propsRunner(images: ImageApi, m: MapDoc, terrainFile: Buffer, place: string, ai: PaintAi, given?: Record<string, string>, onWritten?: (written: Record<string, string>) => void) {
   const { w: W, h: H, cell } = imageSize(m);
   const groups = groupProps(m);
   return async (ctx: RunCtx): Promise<Buffer> => {
     const infos = describeGroups(m, groups);
-    let prompts: Record<string, string> = {};
-    if (given && Object.keys(given).length) {
-      prompts = parseGroupPrompts(JSON.stringify(given), infos).prompts;
-    } else {
+    // the GM's own wording wins as it is; the AI writes the rest (and without an AI the plain default of the kind is used)
+    const own: Record<string, string> = {};
+    for (const g of infos) {
+      const v = (given?.[g.id] ?? '').trim().replace(/\s+/g, ' ').slice(0, 500);
+      if (v) own[g.id] = v;
+    }
+    const open = infos.filter((g) => !own[g.id]);
+    let prompts: Record<string, string> = { ...own };
+    const written: Record<string, string> = {};
+    if (open.length) {
       ctx.phase('Writing the painting prompts…');
+      let r: Record<string, string>;
       try {
-        const r = parseGroupPrompts(await images.ai(ai.backend, groupPromptRequest(place, infos), ai.model), infos);
-        prompts = r.prompts;
+        r = parseGroupPrompts(await images.ai(ai.backend, groupPromptRequest(place, open), ai.model), open).prompts;
       } catch (e) {
         console.error('[mappaint] prompt writing failed, using plain prompts', e);
-        prompts = parseGroupPrompts('', infos).prompts;
+        r = parseGroupPrompts('', open).prompts;
       }
+      for (const g of open) written[g.id] = r[g.id];
+      prompts = { ...prompts, ...written };
+      onWritten?.(written);
     }
     let current = terrainFile;
     const n = groups.length;

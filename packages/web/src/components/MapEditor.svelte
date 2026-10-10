@@ -4,10 +4,10 @@
   // edit_map uses, so the GM and the AI can work on one map at the same time.
   import { onMount, untrack } from 'svelte';
   import {
-    DOOR_KINDS, FLOORS, PROP_KINDS, TERRAINS, applyOps, canon, derivedWalls, groupProps, imageSize, renderSvg,
+    DOOR_KINDS, FLOORS, NODE_TYPE_INFO, PROP_KINDS, TERRAINS, applyOps, canon, charactersOfPlace, derivedWalls, fallbackGroupPrompt, groupProps, imageSize, renderSvg, tokenKindOf,
     type DoorKind, type MapDoc, type MapOp, type PropKind, type TerrainKind,
   } from '@pnp/shared';
-  import { app, cmd, say, sendChat } from '../lib/app.svelte';
+  import { app, cmd, say, selectNode, sendChat } from '../lib/app.svelte';
 
   let { mapId, onclose }: { mapId: string; onclose: () => void } = $props();
 
@@ -32,7 +32,9 @@
   let autoWalls = $state(true);
   let view = $state<'plan' | 'control' | 'terrain' | 'painted'>('plan');
   let shownRender = $state<string | null>(null);
-  let panel = $state<'render' | 'map'>('render');
+  let panel = $state<'render' | 'map' | 'cast'>('render');
+  /** the character (NPC / enemy node of this place) the Token tool puts on the plan; null = a plain marker */
+  let tokenNode = $state<string | null>(null);
 
   const battle = $derived(doc?.kind === 'battle');
   // how this computer paints battle maps (Settings → Map painting): quick = one pass, staged = precise, two steps
@@ -42,6 +44,31 @@
   const dim = $derived(doc ? imageSize(doc) : { w: 1, h: 1, cell: 1 });
   const svgStr = $derived(doc && view !== 'painted' && view !== 'terrain' ? renderSvg(doc, view === 'control' ? (staged ? 'terrain' : 'control') : 'preview') : '');
   const node = $derived(nodeId ? app.nodes[nodeId] : undefined);
+  // the NPCs and enemies that belong to this place, and the tokens that stand for them
+  const cast = $derived(doc && battle ? charactersOfPlace({ nodes: app.nodes, graph: app.graph }, doc.id) : []);
+  const placedOf = (id: string) => doc?.tokens.filter((t) => t.node === id).length ?? 0;
+  const placedTotal = $derived(cast.filter((c) => placedOf(c.id) > 0).length);
+  const hasSheet = (n: (typeof cast)[number]) => !!(n.fields.sheet && typeof n.fields.sheet === 'object') || ['tier', 'level', 'hp', 'rolle'].some((k) => k in n.fields);
+  function startPlacing(id: string | null) {
+    tokenNode = id;
+    tool = 'token';
+    panel = 'cast';
+    sel = null;
+    selected = null;
+    pending = [];
+  }
+  let newName = $state('');
+  let newType = $state<'enemy' | 'npc'>('enemy');
+  /** a new NPC / enemy that belongs to this place, ready to be put on the plan */
+  async function createCharacter() {
+    const title = newName.trim();
+    if (!title || !node) return;
+    const r = await cmd<{ id: string }>('create_node', { type: newType, title, linkTo: node.id, linkKind: 'belongs-to', place: 'pool' });
+    if (r) {
+      newName = '';
+      startPlacing(r.id);
+    }
+  }
 
   // ---- load / save --------------------------------------------------------------------
   onMount(() => {
@@ -143,6 +170,11 @@
         doc.terrains = ev.map.terrains;
         doc.terrainPick = ev.map.terrainPick;
         doc.paintPrompt = ev.map.paintPrompt;
+        // prompts the AI wrote for the prop groups arrive where the GM has no wording of their own
+        for (const [id, e] of Object.entries(ev.map.propPrompts ?? {})) {
+          const mine = doc.propPrompts?.[id];
+          if (e.ai && (!mine || mine.ai || !mine.text.trim())) doc.propPrompts = { ...(doc.propPrompts ?? {}), [id]: e };
+        }
         return;
       }
       clearTimeout(saveTimer);
@@ -288,9 +320,9 @@
         sel = { t: 'prop', id };
       } else if (!edit([{ op: 'edit_prop', id: p.id, x: p.x + dx, y: p.y + dy }])) return false;
     } else if (s.t === 'token' && selToken) {
-      const { x: tx0, y: ty0, kind, label } = selToken; // plain values: the edit below changes the token in place
+      const { x: tx0, y: ty0, kind, label, node: tnode } = selToken; // plain values: the edit below changes the token in place
       if (copy) {
-        if (!edit([{ op: 'token', x: tx0 + dx, y: ty0 + dy, kind, label }])) return false;
+        if (!edit([{ op: 'token', x: tx0 + dx, y: ty0 + dy, kind, label, node: tnode }])) return false;
       } else if (!edit([{ op: 'edit_token', x: tx0, y: ty0, to: [tx0 + dx, ty0 + dy] }])) return false;
       sel = { t: 'token', x: tx0 + dx, y: ty0 + dy };
     } else if (s.t === 'label' && selLabel) {
@@ -430,8 +462,15 @@
       } else if (tool === 'token') {
         if (!inGrid(c)) return;
         if (doc.tokens.some((t) => t.x === c.x && t.y === c.y)) return void edit([{ op: 'remove_token', x: c.x, y: c.y }]);
-        const n = doc.tokens.filter((t) => t.kind === tokenKind).length + 1;
-        edit([{ op: 'token', x: c.x, y: c.y, kind: tokenKind, label: `${{ pc: 'P', npc: 'N', enemy: 'E' }[tokenKind]}${n}` }]);
+        const who = tokenNode ? app.nodes[tokenNode] : undefined;
+        if (who && !who.trashed) {
+          // the token IS this character: named after it, kind from its node
+          const n = placedOf(who.id);
+          edit([{ op: 'token', x: c.x, y: c.y, kind: tokenKindOf(who), label: n ? `${who.title} ${n + 1}` : who.title, node: who.id }]);
+        } else {
+          const n = doc.tokens.filter((t) => t.kind === tokenKind).length + 1;
+          edit([{ op: 'token', x: c.x, y: c.y, kind: tokenKind, label: `${{ pc: 'P', npc: 'N', enemy: 'E' }[tokenKind]}${n}` }]);
+        }
       }
       return;
     }
@@ -645,6 +684,21 @@
   // quick: one img2img pass. precise (Settings → Map painting): ① the empty terrain, you pick one, ② every prop group painted into its spot.
   let showGroups = $state(false);
   const groups = $derived(doc && battle ? groupProps(doc) : []);
+  /** the prop group whose prompt is being edited: outlined on the plan */
+  let hotGroup = $state('');
+  type Group = (typeof groups)[number];
+  const promptOf = (g: Group) => {
+    const e = doc?.propPrompts?.[g.id];
+    return e && e.kind === g.kind ? e : null;
+  };
+  const ownPrompts = $derived(groups.filter((g) => { const e = promptOf(g); return e && !e.ai && e.text.trim(); }).length);
+  const defaultPrompt = (g: Group) => fallbackGroupPrompt({ kind: g.kind, count: g.props.length });
+  /** the GM's own wording (an empty text = "no wording of mine", the AI writes it) */
+  function setPrompt(g: Group, text: string) {
+    if (!doc) return;
+    doc.propPrompts = { ...(doc.propPrompts ?? {}), [g.id]: { kind: g.kind, text } };
+    touch();
+  }
 
   async function loadPaint() {
     if (!doc) return;
@@ -781,7 +835,7 @@
     <div class="body">
       <nav class="tools" data-tour="map-tools">
         {#each battle ? battleTools : regionTools as t}
-          <button class:on={tool === t.id} title={t.tip} onclick={() => { tool = t.id; pending = []; selected = null; sel = null; moving = null; }}><i>{t.icon}</i><span>{t.label}</span></button>
+          <button class:on={tool === t.id} title={t.tip} onclick={() => { tool = t.id; pending = []; selected = null; sel = null; moving = null; if (t.id === 'token' && battle) panel = 'cast'; }}><i>{t.icon}</i><span>{t.label}</span></button>
         {/each}
 
         <div class="pal">
@@ -801,7 +855,19 @@
                 <div class="acts"><button class="btn sm" onclick={rotateSel} title="R">⟳ Rotate</button><button class="btn sm" onclick={duplicateSel} title="Ctrl+D">⧉ Duplicate</button><button class="btn sm danger" onclick={deleteSel}>Delete</button></div>
               {:else if sel.t === 'token' && selToken}
                 <div class="label">Token</div>
-                <select class="field" value={selToken.kind} onchange={(e) => edit([{ op: 'edit_token', x: selToken.x, y: selToken.y, kind: e.currentTarget.value as 'pc' | 'npc' | 'enemy' }])}><option value="enemy">enemy</option><option value="npc">NPC</option><option value="pc">player start (test)</option></select>
+                {#if selToken.node && app.nodes[selToken.node] && !app.nodes[selToken.node].trashed}
+                  {@const who = app.nodes[selToken.node]}
+                  <div class="tie"><b>{who.title}</b><span class="dim">{who.type} · tied to its node</span></div>
+                  <div class="acts"><button class="btn sm" onclick={() => selectNode(who.id)}>Open node</button><button class="btn sm" onclick={() => edit([{ op: 'edit_token', x: selToken.x, y: selToken.y, node: null }])}>Untie</button></div>
+                {:else}
+                  <select class="field" value={selToken.kind} onchange={(e) => edit([{ op: 'edit_token', x: selToken.x, y: selToken.y, kind: e.currentTarget.value as 'pc' | 'npc' | 'enemy' }])}><option value="enemy">enemy</option><option value="npc">NPC</option><option value="pc">player start (test)</option></select>
+                  {#if cast.length && selToken.kind !== 'pc'}
+                    <select class="field" value="" onchange={(e) => { const w = app.nodes[e.currentTarget.value]; if (w) edit([{ op: 'edit_token', x: selToken.x, y: selToken.y, node: w.id, kind: tokenKindOf(w), label: selToken.label || w.title }]); }}>
+                      <option value="">Tie to a character…</option>
+                      {#each cast as c}<option value={c.id}>{c.title}</option>{/each}
+                    </select>
+                  {/if}
+                {/if}
                 <div class="label">Name</div>
                 <input class="field" value={selToken.label ?? ''} onchange={(e) => edit([{ op: 'edit_token', x: selToken.x, y: selToken.y, label: e.currentTarget.value }])} />
                 <div class="acts"><button class="btn sm" onclick={duplicateSel}>⧉ Duplicate</button><button class="btn sm danger" onclick={deleteSel}>Delete</button></div>
@@ -852,8 +918,13 @@
               <select class="field" bind:value={propKind}>{#each PROP_KINDS as p}<option value={p}>{p.replace('_', ' ')}</option>{/each}</select>
             {:else if tool === 'token'}
               <div class="label">Token</div>
-              <select class="field" bind:value={tokenKind}><option value="enemy">enemy</option><option value="npc">NPC</option><option value="pc">player start (test)</option></select>
-              <div class="dim">Players are added in the VTT itself, so player starts are not sent unless asked for.</div>
+              {#if tokenNode && app.nodes[tokenNode]}
+                <div class="tie"><b>{app.nodes[tokenNode].title}</b><span class="dim">a character — click the plan</span></div>
+                <button class="btn sm" onclick={() => (tokenNode = null)}>Plain marker instead</button>
+              {:else}
+                <select class="field" bind:value={tokenKind}><option value="enemy">enemy</option><option value="npc">NPC</option><option value="pc">player start (test)</option></select>
+                <div class="dim">A plain marker. Pick a character in the <button class="lnk" onclick={() => (panel = 'cast')}>Characters</button> tab to put a real one.</div>
+              {/if}
             {/if}
           {:else if tool === 'pin'}
             <div class="label">Place</div>
@@ -881,9 +952,9 @@
               {@html svgStr}
             {/if}
             <svg class="ov" width={dim.w} height={dim.h} viewBox="0 0 {dim.w} {dim.h}">
-              {#if battle && showGroups && (view === 'plan' || view === 'control')}
-                {#each groups as g (g.id)}
-                  <rect class="grp" x={g.bbox.x0 * dim.cell} y={g.bbox.y0 * dim.cell} width={(g.bbox.x1 - g.bbox.x0) * dim.cell} height={(g.bbox.y1 - g.bbox.y0) * dim.cell} rx="4" />
+              {#if battle && (showGroups || hotGroup) && (view === 'plan' || view === 'control')}
+                {#each groups.filter((x) => showGroups || x.id === hotGroup) as g (g.id)}
+                  <rect class="grp" class:hot={g.id === hotGroup} x={g.bbox.x0 * dim.cell} y={g.bbox.y0 * dim.cell} width={(g.bbox.x1 - g.bbox.x0) * dim.cell} height={(g.bbox.y1 - g.bbox.y0) * dim.cell} rx="4" />
                   <text class="grpid" x={g.bbox.x0 * dim.cell + 3} y={g.bbox.y0 * dim.cell + 13}>{g.id.slice(1)}</text>
                 {/each}
               {/if}
@@ -944,6 +1015,7 @@
       <aside class="side">
         <div class="tabs" data-tour="map-tabs">
           <button data-tour="map-tab-paint" class:on={panel === 'render'} onclick={() => (panel = 'render')}>Paint</button>
+          {#if battle}<button data-tour="map-tab-cast" class:on={panel === 'cast'} onclick={() => (panel = 'cast')} title="The NPCs and enemies of this place, and their tokens">Characters{#if cast.length} <span class="dim">{placedTotal}/{cast.length}</span>{/if}</button>{/if}
           <button class:on={panel === 'map'} onclick={() => (panel = 'map')}>Map</button>
         </div>
 
@@ -1001,6 +1073,28 @@
 
             <div class="step"><b>②</b> Props <span class="dim">— painted into their spots</span></div>
             <p class="dim" data-tour="map-groups">Touching props of the same kind are painted as one object (a row of tables is one long table). <label class="chk"><input type="checkbox" bind:checked={showGroups} /> show the groups on the plan</label></p>
+            {#if groups.length}
+              <details class="pp" data-tour="map-prop-prompts">
+                <summary>Painting prompts of the groups{#if ownPrompts} <span class="dim">· {ownPrompts} written by you</span>{/if}</summary>
+                <p class="dim">Every group is painted from its own prompt. Leave one empty and the AI writes it when you paint — with no AI connected a plain default is used. Write your own to steer what appears: your wording is used exactly as it is. After a painting run, what the AI wrote is shown here so you can adjust it and paint again.</p>
+                {#each groups as g (g.id)}
+                  {@const e = promptOf(g)}
+                  <div class="gp" class:hot={hotGroup === g.id}>
+                    <div class="gh">
+                      <b>{g.id.slice(1)}</b> {g.kind.replace(/_/g, ' ')}{g.props.length > 1 ? ` ×${g.props.length}` : ''}
+                      {#if e?.ai && e.text}<span class="tag ai">written by the AI</span>{:else if e?.text.trim()}<span class="tag">yours</span>{/if}
+                    </div>
+                    <textarea class="field" rows="2" placeholder={`${defaultPrompt(g)} (default)`} value={e?.text ?? ''}
+                      onfocus={() => (hotGroup = g.id)} onblur={() => (hotGroup = hotGroup === g.id ? '' : hotGroup)}
+                      oninput={(ev) => setPrompt(g, ev.currentTarget.value)}></textarea>
+                    <div class="gb">
+                      <button class="lnk" onclick={() => setPrompt(g, defaultPrompt(g))}>use the default as a start</button>
+                      {#if e?.text}<button class="lnk" onclick={() => setPrompt(g, '')}>clear</button>{/if}
+                    </div>
+                  </div>
+                {/each}
+              </details>
+            {/if}
             {#if !groups.length}
               <p class="warn">This map has no props. Accept a terrain as the finished picture, or place some props first.</p>
               <button class="btn primary" onclick={acceptTerrain} disabled={!doc?.terrainPick || busy}>Use the chosen terrain as the finished picture</button>
@@ -1034,6 +1128,31 @@
             {@render jobsView()}
             {@render rendersView()}
           {/if}
+        {:else if panel === 'cast' && doc && battle}
+          <div data-tour="map-cast">
+            <div class="label">Characters of this place <span class="dim">({cast.length})</span></div>
+            <p class="dim">NPCs and enemies that <b>belong to</b> {node ? `“${node.title}”` : 'this place'}. Put them on the plan: the token <b>is</b> the character, and pushing the map sends its sheet along — so the VTT gets the opponent <i>and</i> its token, tied together.</p>
+            {#each cast as c (c.id)}
+              {@const info = NODE_TYPE_INFO[c.type]}
+              <div class="cc" class:on={tool === 'token' && tokenNode === c.id} style="--tc:{info.color}">
+                {#if c.images[0]}<img src={`/api/images/${c.images[0]}?w=96`} alt="" />{:else}<span class="ic">{info.icon}</span>{/if}
+                <div class="ct"><b>{c.title}</b><span class="dim">{c.type === 'enemy' ? 'enemy' : 'NPC'} · {placedOf(c.id) ? `${placedOf(c.id)} on the plan` : 'not placed'}{hasSheet(c) ? '' : ' · no sheet yet'}</span></div>
+                <button class="btn sm" class:primary={tool === 'token' && tokenNode === c.id} onclick={() => startPlacing(c.id)} title="Then click a cell of the plan; click a token to take it away again">{placedOf(c.id) ? '＋ another' : 'Place'}</button>
+                <button class="lnk" title="Open the node" onclick={() => selectNode(c.id)}>↗</button>
+              </div>
+            {:else}
+              <p class="dim">Nobody belongs here yet — connect an NPC or enemy to this place with <i>belongs to</i>, or make one right here:</p>
+            {/each}
+            <div class="newc">
+              <input class="field" placeholder="New character of this place…" bind:value={newName} onkeydown={(e) => e.key === 'Enter' && createCharacter()} />
+              <select class="field" bind:value={newType}><option value="enemy">enemy</option><option value="npc">NPC</option></select>
+              <button class="btn sm" disabled={!newName.trim() || !node} onclick={createCharacter}>Add</button>
+            </div>
+            {#if tool === 'token'}
+              <p class="hint">{tokenNode && app.nodes[tokenNode] ? `Click a cell to put “${app.nodes[tokenNode].title}” there` : 'Click a cell for a plain marker'} · click a token to remove it. <button class="lnk" onclick={() => startPlacing(null)}>plain marker</button></p>
+            {/if}
+            <p class="dim">The sheet (stats, moves) is edited on the node itself — Inspector → character sheet. In the VTT the token and its combat entry stay tied together.</p>
+          </div>
         {:else if doc}
           {#if battle}
             <div class="label">Grid</div>
@@ -1043,8 +1162,8 @@
             </div>
             <label class="num">feet per cell <input class="field" type="number" min="1" step="0.5" value={doc.grid.unit} onchange={(e) => { pushUndo(); doc!.grid.unit = +e.currentTarget.value || 6; touch(); }} /></label>
             <p class="dim">Walls follow the floor automatically. Cell borders: 1 cell = {doc.grid.unit} ft.</p>
-            <div class="label">Tokens <span class="dim">({doc.tokens.length})</span></div>
-            <p class="dim">Enemies and NPCs are sent to the VTT with the map. Player starts are only sent if the VTT asks for them.</p>
+            <div class="label">Tokens <span class="dim">({doc.tokens.length}, {doc.tokens.filter((t) => t.node).length} tied to a character)</span></div>
+            <p class="dim">Tokens that stand for an NPC or enemy are tied to it: the map goes to the VTT together with their sheets. Player starts are only sent if the VTT asks for them.</p>
           {:else}
             <div class="label">Canvas size</div>
             <div class="seg w">
@@ -1126,8 +1245,28 @@
   .th { position: relative; }
   .tick { position: absolute; top: 4px; right: 4px; width: 18px; height: 18px; border-radius: 50%; background: var(--accent); color: #0a0c11; display: grid; place-items: center; font-style: normal; font-size: 12px; font-weight: 700; }
   :global(.ov .grp) { fill: rgba(255, 220, 90, 0.12); stroke: #ffd84a; stroke-width: 2; stroke-dasharray: 6 4; pointer-events: none; }
+  :global(.ov .grp.hot) { fill: rgba(255, 220, 90, 0.28); stroke-width: 3; stroke-dasharray: none; }
+  .pp { margin: 8px 0; border: 1px solid var(--line-2); border-radius: 8px; padding: 6px 8px; background: var(--bg-3); }
+  .pp summary { cursor: pointer; font-size: 12.5px; font-weight: 600; }
+  .gp { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--line); }
+  .gp.hot { border-top-color: #ffd84a; }
+  .gh { font-size: 12px; text-transform: capitalize; display: flex; gap: 6px; align-items: baseline; }
+  .gh b { color: var(--accent); }
+  .tag { margin-left: auto; text-transform: none; font-size: 10.5px; color: var(--text-faint); border: 1px solid var(--line-2); border-radius: 99px; padding: 0 6px; }
+  .tag.ai { color: #7fb0e0; }
+  .gb { display: flex; gap: 12px; margin-top: 3px; font-size: 11.5px; }
   :global(.ov .grpid) { fill: #fff; stroke: #000; stroke-width: 3; paint-order: stroke; font: 700 13px sans-serif; pointer-events: none; }
   .th { all: unset; cursor: pointer; border: 2px solid var(--line-2); border-radius: 8px; overflow: hidden; aspect-ratio: 3 / 2; }
   .th.on { border-color: var(--accent); }
   .th img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .cc { display: grid; grid-template-columns: 38px 1fr auto auto; gap: 8px; align-items: center; padding: 6px 7px; margin: 4px 0; border: 1px solid var(--line-2); border-left: 3px solid var(--tc); border-radius: 8px; background: var(--bg-3); }
+  .cc.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .cc img { width: 38px; height: 38px; border-radius: 6px; object-fit: cover; }
+  .cc .ic { width: 38px; height: 38px; display: grid; place-items: center; font-size: 18px; color: var(--tc); background: var(--bg); border-radius: 6px; }
+  .cc .ct { display: grid; min-width: 0; line-height: 1.25; }
+  .cc .ct b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+  .newc { display: grid; grid-template-columns: 1fr 78px auto; gap: 6px; margin: 8px 0; }
+  .tie { display: grid; line-height: 1.3; margin-bottom: 4px; }
+  .lnk { background: none; border: 0; color: var(--accent); padding: 0 2px; text-decoration: underline; font-size: 11.5px; }
+  .hint { color: var(--accent); font-size: 11.5px; line-height: 1.4; }
 </style>

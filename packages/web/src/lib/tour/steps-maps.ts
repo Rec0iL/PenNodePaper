@@ -53,6 +53,13 @@ const maps: TourStep[] = [
     body: '**Plan** is what you edit. **Terrain input** and **Painted** show what the image model gets and what it made, once you paint. The **Paint** tab on the right turns your plan into a painted battle map; **Map** holds grid size, feet per cell and tokens.',
   }),
   s('maps', {
+    id: 'map-cast', target: ['[data-tour="map-tab-cast"]'], side: 'left',
+    need: ['brenn'],
+    enter: async () => { calm({ map: true }); if (!mapOpen()) openMap(); await editorReady(); click('[data-tour="map-tab-cast"]'); },
+    title: 'Characters on the map',
+    body: 'The **Characters** tab lists the NPCs and enemies that **belong to** this place on the canvas — Brenn, now that the AI made him. Pick one and click a cell: that token **is** Brenn, not just a marker (a white ring shows the link).\n\nWhen the map goes to your VTT, those characters go with it, and every token is tied to its entry there — the enemies are already in the combat list with their stat blocks instead of you creating them by hand.',
+  }),
+  s('maps', {
     id: 'map-modes', target: ['[data-tour="map-mode"]'], side: 'left',
     enter: async () => { calm({ map: true }); if (!mapOpen()) openMap(); await editorReady(); click('[data-tour="map-tab-paint"]'); },
     title: 'Two ways to paint',

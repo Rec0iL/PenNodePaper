@@ -151,3 +151,21 @@ export function groupMasks(g: PropGroup, c: Crop, cell: number): { sample: strin
     compose: maskSvg(g, c, cell, separate ? 0.02 : MASK.composeGrow, MASK.blur, { w: c.w, h: c.h }),
   };
 }
+
+// ---- the plain painting prompt of a group (used when no AI writes one) ----
+
+const FALLBACK_PROP: Record<string, string> = {
+  table: 'a sturdy dark wooden table with scratched planks', chair: 'wooden chairs, each a square seat with a backrest bar on one side', bed: 'a bed with a blue blanket and a white pillow', chest: 'a wooden treasure chest with iron bands',
+  barrel: 'oak barrels, each with a round lid and dark iron hoops', crate: 'wooden crates with diagonal slats and iron corners', pillar: 'a round dark stone pillar with a stepped base', statue: 'a weathered dark stone statue on a plinth',
+  altar: 'a dark stone altar slab with a carved rim', fireplace: 'a big stone fireplace with burning logs and glowing embers', stairs_up: 'stone steps going up', stairs_down: 'stone steps going down into darkness',
+  well: 'a round stone well with a wooden cover', tree: 'round leafy tree canopies in ordinary greens', rock: 'grey boulders', bookshelf: 'tall dark wooden bookshelves full of books',
+  throne: 'an ornate dark wooden throne with a high backrest', cauldron: 'a black iron cauldron with bubbling contents', trap: 'a hidden spiked pressure plate in the floor', fountain: 'a stone fountain with clear water',
+  campfire: 'a campfire with logs and bright flames', boat: 'a small wooden rowing boat with benches and oars',
+};
+
+/** The painting prompt for a group when the AI is not available (or forgot one). */
+export function fallbackGroupPrompt(g: Pick<GroupInfo, 'kind' | 'count'>): string {
+  const what = FALLBACK_PROP[g.kind] ?? g.kind.replace(/_/g, ' ');
+  return g.count > 1 ? `${g.count} separate items in a row: ${what}, each clearly distinct` : what;
+}
+

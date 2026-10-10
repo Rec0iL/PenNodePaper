@@ -72,7 +72,7 @@ export class Maps {
       `doors: ${m.doors.map((d) => `${d.x},${d.y}/${d.side}:${d.kind}`).join(' ') || 'none'}`,
       `props: ${m.props.map((p) => `${p.id}@${p.x},${p.y}`).join(' ') || 'none'}`,
       `labels: ${m.labels.map((l) => `"${l.text}"@${l.x},${l.y}`).join(' ') || 'none'}`,
-      `tokens: ${m.tokens.map((t) => `${t.kind}${t.label ? `:${t.label}` : ''}@${t.x},${t.y}`).join(' ') || 'none'}`,
+      `tokens: ${m.tokens.map((t) => `${t.kind}${t.label ? `:${t.label}` : ''}${t.node ? `→node ${t.node}` : ''}@${t.x},${t.y}`).join(' ') || 'none'}`,
     ].join('\n');
   }
 }

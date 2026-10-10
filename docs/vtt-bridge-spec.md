@@ -32,7 +32,7 @@ VTT → PenNodePaper, immediately after the socket opens:
     "name": "KINETIK VTT", "version": "1.4.0", "protocol": 1,
     "push": {                        // what you can RECEIVE — list only what you support
       "handout":   { "text": true, "image": true, "toPlayer": true },
-      "scene":     { "grids": ["square"], "tokens": true },
+      "scene":     { "grids": ["square"], "tokens": true, "characterTokens": true },   // characterTokens: a token can BE a pushed character
       "character": {},               // you can receive pushed characters
       "music_cue": { "tracks": true, "mood": true }
     },
@@ -76,10 +76,11 @@ Only player-facing content is ever sent (read-aloud text / summary / a picture o
 { "id": "cellar", "name": "Wine cellar", "image": UpfImage, "width": 1344, "height": 864,
   "grid": { "type": "square" | "hex", "size": 61, "offsetX": 0, "offsetY": 0, "unitsPerCell": 6, "unit": "ft",
             "hidden": false },    // true = an illustration shown as a backdrop: do not draw the grid
-  "tokens": [ { "x": 2, "y": 3, "kind": "pc" | "npc" | "enemy", "label": "P1" } ],   // CELL coordinates, (0,0) = top-left cell
+  "tokens": [ { "x": 2, "y": 3, "kind": "pc" | "npc" | "enemy", "label": "P1",
+                "character": "dockside-brute" } ],   // CELL coordinates, (0,0) = top-left cell; `character` is optional (see below)
   "activate": true }               // show to players now
 ```
-`grid.size` is the cell edge in pixels **of `image`**. Token cell `(x,y)` → pixel centre `((x+0.5)·size + offsetX, (y+0.5)·size + offsetY)`. Re-pushing the same `id` should replace that scene. A **backdrop** scene (an illustration of a place the GM wants to show before the battle map) arrives with `tokens: []` and `grid.hidden: true`; its `id` is `<node>:<image file>`.
+`grid.size` is the cell edge in pixels **of `image`**. Token cell `(x,y)` → pixel centre `((x+0.5)·size + offsetX, (y+0.5)·size + offsetY)`. Re-pushing the same `id` should replace that scene. **Tokens that are characters:** a token with `character` stands for the character of that `id` (the same id as in the `character` push) — it is not just a marker. When your profile says `push.scene.characterTokens: true`, PenNodePaper pushes the **scene first, then the characters** that stand on it (their `scene` field names that scene), and you tie each token to the character entry you create or update for that `id`: the same HP and rolls for the token and the combat tracker entry, the portrait as the token picture, the character's token size. Several tokens may name the same `character` (a group of goons): give each its own token, let them share the entry or number them, whichever your game does. A character that arrives *before* its scene, or a re-pushed scene, must still end up tied. VTTs without `characterTokens` just see plain tokens with a label (the characters are pushed on their own, as before). A **backdrop** scene (an illustration of a place the GM wants to show before the battle map) arrives with `tokens: []` and `grid.hidden: true`; its `id` is `<node>:<image file>`.
 
 ### `character`
 ```jsonc
@@ -165,4 +166,5 @@ Without a live link the GM can export from ⚙ Settings → *VTT link*:
 - [ ] (optional, easiest first step) publish `characters.roles` so the AI can write sheets for your game
 - [ ] (optional) report the players' characters: `provides.party`, a `pc` role, answer `request party`, push `party` on changes
 - [ ] Honour `scene.grid` (size in image pixels, offset, units) and place `tokens` by cell
+- [ ] (optional) `characterTokens`: tie tokens that carry `character` to the pushed character of that id
 - [ ] Test against the mock: `npx tsx packages/server/scripts/mock-vtt.ts` shows what a conforming VTT does; `npm test` runs the bridge conformance tests

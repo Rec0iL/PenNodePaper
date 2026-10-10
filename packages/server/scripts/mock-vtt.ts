@@ -11,7 +11,7 @@ export const KINETIK_LIKE_PROFILE: VttProfile = {
   id: 'kinetik-vtt', name: 'KINETIK VTT', version: '0.0-mock', protocol: BRIDGE_PROTOCOL,
   push: {
     handout: { text: true, image: true, toPlayer: true },
-    scene: { grids: ['square'], tokens: true },
+    scene: { grids: ['square'], tokens: true, characterTokens: true },
     character: {},
   },
   characters: {

@@ -13,7 +13,8 @@
       "grids": [
         "square"
       ],
-      "tokens": true
+      "tokens": true,
+      "characterTokens": true
     },
     "character": {},
     "music_cue": {

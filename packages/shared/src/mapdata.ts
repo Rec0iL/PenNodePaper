@@ -51,7 +51,8 @@ export interface MapDoc {
   open: { x: number; y: number; side: EdgeSide }[];
   props: { id: string; kind: PropKind; x: number; y: number; w?: number; h?: number; rot?: number; label?: string }[];
   labels: { x: number; y: number; text: string }[];
-  tokens: { x: number; y: number; kind: 'pc' | 'npc' | 'enemy'; label?: string }[];
+  /** `node`: the NPC / enemy node this token stands for (its sheet goes to the VTT with the map, so the token is the character, not just a marker) */
+  tokens: { x: number; y: number; kind: 'pc' | 'npc' | 'enemy'; label?: string; node?: string }[];
   /** region: canvas size in px + vector shapes in that space */
   size: { w: number; h: number };
   /** region maps: base colour of the canvas */
@@ -64,6 +65,11 @@ export interface MapDoc {
   terrainPick?: string;
   /** what the place looks like, as given to the terrain step (reused for step 2) */
   paintPrompt?: string;
+  /**
+   * What each prop group is painted as in step 2 (key = group id g1, g2…; `kind` guards against groups that changed).
+   * The GM's own wording (`ai` absent) is used as it is; `ai: true` is only what the AI wrote last time, shown for editing.
+   */
+  propPrompts?: Record<string, { kind: string; text: string; ai?: boolean }>;
   updatedAt: string;
 }
 

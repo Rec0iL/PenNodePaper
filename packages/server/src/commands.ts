@@ -1,11 +1,11 @@
 import { z, type ZodRawShape } from 'zod';
-import { DEFAULT_GROUP, dieLabel, soundsOf, entryLine, fragmentName, parseEntry, rollLog, rollTable, seeded, tableEntries, tableFaces, clockOf, lintStory, nextPlayedSeq, playedPath, playerWiki, wikiMarkdown, slugify, storyStatus, validateSheet, visitsOf, type Visit } from '@pnp/shared';
-import type { Actor, Backend, DoorKind, EdgeKind, EdgeSide, ImageKind, NodeStatus, NodeType, PropKind, StoryEdge, StoryNode, TerrainKind } from '@pnp/shared';
+import { DEFAULT_GROUP, charactersOfPlace, isCharacterNode, tokenKindOf, dieLabel, soundsOf, entryLine, fragmentName, parseEntry, rollLog, rollTable, seeded, tableEntries, tableFaces, clockOf, lintStory, nextPlayedSeq, playedPath, playerWiki, wikiMarkdown, slugify, storyStatus, validateSheet, visitsOf, type Visit } from '@pnp/shared';
+import type { Actor, Backend, DoorKind, EdgeKind, EdgeSide, ImageKind, MapDoc, NodeStatus, NodeType, PropKind, StoryEdge, StoryNode, TerrainKind } from '@pnp/shared';
 import { DOOR_KINDS, EDGE_KINDS, FRAME_PALETTE, EDGE_SIDES, IMAGE_KINDS, NODE_STATUSES, NODE_TYPES, PROP_KINDS, TERRAINS } from '@pnp/shared';
 import fs from 'node:fs';
 import path from 'node:path';
 import { BINDER_SECTIONS, MAX_COPIES, binderParts, renderPdf } from './binder.js';
-import { buildBundle, characterFromNode, handoutFromNode, illustrationsOf, kinetikSession, roleFor, sceneFromImage, sceneFromMap, sheetOf, wantsPlayerStarts } from './vtt.js';
+import { buildBundle, characterFromNode, mapCast, handoutFromNode, illustrationsOf, kinetikSession, roleFor, sceneFromImage, sceneFromMap, sheetOf, wantsPlayerStarts } from './vtt.js';
 import { CONTROL_LEGEND, REGION_LEGEND, applyOps, groupProps, imageSize, renderSvg, toPng, type MapOp } from './maps.js';
 import { propsRunner, readTerrain, terrainRunner, estimatePaint, type Fidelity } from './mappaint.js';
 import type { Store, Tx } from './store.js';
@@ -648,12 +648,12 @@ const mapOps = z.discriminatedUnion('op', [
   z.object({ op: z.literal('prop'), kind: z.enum(PROP_KINDS as unknown as [PropKind, ...PropKind[]]), ...xy, w: z.number().optional(), h: z.number().optional(), rot: z.number().optional(), label: z.string().optional(), id: z.string().optional() }).describe('Furniture/object at cell x,y spanning w x h cells.'),
   z.object({ op: z.literal('remove_prop'), id: z.string() }),
   z.object({ op: z.literal('label'), ...xy, text: z.string() }).describe('Room name in the plan preview (never painted into the image).'),
-  z.object({ op: z.literal('token'), ...xy, kind: z.enum(['pc', 'npc', 'enemy']), label: z.string().optional() }).describe('Token start position for the VTT: pc = player start marker (only sent if the VTT wants it), npc / enemy = figures.'),
+  z.object({ op: z.literal('token'), ...xy, kind: z.enum(['pc', 'npc', 'enemy']).optional(), label: z.string().optional(), node: z.string().optional() }).describe('Token start position for the VTT: pc = player start marker (only sent if the VTT wants it), npc / enemy = figures. node = the id of an NPC / enemy node that STANDS for this token (normally one that belongs to the place — see get_map → characters): the token is then that character, and pushing the map sends its sheet along so the VTT ties token and combat entry together. Then kind and label can be left out (they come from the node).'),
   z.object({ op: z.literal('remove_label'), ...xy }).describe('Remove labels near x,y.'),
   z.object({ op: z.literal('remove_token'), ...xy }),
   z.object({ op: z.literal('move_area'), ...xy, w: z.number().int().min(1), h: z.number().int().min(1), dx: z.number().int(), dy: z.number().int(), copy: z.boolean().optional() }).describe('Move (or copy, copy:true) everything inside the rectangle x,y,w,h — floor, walls, doors, props, tokens, labels — by dx,dy cells. Use it to shift a room or furniture group instead of redrawing it. The target must stay inside the grid; empty rock does not overwrite existing floor.'),
   z.object({ op: z.literal('edit_prop'), id: z.string(), kind: z.enum(PROP_KINDS as unknown as [PropKind, ...PropKind[]]).optional(), x: z.number().optional(), y: z.number().optional(), w: z.number().optional(), h: z.number().optional(), rot: z.number().nullable().optional(), label: z.string().nullable().optional() }).describe('Change an existing prop (get its id from get_map): move it, resize it (swap w/h to rotate), change its kind or label.'),
-  z.object({ op: z.literal('edit_token'), ...xy, to: z.tuple([z.number(), z.number()]).optional(), kind: z.enum(['pc', 'npc', 'enemy']).optional(), label: z.string().nullable().optional() }).describe('Move or relabel the token that stands at cell x,y.'),
+  z.object({ op: z.literal('edit_token'), ...xy, to: z.tuple([z.number(), z.number()]).optional(), kind: z.enum(['pc', 'npc', 'enemy']).optional(), label: z.string().nullable().optional(), node: z.string().nullable().optional() }).describe('Move or relabel the token that stands at cell x,y, or tie it to an NPC / enemy node (node) / cut the tie (node: null).'),
   z.object({ op: z.literal('edit_label'), ...xy, to: z.tuple([z.number(), z.number()]).optional(), text: z.string().optional() }).describe('Move or rename the label near x,y.'),
   z.object({ op: z.literal('resize'), cols: z.number().int(), rows: z.number().int() }),
   z.object({ op: z.literal('shape'), type: z.enum(['polygon', 'path', 'ellipse', 'pin']), kind: z.enum(Object.keys(TERRAINS) as [TerrainKind, ...TerrainKind[]]), points: z.array(z.tuple([z.number(), z.number()])).min(1), r: z.number().optional(), width: z.number().optional(), label: z.string().optional(), id: z.string().optional() }).describe('REGION maps: polygon (areas), path (roads, rivers), ellipse (points[0]=centre, points[1]=[rx,ry]), pin (towns). Coordinates in canvas pixels.'),
@@ -731,7 +731,8 @@ def({
     const m = tx.store.maps.get(a.mapId);
     return {
       mapId: m.id, nodeId: mapNodeId(tx, m.id), view: tx.store.maps.describe(m), renders: m.renders,
-      ...(m.kind === 'battle' ? { paintMode: tx.store.images?.mapMode() ?? 'quick', terrains: m.terrains ?? [], terrainPick: m.terrainPick ?? null, propGroups: groupProps(m).length } : {}),
+      ...(m.kind === 'battle' ? { characters: charactersOfPlace(tx.state, m.id).map((n) => ({ nodeId: n.id, name: n.title, type: n.type, placedAt: m.tokens.filter((t) => t.node === n.id).map((t) => `${t.x},${t.y}`) })) } : {}),
+      ...(m.kind === 'battle' ? { paintMode: tx.store.images?.mapMode() ?? 'quick', terrains: m.terrains ?? [], terrainPick: m.terrainPick ?? null, propGroups: groupProps(m).length, propPrompts: Object.fromEntries(Object.entries(m.propPrompts ?? {}).filter(([, e]) => e.text.trim()).map(([id, e]) => [id, { kind: e.kind, text: e.text, by: e.ai ? 'ai' : 'gm' }])) } : {}),
     };
   },
 });
@@ -743,7 +744,27 @@ def({
   shape: { mapId: z.string(), ops: z.array(mapOps).min(1).max(120) },
   run(tx, a) {
     const m = tx.store.maps.get(a.mapId);
-    const r = applyOps(m, a.ops as MapOp[]);
+    // a token that stands for an NPC / enemy node takes its kind and its name from the node
+    const character = (id: string) => {
+      const n = tx.state.nodes[id];
+      if (!isCharacterNode(n)) throw new Error(`"${id}" is not an NPC or enemy node, so no token can stand for it.`);
+      return n;
+    };
+    const ops = (a.ops as Record<string, unknown>[]).map((op) => {
+      if (op.op === 'token') {
+        if (typeof op.node === 'string' && op.node) {
+          const n = character(op.node);
+          return { ...op, kind: tokenKindOf(n), label: typeof op.label === 'string' && op.label.trim() ? op.label : n.title };
+        }
+        if (!op.kind) throw new Error('A token needs a kind (pc / npc / enemy) or the node (node) it stands for.');
+      } else if (op.op === 'edit_token' && typeof op.node === 'string' && op.node) {
+        const n = character(op.node);
+        const t = m.tokens.find((q) => q.x === op.x && q.y === op.y);
+        return { ...op, kind: tokenKindOf(n), ...(op.label === undefined && !t?.label ? { label: n.title } : {}) };
+      }
+      return op;
+    });
+    const r = applyOps(m, ops as unknown as MapOp[]);
     tx.store.maps.save(m);
     tx.store.emitMap(m, tx.actor);
     return { applied: r.ok, notes: r.notes };
@@ -816,6 +837,15 @@ def({
 });
 
 /** Which AI writes prompts for the precise way: the one that is asking, else Claude. */
+/** The GM's own prompts for prop groups (written in the map editor); an entry only counts while its group is still of that kind. */
+const gmPrompts = (m: MapDoc, groups: { id: string; kind: string }[]): Record<string, string> => {
+  const out: Record<string, string> = {};
+  for (const g of groups) {
+    const e = m.propPrompts?.[g.id];
+    if (e && !e.ai && e.kind === g.kind && e.text.trim()) out[g.id] = e.text;
+  }
+  return out;
+};
 const paintAi = (a: { backend?: Backend; model?: string }, actor: Actor) => ({ backend: a.backend ?? (actor === 'agy' ? 'agy' : 'claude'), model: a.model || undefined });
 
 const pickTerrain = (m: ReturnType<Store['maps']['get']>, file?: string) => {
@@ -842,7 +872,7 @@ def({
 def({
   name: 'paint_map_props',
   description:
-    'Precise map painting, step 2 of 2 (only after the GM accepted a terrain from render_map): paints every prop group onto the picked terrain, each into exactly its place. Touching props of the same kind are ONE object (a row of tables = one long table, 5 barrels in a row = a row of barrels). Queues and returns immediately; the finished picture is added to the location’s images and the map’s renders like a normal render, and the GM judges it and can have it painted again. A map with many props takes a while (about 40 s per prop group on a mid-range 16 GB card). prompts is optional (group id g1, g2… -> what to paint there); normally leave it out and the AI writes them from the map and the place description.',
+    'Precise map painting, step 2 of 2 (only after the GM accepted a terrain from render_map): paints every prop group onto the picked terrain, each into exactly its place. Touching props of the same kind are ONE object (a row of tables = one long table, 5 barrels in a row = a row of barrels). Queues and returns immediately; the finished picture is added to the location’s images and the map’s renders like a normal render, and the GM judges it and can have it painted again. A map with many props takes a while (about 40 s per prop group on a mid-range 16 GB card). prompts is optional (group id g1, g2… -> what to paint there); normally leave it out and the AI writes them from the map and the place description. The GM can write the prompt of any group by hand in the map editor (the Props step); those are kept in the map’s propPrompts, used as they are and only the other groups are written by you — do not overwrite them.',
   shape: {
     mapId: z.string(),
     prompt: z.string().optional().describe('what the place looks like (default: the description given to the terrain step)'),
@@ -871,7 +901,21 @@ def({
     const est = estimatePaint(images, m);
     const jobs = images.enqueueCustom({
       nodeId, kind: 'map', prompt: place, w, h, variants: a.variants, seed: a.seed, actor: tx.actor,
-      runner: propsRunner(images, m, terrain, place, paintAi(a, tx.actor), a.prompts),
+      runner: propsRunner(images, m, terrain, place, paintAi(a, tx.actor), { ...gmPrompts(m, groups), ...a.prompts }, (written) => {
+        // keep what was written, so the GM can read and change it in the editor (only where the GM has no wording of their own)
+        const cur = maps.get(m.id);
+        const now = groupProps(cur);
+        const pp = { ...(cur.propPrompts ?? {}) };
+        for (const g of now) {
+          const text = written[g.id];
+          if (!text || g.kind !== groups.find((x) => x.id === g.id)?.kind) continue;
+          if (pp[g.id]?.text?.trim() && !pp[g.id].ai && pp[g.id].kind === g.kind) continue;
+          pp[g.id] = { kind: g.kind, text, ai: true };
+        }
+        cur.propPrompts = pp;
+        maps.save(cur, { backup: 'none' });
+        tx.store.emitMap(cur, tx.actor);
+      }),
       after: (out) => {
         const cur = maps.get(m.id);
         cur.renders.push(out);
@@ -954,7 +998,11 @@ def({
   name: 'push_scene',
   description: 'Show a place on the VTT\'s map screen. Two ways: (1) the tactical MAP of a location (mapId, or nodeId of a location that has a map): grid size, offset, token starts; uses the latest painted render (or the plan image with image:"plan"). (2) an ILLUSTRATION of a location as a backdrop (nodeId + imageFile, a file name from the node\'s images): no grid, no tokens — for the establishing shot before the battle map. activate:true shows it to the players right away; ask the GM which of the two they want shown first.',
   async: true,
-  shape: { mapId: z.string().optional(), nodeId: z.string().optional(), imageFile: z.string().optional().describe('Show this illustration of the node as a backdrop instead of its map.'), image: z.enum(['painted', 'plan']).optional(), activate: z.boolean().optional(), includePlayers: z.boolean().optional().describe('Also send player start markers (pc tokens). Default: only if the VTT asks for them in its profile.') },
+  shape: {
+    mapId: z.string().optional(), nodeId: z.string().optional(), imageFile: z.string().optional().describe('Show this illustration of the node as a backdrop instead of its map.'), image: z.enum(['painted', 'plan']).optional(), activate: z.boolean().optional(),
+    includePlayers: z.boolean().optional().describe('Also send player start markers (pc tokens). Default: only if the VTT asks for them in its profile.'),
+    characters: z.boolean().optional().describe('Send the NPCs / enemies that stand on the map as tokens (tokens with a node) to the VTT as characters, tied to their tokens. Default true.'),
+  },
   async run(tx, a) {
     if (a.imageFile) {
       if (!a.nodeId) throw new Error('imageFile needs the nodeId it belongs to.');
@@ -964,9 +1012,28 @@ def({
     }
     const mapId = a.mapId ?? (a.nodeId ? String(tx.requireNode(a.nodeId).fields.mapId ?? '') : '');
     if (!mapId) throw new Error('Give a mapId, or the nodeId of a location that has a map.');
-    const sc = sceneFromMap(tx.store, tx.store.imagesDir, mapId, { image: a.image, activate: a.activate, players: wantsPlayerStarts(tx.store.vtt.status().profile, a.includePlayers) });
+    const profile = tx.store.vtt.status().profile;
+    // the characters that stand on the map go along (so their tokens are the VTT's own combat entries, not bare markers)
+    const cast = a.characters === false ? { characters: [], skipped: [], warnings: [] } : mapCast(tx.store, tx.store.imagesDir, mapId, profile);
+    const sc = sceneFromMap(tx.store, tx.store.imagesDir, mapId, { image: a.image, activate: a.activate, players: wantsPlayerStarts(profile, a.includePlayers), characters: new Set(cast.characters.map((c) => c.id)) });
     await tx.store.vtt.push({ kind: 'scene', payload: sc });
-    return { pushed: 'scene', name: sc.name, grid: `${sc.grid.size}px · ${sc.grid.unitsPerCell} ${sc.grid.unit}/cell`, tokens: sc.tokens.length };
+    const sent: string[] = [];
+    const failed = [...cast.skipped.map((s) => ({ name: s.name, reason: s.reason }))];
+    // after the scene: the VTT then finds the tokens that carry the character's id and ties them to it
+    for (const c of cast.characters) {
+      try {
+        await tx.store.vtt.push({ kind: 'character', payload: { ...c, scene: sc.id } });
+        sent.push(c.name);
+      } catch (e) {
+        failed.push({ name: c.name, reason: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    return {
+      pushed: 'scene', name: sc.name, grid: `${sc.grid.size}px · ${sc.grid.unitsPerCell} ${sc.grid.unit}/cell`, tokens: sc.tokens.length,
+      linkedTokens: sc.tokens.filter((t) => t.character).length,
+      characters: { sent, failed, warnings: cast.warnings },
+      ...(failed.length ? { note: `${failed.length} character(s) did not go along (${failed.map((f) => `${f.name}: ${f.reason}`).join('; ')}) — their tokens are plain markers; fix the sheet (set_character_sheet) and push the map again.` } : {}),
+    };
   },
 });
 
