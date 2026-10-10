@@ -79,7 +79,7 @@
   <div class="inner">
     <div class="top">
       <span class="type"><i>{info.icon}</i>{info.label}{#if seq}<b class="seq" title="Order in which the players reached it">#{seq}</b>{/if}{#if known}<b class="known" title="The players know this">◉ known</b>{/if}{#if hasMap}<button class="mapbadge nodrag" title="This place has a map — click to open it" onclick={(e) => { e.stopPropagation(); openMap(); }}>⌗ map</button>{/if}</span>
-      {#if pending.length}<span class="gen" class:wait={!painting} title={painting ? 'An image is being generated' : 'An image is waiting in the queue'}>{painting ? `◌ ${Math.round(painting.progress * 100)}%` : '⏳ queued'}{#if pending.length > 1} ×{pending.length}{/if}</span>{/if}
+      {#if pending.length}<span class="gen" class:wait={!painting} title={painting ? 'An image is being generated' : 'An image is waiting in the queue'}>{painting ? `◌ ${Math.round(painting.progress * 100)}%` : '⏳ queued'}{#if pending.length > 1}{` ×${pending.length}`}{/if}</span>{/if}
       {#if node.status !== 'untouched'}
         <span class="status s-{node.status}">{node.status}</span>
       {/if}

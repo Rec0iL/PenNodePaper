@@ -17,6 +17,12 @@
       return !s || `${n.title} ${n.summary} ${n.poolHint} ${n.tags.join(' ')}`.toLowerCase().includes(s);
     }),
   );
+  // pictures being painted or waiting in the queue, per node (the same badge the canvas card shows)
+  const pending = $derived.by(() => {
+    const by = new Map<string, typeof app.jobs>();
+    for (const j of app.jobs) if (j.status === 'queued' || j.status === 'running') by.set(j.nodeId, [...(by.get(j.nodeId) ?? []), j]);
+    return by;
+  });
   const trash = $derived(Object.values(app.nodes).filter((n) => n.trashed));
   const total = $derived(poolNodes().length);
 
@@ -60,6 +66,11 @@
       >
         <div class="top">
           <span class="type"><i>{info.icon}</i>{info.label}</span>
+          {#if pending.get(n.id)?.length}
+            {@const jobs = pending.get(n.id)!}
+            {@const painting = jobs.find((j) => j.status === 'running')}
+            <span class="gen" class:wait={!painting} title={painting ? 'An image is being generated' : 'An image is waiting in the queue'}>{painting ? `◌ ${Math.round(painting.progress * 100)}%` : '⏳ queued'}{#if jobs.length > 1}{` ×${jobs.length}`}{/if}</span>
+          {/if}
           <button class="go" title="Place on the canvas" onclick={(e) => { e.stopPropagation(); void cmd('place_on_canvas', { id: n.id, canvas: app.canvasId, nearNodeId: app.selectedId && app.graph.placements[app.selectedId] ? app.selectedId : undefined }); }}>→</button>
         </div>
         <div class="title">{n.title}</div>
@@ -107,7 +118,10 @@
   .item.hid { opacity: 0; }
   .item.spawn { animation: pnp-spawn 1s var(--ease); }
   .item.flash { animation: pnp-flash 1.2s ease-out; }
-  .top { display: flex; justify-content: space-between; align-items: center; }
+  .top { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+  .gen { font-size: 9.5px; padding: 0 6px; border-radius: 99px; color: var(--accent); border: 1px solid var(--accent); background: var(--accent-soft); animation: pool-pulse 1.4s ease-in-out infinite; margin-left: auto; white-space: nowrap; }
+  .gen.wait { color: #ffcf70; border-color: #6a4a18; background: #3a2a10; }
+  @keyframes pool-pulse { 50% { opacity: 0.55; } }
   .type { font-size: 10px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--tc); display: inline-flex; gap: 5px; }
   .type i { font-style: normal; }
   .go { background: transparent; border: 1px solid var(--line-2); color: var(--text-dim); border-radius: 6px; width: 24px; height: 20px; line-height: 1; opacity: 0; transition: opacity 0.15s; }
