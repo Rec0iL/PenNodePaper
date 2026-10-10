@@ -4,7 +4,8 @@
     SvelteFlow, Background, BackgroundVariant, Controls, MiniMap, Panel,
     type Node, type Edge, type Connection,
   } from '@xyflow/svelte';
-  import { NODE_TYPES, NODE_TYPE_INFO, EDGE_KINDS, EDGE_KIND_INFO, groupColor, trailEdges, type CampaignState, type NodeType, type EdgeKind } from '@pnp/shared';
+  import { NODE_TYPES, NODE_TYPE_INFO, EDGE_KINDS, EDGE_KIND_INFO, groupColor, labelSize, routeEdges, trailEdges, type CampaignState, type NodeType, type EdgeKind, type RBox, type REdge } from '@pnp/shared';
+  import { routing, setRouting } from '../lib/routing.svelte';
   import { NODE_H, NODE_W, app, closeEnlarged, cmd, closeMenus, noteZoom, openCrossLink, screenToFlow, selectEdge, selectFrame, selectNode, viewCenter } from '../lib/app.svelte';
   import NodeCard from './NodeCard.svelte';
   import StoryEdge from './StoryEdge.svelte';
@@ -110,6 +111,29 @@
         es.push({ id: `ghost:${g.edge.id}`, source: g.edge.from, target: g.edge.to, type: 'story', data: { kind: g.edge.kind, label: g.edge.label, ghost: true }, selectable: false });
     }
     edges = es;
+  });
+
+  // connections go around the cards and their labels slide along the line (see routeEdges in @pnp/shared); the card sizes are the measured ones
+  $effect.pre(() => {
+    if (!routing.on) {
+      if (routing.routes.size) routing.routes = new Map();
+      return;
+    }
+    const boxes = new Map<string, RBox>();
+    for (const n of nodes) {
+      if (n.id.startsWith(FRAME) || n.data.ghost) continue;
+      const stub = n.id.startsWith(STUB);
+      boxes.set(n.id, { id: n.id, x: n.position.x, y: n.position.y, w: n.measured?.width ?? (stub ? STUB_W : NODE_W), h: n.measured?.height ?? (stub ? STUB_H : NODE_H) });
+    }
+    const list: REdge[] = [];
+    for (const e of edges) {
+      if (e.id.startsWith('ghost:')) continue;
+      const s = boxes.get(e.source), t = boxes.get(e.target);
+      if (!s || !t) continue;
+      const text = (e.data as { label?: string } | undefined)?.label;
+      list.push({ id: e.id, from: e.source, to: e.target, sx: s.x + s.w, sy: s.y + s.h / 2, tx: t.x, ty: t.y + t.h / 2, label: text ? labelSize(text) : null });
+    }
+    routing.routes = routeEdges([...boxes.values()], list);
   });
 
   // An enlarged card shrinks again when you double-click the empty canvas, pick another card, press Esc, use its × or switch canvas —
@@ -347,12 +371,15 @@
     </Panel>
 
     <Panel position="bottom-center">
-      <div class="kinds" data-tour="kinds" title="Kind of the next connection you draw — hover a kind to see what it is for">
-        {#each EDGE_KINDS as k}
-          <button class="kind" class:on={app.edgeKind === k} style="--c:{EDGE_KIND_INFO[k].color}" title={EDGE_KIND_INFO[k].help} onclick={() => (app.edgeKind = k as EdgeKind)}>
-            <i></i>{EDGE_KIND_INFO[k].label}
-          </button>
-        {/each}
+      <div class="bottombar">
+        <div class="kinds" data-tour="kinds" title="Kind of the next connection you draw — hover a kind to see what it is for">
+          {#each EDGE_KINDS as k}
+            <button class="kind" class:on={app.edgeKind === k} style="--c:{EDGE_KIND_INFO[k].color}" title={EDGE_KIND_INFO[k].help} onclick={() => (app.edgeKind = k as EdgeKind)}>
+              <i></i>{EDGE_KIND_INFO[k].label}
+            </button>
+          {/each}
+        </div>
+        <button class="route" class:on={routing.on} title={routing.on ? 'Connections go around cards and their labels make room for each other — click for plain curves' : 'Plain curves — click to let connections go around cards and labels make room'} onclick={() => setRouting(!routing.on)}>⤳ route</button>
       </div>
     </Panel>
   </SvelteFlow>
@@ -366,6 +393,10 @@
   .create { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px; background: color-mix(in srgb, var(--bg-2) 88%, transparent); backdrop-filter: blur(10px); border: 1px solid var(--line-2); border-radius: var(--radius); }
   .create select { width: 140px; flex: 0 1 140px; min-width: 0; }
   .create input { flex: 1 1 150px; min-width: 0; width: 190px; }
+  .bottombar { display: flex; align-items: center; gap: 8px; }
+  .route { white-space: nowrap; padding: 4px 11px; border-radius: 99px; font-size: 11.5px; color: var(--text-dim); background: color-mix(in srgb, var(--bg-2) 88%, transparent); backdrop-filter: blur(10px); border: 1px solid var(--line-2); }
+  .route:hover { color: var(--text); }
+  .route.on { color: var(--text); box-shadow: inset 0 0 0 1px var(--accent); }
   .kinds { display: flex; gap: 2px; padding: 4px; background: color-mix(in srgb, var(--bg-2) 88%, transparent); backdrop-filter: blur(10px); border: 1px solid var(--line-2); border-radius: 99px; }
   .kind { white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; background: transparent; border: 0; border-radius: 99px; padding: 4px 11px; color: var(--text-dim); font-size: 11.5px; }
   .kind i { width: 14px; height: 0; border-top: 2px solid var(--c); }

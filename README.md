@@ -73,7 +73,7 @@ The story lives on an infinite canvas; the **pool** on the left holds everything
   </tr>
 </table>
 
-Connections have kinds (leads to, if …, reveals, belongs to, foreshadows, bridge), each with its own colour that you can switch on and off from the bar at the bottom.
+Connections have kinds (leads to, if …, reveals, belongs to, foreshadows, bridge), each with its own colour that you can switch on and off from the bar at the bottom. Connections **go around cards** instead of through them, several connections between the same two cards fan out into separate lanes, and every label sits in its own line — the line runs into the label and on from it. The **⤳ route** switch next to the kinds turns this off if you prefer plain curves.
 
 **Look closer:** double-click a card to enlarge it in place — summary, read-aloud text, your GM notes and a bigger picture — while the camera zooms onto it. It stays until you double-click the empty canvas, pick another card, press <kbd>Esc</kbd> or use the × — then it shrinks again and the camera goes back to where it was.
 
