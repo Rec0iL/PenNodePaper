@@ -4,6 +4,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { AiCreativity, Backend, ChatMsg, ChatStatus } from '@pnp/shared';
 import { partyDigest } from './party.js';
+import { runCommand } from './commands.js';
+import { pace } from './tutorial/fake.js';
+import { beatsFor, scriptFor } from './tutorial/script.js';
 import type { Store } from './store.js';
 
 // ---------------------------------------------------------------------------
@@ -93,6 +96,8 @@ export class Chat {
   private file: string;
   private data: ChatFile;
   private child: ChildProcess | null = null;
+  /** a scripted (tutorial) run was told to stop */
+  private stopDemo = false;
   status: ChatStatus = { busy: false };
 
   constructor(private deps: ChatDeps) {
@@ -129,6 +134,7 @@ export class Chat {
   }
 
   cancel() {
+    this.stopDemo = true;
     this.child?.kill('SIGTERM');
   }
 
@@ -154,13 +160,16 @@ export class Chat {
   async send(opts: { text: string; backend: Backend; model?: string; nodeId?: string; pins?: string[] }) {
     if (this.status.busy) throw new Error('The AI is still working — wait for it or cancel.');
     const { text, backend, nodeId } = opts;
+    // a practice campaign (the welcome tour) has a scripted stand-in instead of a real AI: nothing needs to be installed
+    const demo = !!this.deps.store.state.meta.tutorial?.on;
     this.push({ role: 'user', backend, text, nodeId });
-    this.setStatus({ busy: true, backend, nodeId });
+    this.setStatus({ busy: true, backend, nodeId, ...(demo ? { demo: true } : {}) });
     this.save();
     this.deps.store.beginTurn(text);
-    const prompt = this.buildPrompt(text, nodeId, opts.pins);
+    const prompt = demo ? text : this.buildPrompt(text, nodeId, opts.pins);
     try {
-      if (backend === 'claude') await this.runClaude(prompt, opts.model, nodeId);
+      if (demo) await this.runDemo(text, nodeId);
+      else if (backend === 'claude') await this.runClaude(prompt, opts.model, nodeId);
       else await this.runAgy(prompt, opts.model, nodeId);
     } catch (err) {
       this.push({ role: 'system', backend, text: err instanceof Error ? err.message : String(err), nodeId });
@@ -169,6 +178,47 @@ export class Chat {
       this.deps.store.endTurn();
       this.setStatus({ busy: false });
       this.save();
+    }
+  }
+
+  // ------------------------- the tutorial's scripted AI ----------------------------
+
+  private async runDemo(text: string, nodeId?: string) {
+    const { store } = this.deps;
+    this.stopDemo = false;
+    await pace(900);
+    for (const b of beatsFor(scriptFor(text), { store, text, nodeId })) {
+      if (this.stopDemo) return;
+      if ('pause' in b) {
+        await pace(b.pause);
+      } else if ('say' in b) {
+        const full = typeof b.say === 'function' ? b.say() : b.say;
+        const m = this.push({ role: 'assistant', backend: 'claude', text: '', nodeId, streaming: true, demo: true });
+        const words = full.split(/(\s+)/);
+        for (let i = 0; i < words.length && !this.stopDemo; i += 2) {
+          m.text += words.slice(i, i + 2).join('');
+          this.update(m);
+          await pace(45);
+        }
+        m.text = full;
+        m.streaming = false;
+        this.update(m);
+        await pace(500);
+      } else {
+        if (b.when && !b.when()) continue;
+        const args = typeof b.args === 'function' ? b.args() : b.args;
+        const card = this.push({ role: 'tool', backend: 'claude', text: '', nodeId, demo: true, tool: { name: b.tool, summary: b.summary ?? summarizeArgs(args), status: 'running' } });
+        await pace(650);
+        try {
+          runCommand(store, b.tool, args, 'claude');
+          card.tool!.status = 'ok';
+        } catch (e) {
+          card.tool!.status = 'error';
+          card.text = e instanceof Error ? e.message : String(e);
+        }
+        this.update(card);
+        await pace(450);
+      }
     }
   }
 

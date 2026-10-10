@@ -54,7 +54,7 @@
 <svelte:window onkeydown={(e) => e.key === 'Escape' && !busy && onclose()} />
 
 <div class="scrim" role="presentation" onmousedown={(e) => e.target === e.currentTarget && !busy && onclose()}>
-  <div class="modal" role="dialog" aria-label="GM binder">
+  <div class="modal" data-tour="binder-modal" role="dialog" aria-label="GM binder">
     <header><b>GM binder</b><span class="camp">{app.meta.name}</span><span class="grow"></span><button class="btn" disabled={busy} onclick={onclose}>Close</button></header>
     <div class="body">
       <p class="hint">The whole campaign as one printable PDF (A4): cover, contents, story map, and the parts you pick. It reads your nodes as they are now.</p>

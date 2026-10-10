@@ -112,6 +112,12 @@
     mention = null;
   }
 
+  // the welcome tour types a prepared message into the main chat
+  $effect(() => {
+    const f = app.fill;
+    if (f && f.target === 'chat' && !nodeId && !f.nodeId) text = f.text;
+  });
+
   async function submit() {
     const t = text.trim();
     if (!t || busy) return;
@@ -143,7 +149,7 @@
 
 <div class="chat" class:compact={!!nodeId}>
   {#if !nodeId}
-    <div class="bar">
+    <div class="bar" data-tour="chat-bar">
       <div class="seg">
         {#each ['claude', 'agy'] as b}
           <button class:on={app.backend === b} style="--c:var(--{b})" onclick={() => { app.backend = b as Backend; remember('pnp.backend', b); }}>{b === 'claude' ? 'Claude' : 'agy'}</button>
@@ -161,6 +167,10 @@
     </div>
   {/if}
 
+  {#if app.meta.tutorial?.on && !nodeId}
+    <div class="demo"><b>Practice campaign.</b> The AI here is a scripted stand-in: it knows the requests the tour prepares, and does them with the real tools. In your own campaigns this is Claude or agy.</div>
+  {/if}
+
   {#if app.backend === 'agy' && agy && agy.installed && (!agy.registered || !agy.permitted)}
     <div class="setup">
       <b>{agy.registered ? 'agy is registered but not allowed to use the tools.' : "agy isn't connected to this app yet."}</b>
@@ -172,7 +182,7 @@
     <div class="setup"><b>agy not found.</b> Install the Antigravity CLI and make sure <code>agy</code> is on your PATH.</div>
   {/if}
 
-  <div class="msgs" bind:this={list}>
+  <div class="msgs" data-tour="chat-msgs" bind:this={list}>
     {#each rows as r, i (r.kind === 'msg' ? r.m.id : `t-${r.nodeId}-${i}`)}
       {#if r.kind === 'thread'}
         {@const n = app.nodes[r.nodeId]}
@@ -189,7 +199,7 @@
           <!-- a turn that only called tools has no text: the tool cards say it all -->
         {:else if m.role === 'assistant'}
           <div class="ai" style="--c:var(--{m.backend})">
-            <span class="who">{m.backend === 'agy' ? 'agy' : 'Claude'}</span>
+            <span class="who">{m.demo ? 'Tutorial AI' : m.backend === 'agy' ? 'agy' : 'Claude'}</span>
             <div class="b">{@html fmt(m.text)}{#if m.streaming}<span class="caret"></span>{/if}</div>
           </div>
         {:else if m.role === 'tool' && m.tool}
@@ -219,12 +229,12 @@
       </div>
     {/each}
     {#if busy}
-      <div class="think" style="--c:var(--{app.chatStatus.backend ?? 'claude'})"><i class="spin"></i> {app.chatStatus.backend === 'agy' ? 'agy' : 'Claude'} is working…
+      <div class="think" style="--c:var(--{app.chatStatus.backend ?? 'claude'})"><i class="spin"></i> {app.chatStatus.demo ? 'Tutorial AI' : app.chatStatus.backend === 'agy' ? 'agy' : 'Claude'} is working…
         <button class="btn ghost" onclick={() => cancelChat()}>stop</button></div>
     {/if}
   </div>
 
-  <div class="composer">
+  <div class="composer" data-tour={nodeId ? undefined : 'chat-composer'}>
     {#if chipIds.length}
       <div class="ctx">
         <span class="lab">context</span>
@@ -267,6 +277,8 @@
   .seg button { background: transparent; border: 0; border-radius: 99px; padding: 3px 12px; color: var(--text-dim); }
   .seg button.on { background: var(--c); color: #0a0c11; font-weight: 600; }
   .model { width: auto; flex: 1; padding: 3px 8px; }
+  .demo { margin: 8px 10px 0; padding: 8px 11px; border: 1px solid #2c5a3e; border-left: 3px solid var(--ok); border-radius: var(--radius-s); background: #12301f; font-size: 12px; color: var(--text-dim); line-height: 1.45; }
+  .demo b { color: var(--ok); }
   .setup { margin: 8px 10px 0; padding: 10px 12px; border: 1px solid var(--line-2); border-left: 3px solid var(--agy); border-radius: var(--radius-s); background: var(--bg-3); font-size: 12px; }
   .setup p { margin: 4px 0 8px; color: var(--text-dim); }
   .setup code, .tool code, .b :global(code) { font-family: var(--mono); font-size: 11px; background: var(--bg); padding: 0 4px; border-radius: 4px; }

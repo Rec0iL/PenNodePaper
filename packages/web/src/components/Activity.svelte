@@ -42,7 +42,7 @@
   </header>
   <div class="list" bind:this={box}>
     {#each app.history as b (b.id)}
-      {@const w = who[b.actor] ?? who.system}
+      {@const w = app.meta.tutorial?.on && b.actor === 'claude' ? { label: 'Tutorial AI', color: 'var(--claude)' } : (who[b.actor] ?? who.system)}
       {@const t = target(b)}
       <button class="row" class:undo={b.undoOf} onclick={() => open(t)}>
         <span class="time">{time(b.at)}</span>

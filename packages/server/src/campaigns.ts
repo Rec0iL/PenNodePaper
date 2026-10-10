@@ -69,6 +69,14 @@ export function rememberCampaign(dir: string) {
   saveConfig({ lastCampaign: abs, recent });
 }
 
+/** Take a campaign out of the remembered lists (it is gone, or no longer wanted there). */
+export function forgetCampaign(dir: string) {
+  const abs = path.resolve(dir);
+  const saved = loadSaved();
+  const recent = (saved.recent ?? []).filter((r) => path.resolve(r.dir) !== abs);
+  saveConfig({ recent, ...(saved.lastCampaign && path.resolve(saved.lastCampaign) === abs ? { lastCampaign: '' } : {}) });
+}
+
 /** A new, empty campaign folder named after `name` (unique within `campaignsDir`). */
 export function createCampaign(campaignsDir: string, name: string, language = 'de'): string {
   const title = name.trim();

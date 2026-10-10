@@ -79,6 +79,13 @@ interface Meta {
   at: string;
 }
 
+/** File extension for the bytes ComfyUI returned (always PNG); the tutorial's stand-in ships compact JPEGs. */
+export function imageExt(bytes: Buffer): 'png' | 'jpg' | 'webp' {
+  if (bytes[0] === 0xff && bytes[1] === 0xd8) return 'jpg';
+  if (bytes.subarray(0, 4).toString() === 'RIFF' && bytes.subarray(8, 12).toString() === 'WEBP') return 'webp';
+  return 'png';
+}
+
 export class ImageService {
   jobs: ImageJob[] = [];
   readonly comfy: Comfy;
@@ -223,8 +230,8 @@ export class ImageService {
       };
       const timed = async (wf: Workflow, megapixels: number, onProgress: (p: number) => void): Promise<Buffer> => {
         const t = Date.now();
-        const { bytes } = await this.comfy.generate(wf, { signal: ctl.signal, onProgress });
-        this.noteSpeed(Date.now() - t, megapixels);
+        const { bytes } = await this.comfy.generate(wf, { signal: ctl.signal, onProgress, job: { nodeId: job.nodeId, kind: job.kind, seed: job.seed } });
+        if (!this.comfy.simulated) this.noteSpeed(Date.now() - t, megapixels); // a stand-in's pace says nothing about this computer
         return bytes;
       };
       let bytes: Buffer;
@@ -241,7 +248,7 @@ export class ImageService {
         const wf = custom ? await custom.build!(job.seed) : this.comfy.buildWorkflow(this.fullPrompt(job.prompt), negative ?? this.style().negative, job.w, job.h, job.seed);
         bytes = await timed(wf, (job.w * job.h) / 1e6, report);
       }
-      const file = `${slugify(job.nodeId)}${custom?.fileTag ? `-${custom.fileTag}` : ''}-${job.seed}.png`;
+      const file = `${slugify(job.nodeId)}${custom?.fileTag ? `-${custom.fileTag}` : ''}-${job.seed}.${imageExt(bytes)}`;
       fs.writeFileSync(path.join(this.dir, file), bytes);
       this.record(file, { nodeId: job.nodeId, prompt: job.prompt, seed: job.seed, kind: job.kind as ImageKind, w: job.w, h: job.h, at: new Date().toISOString() });
       job.file = file;

@@ -42,6 +42,12 @@
     );
   }
 
+  // the welcome tour types a prompt for this node
+  $effect(() => {
+    const f = app.fill;
+    if (f && f.target === 'image' && f.nodeId === node.id) { prompt = f.text; touched = true; }
+  });
+
   const cancel = () => fetch('/api/images/cancel', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
 </script>
 
@@ -87,9 +93,9 @@
         {#each [1, 2, 3, 4] as n}<option value={n}>{n}×</option>{/each}
       </select>
     </div>
-    <textarea class="field" rows="3" placeholder="Describe the image…" bind:value={prompt} oninput={() => (touched = true)}></textarea>
+    <textarea class="field" data-tour="img-prompt" rows="3" placeholder="Describe the image…" bind:value={prompt} oninput={() => (touched = true)}></textarea>
     <div class="acts">
-      <button class="btn primary" onclick={generate} disabled={prompt.trim().length < 8}>{justQueued ? '✓ Queued' : busy ? 'Add to queue' : 'Generate'}</button>
+      <button class="btn primary" data-tour="img-generate" onclick={generate} disabled={prompt.trim().length < 8}>{justQueued ? '✓ Queued' : busy ? 'Add to queue' : 'Generate'}</button>
       <button class="btn" onclick={askAi} title="Let the AI write the prompt and generate">✦ AI writes it</button>
       {#if busy}<button class="btn ghost" onclick={cancel}>stop</button>{/if}
       <button class="btn ghost gear" onclick={() => (app.settingsOpen = true)} title="ComfyUI & style settings">⚙</button>

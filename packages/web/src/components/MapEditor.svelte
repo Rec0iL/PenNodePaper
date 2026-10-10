@@ -685,6 +685,12 @@
     });
   });
 
+  // the welcome tour types a description into the Paint tab
+  $effect(() => {
+    const f = app.fill;
+    if (f && f.target === 'map') { prompt_ = f.text; promptTouched = true; }
+  });
+
   const aiArgs = () => ({ backend: app.backend, model: app.models[app.backend] || undefined });
 
   /** quick: the whole picture. precise: step 1, the empty terrain (the server decides by the setting). */
@@ -753,18 +759,18 @@
 <svelte:window {onkeydown} {onkeyup} />
 
 <div class="scrim" role="presentation">
-  <div class="modal" role="dialog" aria-label="Map editor">
+  <div class="modal" data-tour="map-modal" role="dialog" aria-label="Map editor">
     <header>
       <span class="logo">⌗</span>
       {#if doc}<input class="nm field" value={doc.name} onchange={(e) => rename(e.currentTarget.value)} />{/if}
       <span class="chip">{battle ? `${doc?.grid.cols}×${doc?.grid.rows} · ${doc?.grid.unit} ft/cell` : `${doc?.size.w}×${doc?.size.h}px`}</span>
       <span class="status">{status || 'Autosave on'}</span>
       <span class="grow"></span>
-      <div class="seg">
+      <div class="seg" data-tour="map-views">
         <button class:on={view === 'plan'} onclick={() => (view = 'plan')} title="Editable plan">Plan</button>
         <button class:on={view === 'control'} onclick={() => (view = 'control')} title={staged ? 'What the model receives in step 1: the empty place' : 'What the image model receives'}>{staged ? 'Terrain input' : 'Model input'}</button>
         {#if staged}<button class:on={view === 'terrain'} disabled={!doc?.terrainPick} onclick={() => (view = 'terrain')} title="The painted terrain you picked (step 1)">Terrain</button>{/if}
-        <button class:on={view === 'painted'} disabled={!painted} onclick={() => (view = 'painted')} title={staged ? 'Latest finished painting (step 2)' : 'Latest painted render'}>Painted</button>
+        <button data-tour="map-view-painted" class:on={view === 'painted'} disabled={!painted} onclick={() => (view = 'painted')} title={staged ? 'Latest finished painting (step 2)' : 'Latest painted render'}>Painted</button>
       </div>
       <button class="btn ghost" disabled={!canUndo} onclick={undo} title="Undo (Ctrl+Z)">↶</button>
       <button class="btn ghost" disabled={!canRedo} onclick={redo} title="Redo">↷</button>
@@ -773,7 +779,7 @@
     </header>
 
     <div class="body">
-      <nav class="tools">
+      <nav class="tools" data-tour="map-tools">
         {#each battle ? battleTools : regionTools as t}
           <button class:on={tool === t.id} title={t.tip} onclick={() => { tool = t.id; pending = []; selected = null; sel = null; moving = null; }}><i>{t.icon}</i><span>{t.label}</span></button>
         {/each}
@@ -864,7 +870,7 @@
         </div>
       </nav>
 
-      <div class="vp" bind:this={vp} role="application" {onwheel} {onpointerdown} {onpointermove} {onpointerup} {ondblclick} oncontextmenu={(e) => e.preventDefault()} style="cursor:{spaceDown || panning ? 'grab' : tool === 'select' ? 'default' : 'crosshair'}">
+      <div class="vp" data-tour="map-view" bind:this={vp} role="application" {onwheel} {onpointerdown} {onpointermove} {onpointerup} {ondblclick} oncontextmenu={(e) => e.preventDefault()} style="cursor:{spaceDown || panning ? 'grab' : tool === 'select' ? 'default' : 'crosshair'}">
         {#if doc}
           <div class="stage" bind:this={stage} style="width:{dim.w}px;height:{dim.h}px;transform:translate({tx}px,{ty}px) scale({k})">
             {#if view === 'painted' && painted}
@@ -936,8 +942,8 @@
       </div>
 
       <aside class="side">
-        <div class="tabs">
-          <button class:on={panel === 'render'} onclick={() => (panel = 'render')}>Paint</button>
+        <div class="tabs" data-tour="map-tabs">
+          <button data-tour="map-tab-paint" class:on={panel === 'render'} onclick={() => (panel = 'render')}>Paint</button>
           <button class:on={panel === 'map'} onclick={() => (panel = 'map')}>Map</button>
         </div>
 
@@ -963,18 +969,18 @@
           {/snippet}
 
           {#if staged}
-            <div class="mode">Precise painting · 2 steps <button class="lnk" onclick={() => (app.settingsOpen = true)} title="Change in Settings → Map painting">change</button></div>
+            <div class="mode" data-tour="map-mode">Precise painting · 2 steps <button class="lnk" onclick={() => (app.settingsOpen = true)} title="Change in Settings → Map painting">change</button></div>
             <p class="warn">⏱ This takes a while — {dur(paint?.terrainSeconds ?? 0)} for the terrain, then {dur(paint?.propsSeconds ?? 0)} for {paint?.groups ?? 0} prop group{paint?.groups === 1 ? '' : 's'}, on this computer{paint?.measured ? '' : ' (a rough guess until ComfyUI has made an image here)'}. You decide after each step, and you can stop at any time.</p>
 
             <div class="step"><b>①</b> Terrain <span class="dim">— the empty place, no props</span></div>
-            <textarea class="field" rows="3" placeholder="Materials, mood, lighting, setting… (the AI turns this into a description of the empty place)" bind:value={prompt_} oninput={() => (promptTouched = true)}></textarea>
+            <textarea class="field" data-tour="map-prompt" rows="3" placeholder="Materials, mood, lighting, setting… (the AI turns this into a description of the empty place)" bind:value={prompt_} oninput={() => (promptTouched = true)}></textarea>
             <div class="seg w">
               {#each ['faithful', 'balanced', 'painterly'] as f}<button class:on={fidelity === f} onclick={() => (fidelity = f as typeof fidelity)}>{f}</button>{/each}
             </div>
             <div class="dim">{TERRAIN_HINT[fidelity]}</div>
             <div class="row">
               <select class="field" bind:value={variants} title="How many terrains to paint to choose from">{#each [1, 2, 3, 4] as n}<option value={n}>{n}×</option>{/each}</select>
-              <button class="btn primary grow" onclick={renderNow} disabled={prompt_.trim().length < 8 || !nodeId || busy}>{doc?.terrains?.length ? 'Paint another terrain' : 'Paint the terrain'}</button>
+              <button class="btn primary grow" data-tour="map-terrain-btn" onclick={renderNow} disabled={prompt_.trim().length < 8 || !nodeId || busy}>{doc?.terrains?.length ? 'Paint another terrain' : 'Paint the terrain'}</button>
             </div>
             <div class="row">
               <button class="btn grow" onclick={askAi} disabled={!nodeId}>✦ AI writes the description</button>
@@ -983,7 +989,7 @@
             {#if !nodeId}<p class="warn">This map has no map node — create it from the canvas or ask the AI.</p>{/if}
             {#if doc?.terrains?.length}
               <div class="label">Terrains <span class="dim">— click the one you like</span></div>
-              <div class="grid">
+              <div class="grid" data-tour="map-terrains">
                 {#each [...doc.terrains].reverse() as f (f)}
                   <button class="th" class:on={doc.terrainPick === f} onclick={() => pickTerrain(f)} title={doc.terrainPick === f ? 'Chosen for step 2' : 'Click to choose this terrain'}>
                     <img src={`/api/images/${f}?w=320`} alt="" loading="lazy" decoding="async" />
@@ -994,12 +1000,12 @@
             {/if}
 
             <div class="step"><b>②</b> Props <span class="dim">— painted into their spots</span></div>
-            <p class="dim">Touching props of the same kind are painted as one object (a row of tables is one long table). <label class="chk"><input type="checkbox" bind:checked={showGroups} /> show the groups on the plan</label></p>
+            <p class="dim" data-tour="map-groups">Touching props of the same kind are painted as one object (a row of tables is one long table). <label class="chk"><input type="checkbox" bind:checked={showGroups} /> show the groups on the plan</label></p>
             {#if !groups.length}
               <p class="warn">This map has no props. Accept a terrain as the finished picture, or place some props first.</p>
               <button class="btn primary" onclick={acceptTerrain} disabled={!doc?.terrainPick || busy}>Use the chosen terrain as the finished picture</button>
             {:else}
-              <button class="btn primary" onclick={paintProps} disabled={!doc?.terrainPick || prompt_.trim().length < 8 || !nodeId || busy}>
+              <button class="btn primary" data-tour="map-props-btn" onclick={paintProps} disabled={!doc?.terrainPick || prompt_.trim().length < 8 || !nodeId || busy}>
                 {doc?.renders.length ? 'Paint the props again' : 'Paint the props on the chosen terrain'}
               </button>
               {#if !doc?.terrainPick}<div class="dim">Choose a terrain above first.</div>{/if}

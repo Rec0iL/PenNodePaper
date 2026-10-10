@@ -26,6 +26,9 @@
   import WorldEditor from './components/WorldEditor.svelte';
   import Pool from './components/Pool.svelte';
   import StoryPanel from './components/StoryPanel.svelte';
+  import Tour from './components/Tour.svelte';
+  import TourMenu from './components/TourMenu.svelte';
+  import { offerTour } from './lib/tour.svelte';
 
   // the canvas keeps at least this much room, whatever sizes were dragged on a bigger screen before
   let innerW = $state(typeof window === 'undefined' ? 1400 : window.innerWidth);
@@ -44,6 +47,8 @@
   const warnCount = $derived(lintStory({ meta: app.meta, nodes: app.nodes, graph: app.graph } as unknown as CampaignState).filter((i) => i.level === 'warn').length);
 
   const queue = $derived(activeJobs());
+  // a fresh practice campaign greets whoever opens it with the welcome tour
+  $effect(() => { if (app.loaded && app.meta.tutorial?.on) offerTour(); });
   $effect(() => { if (!queue.length) app.queueOpen = false; });
 
   onMount(() => {
@@ -126,8 +131,8 @@
 
 <div class="shell" style="--wl:{eff.l}px; --wr:{eff.r}px; --hb:{app.layout.bottom}px">
   <header class="top">
-    <div class="brand"><span class="logo">◈</span><b>PenNodePaper</b><CampaignMenu /></div>
-    <nav class="tabs">
+    <div class="brand" data-tour="brand"><span class="logo">◈</span><b>PenNodePaper</b><CampaignMenu /></div>
+    <nav class="tabs" data-tour="canvas-tabs">
       {#each app.graph.canvases as c (c.id)}
         <button class:on={app.canvasId === c.id} data-canvas-tab={c.id} title="Drag a connection from a node onto this tab to connect it to a node on this canvas" onclick={() => (app.canvasId = c.id)}>{c.name}</button>
       {/each}
@@ -135,7 +140,7 @@
     </nav>
     <div class="spacer"></div>
     {#if queue.length}
-      <div class="qwrap">
+      <div class="qwrap" data-tour="queue">
         <button class="qchip" onclick={() => (app.queueOpen = !app.queueOpen)} title="Image queue — click for the list">
           <i></i>{queue.filter((j) => j.status === 'running').length ? 'generating' : ''}{queue.some((j) => j.status === 'queued') ? ` · ${queue.filter((j) => j.status === 'queued').length} queued` : ''}
         </button>
@@ -152,20 +157,20 @@
         {/if}
       </div>
     {/if}
-    <button class="searchbtn" onclick={() => (app.paletteOpen = true)} title="Search nodes and actions (Ctrl+K)">🔍 <span>Search</span> <kbd>Ctrl K</kbd></button>
-    <button class="vttchip" class:on={app.vtt?.connected} onclick={() => (app.settingsOpen = true)} title="VTT link — click for pairing and export">
+    <button class="searchbtn" data-tour="search" onclick={() => (app.paletteOpen = true)} title="Search nodes and actions (Ctrl+K)">🔍 <span>Search</span> <kbd>Ctrl K</kbd></button>
+    <button class="vttchip" data-tour="vtt" class:on={app.vtt?.connected} onclick={() => (app.settingsOpen = true)} title="VTT link — click for pairing and export">
       <i></i>{app.vtt?.connected ? app.vtt.profile?.name : 'no VTT'}
     </button>
     {#if app.vtt?.profile?.push?.music_cue}
       <button class="btn ghost" disabled={!app.vtt?.connected} onclick={() => (app.soundsOpen = true)} title={app.vtt?.connected ? 'Play music and sounds on the VTT' : 'Connect the VTT to play music and sounds'}>♪</button>
     {/if}
-    <button class="btn ghost" onclick={() => (app.settingsOpen = true)} title="Settings (ComfyUI, image style, language, VTT)">⚙</button>
-    <div class="aimode" role="group" aria-label="What happens to the AI's edits" title="Live: the AI's edits stand until you undo them. Review: they wait for your Keep / Reject after the AI is done.">
+    <button class="btn ghost" data-tour="settings" onclick={() => (app.settingsOpen = true)} title="Settings (ComfyUI, image style, language, VTT)">⚙</button>
+    <div class="aimode" data-tour="aimode" role="group" aria-label="What happens to the AI's edits" title="Live: the AI's edits stand until you undo them. Review: they wait for your Keep / Reject after the AI is done.">
       <span class="dim">AI edits</span>
       <button class:on={(app.meta.aiMode ?? 'live') === 'live'} onclick={() => setAiMode('live')}>live</button>
       <button class:on={app.meta.aiMode === 'review'} onclick={() => setAiMode('review')}>review{#if app.proposals.length}<b class="rc">{app.proposals.length}</b>{/if}</button>
     </div>
-    <div class="aimode creativity" role="group" aria-label="AI creativity" title={`AI creativity ${creativity.level}/5 — ${creativity.hint}`}>
+    <div class="aimode creativity" data-tour="creativity" role="group" aria-label="AI creativity" title={`AI creativity ${creativity.level}/5 — ${creativity.hint}`}>
       <span class="dim">creativity</span>
       <input type="range" min="1" max="5" step="1" aria-valuetext={creativity.name}
         value={creativityDraft ?? app.meta.aiCreativity ?? 3}
@@ -174,11 +179,12 @@
       <!-- every name sits in the same grid cell, so the label is always as wide as the longest one and the slider never moves while it changes -->
       <span class="cname">{#each AI_CREATIVITY as c (c.level)}<span class:cur={c.level === creativity.level}>{c.name}</span>{/each}</span>
     </div>
-    <label class="toggle" title="Camera follows the AI while it edits">
+    <label class="toggle" data-tour="follow-ai" title="Camera follows the AI while it edits">
       <input type="checkbox" bind:checked={app.followAi} /> follow AI
     </label>
-    <button class="btn" disabled={!app.canUndo} onclick={() => undo()} title="Undo (Ctrl+Z)">↶</button>
-    <button class="btn" disabled={!app.canRedo} onclick={() => redo()} title="Redo (Ctrl+Shift+Z)">↷</button>
+    <button class="btn" data-tour="undo" disabled={!app.canUndo} onclick={() => undo()} title="Undo (Ctrl+Z)">↶</button>
+    <button class="btn" data-tour="redo" disabled={!app.canRedo} onclick={() => redo()} title="Redo (Ctrl+Shift+Z)">↷</button>
+    <TourMenu />
     <span class="dot" class:on={app.connected} title={app.connected ? 'connected' : 'reconnecting…'}></span>
   </header>
 
@@ -189,26 +195,26 @@
     {#if !app.loaded}<div class="loading">connecting…</div>{/if}
   </main>
 
-  <aside class="dock">
+  <aside class="dock" data-tour="dock">
     <div class="dtabs">
-      <button class:on={app.tab === 'inspector'} onclick={() => (app.tab = 'inspector')}>Inspector</button>
-      <button class:on={app.tab === 'story'} onclick={() => (app.tab = 'story')}>Story{#if warnCount}<span class="wc">{warnCount}</span>{/if}</button>
-      <button class:on={app.tab === 'library'} onclick={() => (app.tab = 'library')}>Library</button>
-      <button class:on={app.tab === 'chat'} onclick={() => (app.tab = 'chat')}>AI{#if app.chatStatus.busy}<i class="busy"></i>{/if}</button>
+      <button data-tour="tab-inspector" class:on={app.tab === 'inspector'} onclick={() => (app.tab = 'inspector')}>Inspector</button>
+      <button data-tour="tab-story" class:on={app.tab === 'story'} onclick={() => (app.tab = 'story')}>Story{#if warnCount}<span class="wc">{warnCount}</span>{/if}</button>
+      <button data-tour="tab-library" class:on={app.tab === 'library'} onclick={() => (app.tab = 'library')}>Library</button>
+      <button data-tour="tab-chat" class:on={app.tab === 'chat'} onclick={() => (app.tab = 'chat')}>AI{#if app.chatStatus.busy}<i class="busy"></i>{/if}</button>
     </div>
     <div class="dbody">
       {#if app.tab === 'inspector'}<Inspector />{:else if app.tab === 'story'}<StoryPanel />{:else if app.tab === 'library'}<Library />{:else}<Chat />{/if}
     </div>
   </aside>
 
-  <div class="bottom"><Activity /></div>
+  <div class="bottom" data-tour="activity"><Activity /></div>
 
   <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
-  <div class="split v" role="separator" aria-orientation="vertical" aria-label="Resize the pool" tabindex="0" style="left: calc(var(--wl) - 3px)" onpointerdown={(e) => drag('left', e)} ondblclick={() => resetPanelSize('left')} onkeydown={(e) => nudge('left', e)}></div>
+  <div class="split v" role="separator" aria-orientation="vertical" aria-label="Resize the pool" data-tour="splitter-left" tabindex="0" style="left: calc(var(--wl) - 3px)" onpointerdown={(e) => drag('left', e)} ondblclick={() => resetPanelSize('left')} onkeydown={(e) => nudge('left', e)}></div>
   <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
-  <div class="split v" role="separator" aria-orientation="vertical" aria-label="Resize the side panel" tabindex="0" style="right: calc(var(--wr) - 3px)" onpointerdown={(e) => drag('right', e)} ondblclick={() => resetPanelSize('right')} onkeydown={(e) => nudge('right', e)}></div>
+  <div class="split v" role="separator" aria-orientation="vertical" aria-label="Resize the side panel" data-tour="splitter-right" tabindex="0" style="right: calc(var(--wr) - 3px)" onpointerdown={(e) => drag('right', e)} ondblclick={() => resetPanelSize('right')} onkeydown={(e) => nudge('right', e)}></div>
   <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
-  <div class="split h" role="separator" aria-orientation="horizontal" aria-label="Resize the activity strip" tabindex="0" style="left: var(--wl); right: var(--wr); bottom: calc(var(--hb) - 3px)" onpointerdown={(e) => drag('bottom', e)} ondblclick={() => resetPanelSize('bottom')} onkeydown={(e) => nudge('bottom', e)}></div>
+  <div class="split h" role="separator" aria-orientation="horizontal" aria-label="Resize the activity strip" data-tour="splitter-bottom" tabindex="0" style="left: var(--wl); right: var(--wr); bottom: calc(var(--hb) - 3px)" onpointerdown={(e) => drag('bottom', e)} ondblclick={() => resetPanelSize('bottom')} onkeydown={(e) => nudge('bottom', e)}></div>
 </div>
 
 <Flyers />
@@ -225,6 +231,7 @@
 {#if app.lightbox}<Lightbox nodeId={app.lightbox.nodeId} file={app.lightbox.file} onclose={() => (app.lightbox = null)} />{/if}
 {#if app.mapEditor}<MapEditor mapId={app.mapEditor.mapId} onclose={() => (app.mapEditor = null)} />{/if}
 {#if app.editor}<WorldEditor name={app.editor.name} onclose={() => (app.editor = null)} />{/if}
+<Tour />
 {#if app.toast}<div class="toast" class:ok={app.toastKind === 'ok'}>{app.toast}</div>{/if}
 
 <style>

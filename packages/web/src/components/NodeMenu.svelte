@@ -83,7 +83,7 @@
 {#if menu && node}
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
   <div class="ctx-scrim" onclick={close} oncontextmenu={(e) => { e.preventDefault(); close(); }}></div>
-  <div class="cmenu" bind:this={ref} role="menu" style="left:{pos.left}px; top:{pos.top}px">
+  <div class="cmenu" data-tour="node-menu" bind:this={ref} role="menu" style="left:{pos.left}px; top:{pos.top}px">
     <div class="ctx-head"><span style="color:{NODE_TYPE_INFO[node.type].color}">{NODE_TYPE_INFO[node.type].icon}</span> <b>{node.title}</b></div>
 
     {#if many.length}

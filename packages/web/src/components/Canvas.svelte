@@ -268,7 +268,7 @@
 
 <svelte:window onkeydown={(e) => e.key === 'Escape' && app.enlarged && closeEnlarged()} />
 
-<div class="canvas" role="application" {ondragover} {ondrop} ondblclick={onPaneDblClick}>
+<div class="canvas" data-tour="canvas" role="application" {ondragover} {ondrop} ondblclick={onPaneDblClick}>
   <SvelteFlow
     bind:nodes
     bind:edges
@@ -334,7 +334,7 @@
 
     <Panel position="top-left" class="tlpanel">
       <div class="tl">
-      <div class="create">
+      <div class="create" data-tour="create-bar">
         <select class="field" bind:value={newType}>
           {#each NODE_TYPES as t}<option value={t}>{NODE_TYPE_INFO[t].icon} {NODE_TYPE_INFO[t].label}</option>{/each}
         </select>
@@ -347,7 +347,7 @@
     </Panel>
 
     <Panel position="bottom-center">
-      <div class="kinds" title="Kind of the next connection you draw — hover a kind to see what it is for">
+      <div class="kinds" data-tour="kinds" title="Kind of the next connection you draw — hover a kind to see what it is for">
         {#each EDGE_KINDS as k}
           <button class="kind" class:on={app.edgeKind === k} style="--c:{EDGE_KIND_INFO[k].color}" title={EDGE_KIND_INFO[k].help} onclick={() => (app.edgeKind = k as EdgeKind)}>
             <i></i>{EDGE_KIND_INFO[k].label}

@@ -11,6 +11,7 @@
   let language = $state('de');
   let mapMode = $state<MapPaintMode>('quick');
   let alive = $state<boolean | null>(null);
+  let practice = $state(false);
   let opts = $state<Opts | null>(null);
   let loaded = $state(false);
   let baseline = ''; // what the server has: only real changes are saved
@@ -25,6 +26,7 @@
     language = j.language;
     mapMode = j.mapPaintMode === 'staged' ? 'staged' : 'quick';
     alive = j.alive;
+    practice = !!j.practice;
     opts = j.options;
     baseline = snapshot();
     loaded = true;
@@ -130,7 +132,7 @@
 <svelte:window onkeydown={(e) => e.key === 'Escape' && onclose()} />
 
 <div class="scrim" role="presentation" onmousedown={(e) => e.target === e.currentTarget && onclose()}>
-  <div class="modal" role="dialog" aria-label="Settings">
+  <div class="modal" data-tour="settings-modal" role="dialog" aria-label="Settings">
     <header>
       <b>Settings</b>
       <span class="status">{status}</span>
@@ -194,9 +196,12 @@
           <p class="hint">Defaults match your KINETIK setup: Krea 2 Turbo INT8, 8 steps, cfg 1. On a 16 GB card, start ComfyUI with <code>--reserve-vram 3</code>.</p>
         </section>
 
+        {#if practice}
+          <section class="wide practice"><p class="hint"><b>Practice campaign.</b> ComfyUI is simulated here: the pictures and maps are played back, and the Map painting choice below only applies while the tour runs. {alive ? 'A real ComfyUI answers on this address.' : 'No real ComfyUI answers on this address — everything except pictures works without one.'}</p></section>
+        {/if}
         <section class="wide">
           <h4>Map painting <span class="dim">how battle maps are painted — saved for this computer, all campaigns</span></h4>
-          <div class="modes" role="radiogroup" aria-label="Map painting">
+          <div class="modes" data-tour="settings-map-modes" role="radiogroup" aria-label="Map painting">
             <button class="mode" class:on={mapMode === 'quick'} role="radio" aria-checked={mapMode === 'quick'} onclick={() => (mapMode = 'quick')}>
               <b>Quick <span class="tag">1 step</span></b>
               <span>The plan, props included, is painted in a single pass.</span>
@@ -228,7 +233,7 @@
           {/if}
         </section>
 
-        <section class="wide">
+        <section class="wide" data-tour="settings-vtt">
           <h4>VTT link <span class="dot" class:on={app.vtt?.connected}></span>
             <span class="dim">{app.vtt?.connected ? `${app.vtt.profile?.name} ${app.vtt.profile?.version} connected` : app.vtt?.profile ? `not connected — last seen: ${app.vtt.profile.name}` : 'no VTT has connected yet'}</span></h4>
           <p class="hint">Your tabletop software connects to PenNodePaper and announces what it can receive (handouts, scenes, NPCs, music). Enable the “PenNodePaper link” in the VTT’s GM page and give it this address and pairing token.</p>

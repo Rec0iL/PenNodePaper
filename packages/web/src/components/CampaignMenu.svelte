@@ -13,6 +13,8 @@
   let branchName = $state('');
   let busy = $state(false);
   let filter = $state('');
+  /** the campaign the GM is about to delete (asks first) */
+  let confirmDel = $state<Info | null>(null);
 
   async function toggle() {
     open = !open;
@@ -52,6 +54,15 @@
     if (!branchName.trim()) return;
     if (await post('/api/campaigns/branch', { name: branchName.trim() })) { open = false; branchName = ''; say('Branched — you are in the copy now; the original is in the list above', 'ok'); }
   }
+  async function deleteIt() {
+    const c = confirmDel;
+    if (!c) return;
+    if (await post('/api/campaigns/delete', { dir: c.dir })) {
+      confirmDel = null;
+      open = false;
+      say(`Deleted “${c.name}”`, 'ok');
+    } else confirmDel = null;
+  }
   async function openFolder() {
     if (!folder.trim()) return;
     if (await post('/api/campaigns/open', { dir: folder.trim() })) { open = false; folder = ''; }
@@ -68,14 +79,14 @@
   const shown = $derived((list?.all ?? []).filter((c) => !filter.trim() || c.name.toLowerCase().includes(filter.trim().toLowerCase())));
 </script>
 
-<svelte:window onkeydown={(e) => e.key === 'Escape' && (open = false)} />
+<svelte:window onkeydown={(e) => { if (e.key !== 'Escape') return; if (confirmDel) confirmDel = null; else open = false; }} />
 
 <div class="cm">
   <button class="camp" class:on={open} onclick={toggle} title="Switch, open or create a campaign">{app.meta.name} <span class="car">▾</span></button>
   {#if open}
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <div class="ctx-scrim" onclick={() => (open = false)}></div>
-    <div class="pop cmenu-pop" role="menu">
+    <div class="pop cmenu-pop" data-tour="campaign-pop" role="menu">
       {#if list}
         <div class="sect">Now open</div>
         <div class="cur"><b>{list.current.name}</b><span class="dim">{list.current.nodes} nodes</span></div>
@@ -93,9 +104,12 @@
         {#if list.all.length > 6}<input class="field" placeholder="Filter…" bind:value={filter} />{/if}
         <div class="all">
           {#each shown as c (c.dir)}
-            <button class="row" class:cur2={c.current} disabled={busy} onclick={() => openDir(c.dir, c.current)} title={c.dir}>
-              <span class="t">{c.name}{#if c.current} <span class="dim">· open</span>{/if}</span><span class="dim">{c.nodes} nodes · {ago(c.modifiedAt)}</span>
-            </button>
+            <div class="rw">
+              <button class="row" class:cur2={c.current} disabled={busy} onclick={() => openDir(c.dir, c.current)} title={c.dir}>
+                <span class="t">{c.name}{#if c.current} <span class="dim">· open</span>{/if}</span><span class="dim">{c.nodes} nodes · {ago(c.modifiedAt)}</span>
+              </button>
+              <button class="del" disabled={busy} title="Delete this campaign…" aria-label={`Delete ${c.name}`} onclick={() => (confirmDel = c)}>🗑</button>
+            </div>
           {:else}
             <div class="dim pad">No other campaigns here yet.</div>
           {/each}
@@ -124,10 +138,29 @@
           <button class="item" onclick={() => (mode = 'folder')}>📂 Open a campaign folder…</button>
           <button class="item" onclick={() => { open = false; app.binderOpen = true; }}>📘 GM binder (PDF)…</button>
           <button class="item" onclick={() => { open = false; app.backupsOpen = true; }}>🛟 Backups &amp; sync…</button>
+          <button class="item danger" onclick={() => (confirmDel = list!.current)}>🗑 Delete this campaign…</button>
         {/if}
       {:else}
         <div class="dim pad">loading…</div>
       {/if}
+    </div>
+  {/if}
+
+  {#if confirmDel}
+    <!-- outside the menu: its blur would make a fixed box relative to the menu instead of the window -->
+    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+    <div class="dscrim" onclick={(e) => e.target === e.currentTarget && (confirmDel = null)}>
+      <div class="dlg" role="alertdialog" aria-label="Delete campaign" aria-describedby="del-text">
+        <h3>Delete “{confirmDel.name}”?</h3>
+        <p id="del-text">This removes the whole campaign folder from this computer — its {confirmDel.nodes} node{confirmDel.nodes === 1 ? '' : 's'}, pictures, maps, books, chat and backups. <b>It cannot be undone.</b></p>
+        <p class="path">{confirmDel.dir}</p>
+        {#if confirmDel.current}<p class="note">It is the campaign you are in; another one is opened afterwards.</p>{/if}
+        <div class="btns">
+          <!-- svelte-ignore a11y_autofocus -->
+          <button class="btn" autofocus onclick={() => (confirmDel = null)}>Cancel</button>
+          <button class="btn danger solid" disabled={busy} onclick={deleteIt}>Delete for good</button>
+        </div>
+      </div>
     </div>
   {/if}
 </div>
@@ -152,4 +185,20 @@
   .item:hover { background: var(--bg-3); }
   .form { display: flex; gap: 6px; padding: 4px; }
   .form .field { flex: 1; min-width: 0; }
+  .rw { display: flex; align-items: center; gap: 2px; }
+  .rw .row { flex: 1; min-width: 0; }
+  .del { flex: none; width: 28px; height: 28px; border: 0; border-radius: var(--radius-s); background: transparent; color: var(--text-faint); font-size: 13px; opacity: 0; }
+  .rw:hover .del, .del:focus-visible { opacity: 1; }
+  .del:hover:not(:disabled) { background: #2a1518; color: var(--danger); }
+  .item.danger { color: var(--danger); }
+  .dscrim { position: fixed; inset: 0; z-index: 1700; background: rgba(5, 6, 9, 0.7); backdrop-filter: blur(3px); display: grid; place-items: center; animation: pnp-pop 0.15s ease-out; }
+  .dlg { width: min(440px, calc(100vw - 32px)); padding: 18px 20px 16px; background: var(--bg-2); border: 1px solid #5a2a30; border-radius: 14px; box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6); }
+  .dlg h3 { margin: 0 0 8px; font-size: 16px; }
+  .dlg p { margin: 0 0 8px; color: var(--text-dim); line-height: 1.5; font-size: 13px; }
+  .dlg b { color: var(--danger); }
+  .dlg .path { font-family: var(--mono); font-size: 11px; color: var(--text-faint); word-break: break-all; }
+  .dlg .note { font-size: 12px; }
+  .dlg .btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+  .btn.solid { background: #5a1f27; border-color: var(--danger); color: #ffd6db; }
+  .btn.solid:hover:not(:disabled) { background: #7a2631; }
 </style>

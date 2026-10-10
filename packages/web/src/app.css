@@ -110,6 +110,18 @@ textarea.field { resize: vertical; min-height: 70px; line-height: 1.5; }
   45% { opacity: 1; transform: scale(1.04); filter: brightness(1.5); box-shadow: 0 0 40px 6px var(--glow); }
   100% { transform: scale(1); filter: none; box-shadow: 0 0 0 0 transparent; }
 }
+/* A card that arrives glows, but is never scaled: SvelteFlow measures where a card's connection dots are while it
+   enters, and a scaled card would leave them ~25 px inside it for good (lines would end inside the card). */
+@keyframes pnp-spawn-glow {
+  0% { opacity: 0; filter: brightness(2.2) blur(2px); box-shadow: 0 0 0 0 var(--glow); }
+  45% { opacity: 1; filter: brightness(1.5); box-shadow: 0 0 40px 6px var(--glow); }
+  100% { filter: none; box-shadow: 0 0 0 0 transparent; }
+}
+@keyframes pnp-spawn-pop {
+  0% { transform: scale(0.9); }
+  45% { transform: scale(1.03); }
+  100% { transform: scale(1); }
+}
 @keyframes pnp-dissolve {
   0% { opacity: 1; transform: scale(1); filter: none; }
   100% { opacity: 0; transform: scale(0.9) translateY(10px); filter: blur(6px) brightness(0.6); }

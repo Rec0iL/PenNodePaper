@@ -15,12 +15,12 @@
     if (first) focusNode(first);
     else say('Those nodes are in the pool', 'ok');
   };
-  const who = (a: string) => (a === 'agy' ? 'agy' : 'Claude');
+  const who = (a: string) => (app.meta.tutorial?.on && a === 'claude' ? 'Tutorial AI' : a === 'agy' ? 'agy' : 'Claude');
   const sum = (p: (typeof list)[number]) => [p.newNodes.length ? `${p.newNodes.length} new node${p.newNodes.length > 1 ? 's' : ''}` : '', p.linked ? `${p.linked} link${p.linked > 1 ? 's' : ''}` : '', `${p.steps.length} step${p.steps.length > 1 ? 's' : ''}`].filter(Boolean).join(' · ');
 </script>
 
 {#if list.length}
-  <div class="rv" role="region" aria-label="Review the AI's changes">
+  <div class="rv" data-tour="review-bar" role="region" aria-label="Review the AI's changes">
     <div class="rh"><b>✦ Review</b><span class="dim">{list.length} change set{list.length > 1 ? 's' : ''} from the AI — already on the canvas, marked “proposed”</span>
       {#if list.length > 1}<span class="grow"></span><button class="btn sm" disabled={busy} onclick={() => act('accept_proposal')}>Accept all</button><button class="btn sm danger" disabled={busy} onclick={() => act('reject_proposal')}>Reject all</button>{/if}
     </div>

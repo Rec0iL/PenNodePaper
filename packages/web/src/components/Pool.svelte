@@ -27,7 +27,7 @@
   }
 </script>
 
-<aside class="pool" data-pool-drop>
+<aside class="pool" data-pool-drop data-tour="pool">
   <div class="partywrap"><PartyStrip /></div>
   <header>
     <div class="h"><b>Pool</b><span class="chip">{total}</span></div>

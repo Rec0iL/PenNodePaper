@@ -27,7 +27,7 @@
 </script>
 
 {#if pcs.length || canSync}
-  <div class="party">
+  <div class="party" data-tour="party">
     <div class="ph">
       <b>Party</b><span class="chip">{pcs.filter((p) => p.fields.present !== false).length}</span>
       {#if canSync}<button class="btn ghost" disabled={syncing} onclick={sync} title="Fetch the players' characters from the VTT now">{syncing ? '…' : '↻ Sync'}</button>{/if}

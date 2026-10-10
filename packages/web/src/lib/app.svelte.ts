@@ -135,6 +135,8 @@ export const app = $state({
   lightbox: null as null | { nodeId: string; file: string },
   /** World-book editor modal: name = existing book, null = new book. */
   editor: null as null | { name: string | null },
+  /** Text the welcome tour is typing into an input (a prepared message, a prompt): the input takes it over while it changes. */
+  fill: null as null | { target: 'chat' | 'image' | 'map' | 'guidance'; text: string; nodeId?: string; nonce: number },
 
   chat: [] as ChatMsg[],
   /** Unsent chat input per thread ('' = main chat, else node id) — the Chat component unmounts on tab switches. */
@@ -173,6 +175,8 @@ const cameraTo = async (pl: { canvas: string; x: number; y: number }, duration =
 export const registerFlowApi = (a: FlowApi | null) => {
   flowApi = a;
 };
+/** The canvas' camera (the welcome tour watches and moves it). */
+export const flow = () => flowApi;
 
 /** Flow coordinates (top-left of a new ~280×80 card) that put it in the middle of what the GM currently sees. */
 export function viewCenter(): { x: number; y: number } {

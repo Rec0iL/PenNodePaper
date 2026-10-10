@@ -5,11 +5,11 @@ import path from 'node:path';
 import { getRequestListener } from '@hono/node-server';
 import { Hono } from 'hono';
 import { WebSocketServer, type WebSocket } from 'ws';
-import type { Actor, Backend, CommandResult, ServerMsg } from '@pnp/shared';
+import { DEFAULT_COMFY, type Actor, type Backend, type CommandResult, type MapPaintMode, type ServerMsg } from '@pnp/shared';
 import { spawnSync } from 'node:child_process';
 import { Chat, listModels } from './chat.js';
 import { imageSize, renderSvg } from './maps.js';
-import { generateStyle } from './style.js';
+import { generateStyle, runOnce } from './style.js';
 import { ImageService } from './images.js';
 import { listCommands, runCommand } from './commands.js';
 import { CONFIG_PATH, REPO_ROOT, loadConfig, loadMapPaintMode, loadSaved, saveConfig } from './config.js';
@@ -17,17 +17,21 @@ import { estimatePaint } from './mappaint.js';
 import { importArchive } from './backup.js';
 import { thumbnail } from './thumbs.js';
 import { extractText } from './imports.js';
-import { createCampaign, listCampaigns, looksLikeCampaign, rememberCampaign } from './campaigns.js';
+import { createCampaign, forgetCampaign, listCampaigns, looksLikeCampaign, rememberCampaign } from './campaigns.js';
 import { handleMcp } from './mcp.js';
 import { Persistence } from './persistence.js';
 import { seedDemo } from './seed.js';
 import { Store } from './store.js';
 import { watchCampaign } from './watcher.js';
+import { TutorialComfy, tutorialAi } from './tutorial/fake.js';
+import { createTutorialCampaign, ensureTutorial } from './tutorial/ensure.js';
 import { LanGuard, isLoopback, lanUrls, loginPage, newAccessCode, newSecret } from './lan.js';
 
 const cfg = loadConfig();
 const lan = new LanGuard({ enabled: cfg.lan, code: cfg.lanCode, secret: cfg.lanSecret });
 let mapPaintMode = loadMapPaintMode();
+/** a practice campaign paints in two steps (that is what the tour shows); the Settings choice only applies to it while the tour runs */
+let tutorialMapMode: MapPaintMode = 'staged';
 const clients = new Set<WebSocket>();
 const send = (ws: WebSocket, msg: ServerMsg) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(msg));
 const broadcast = (msg: ServerMsg) => {
@@ -58,19 +62,24 @@ function autoSnapshot(s: Store, force = false) {
   }
 }
 
-function openCampaign(dir: string) {
+function openCampaign(dir: string, opts: { discardOld?: boolean } = {}) {
   clearInterval(backupTimer);
-  if (store) autoSnapshot(store, true); // leaving: save the state we leave behind if it changed
+  if (store && !opts.discardOld) autoSnapshot(store, true); // leaving: save the state we leave behind if it changed
   stopWatching();
   store?.vtt.disconnect(); // the VTT reconnects by itself and lands on the new campaign
   campaignDir = path.resolve(dir);
   const isNew = !fs.existsSync(path.join(campaignDir, 'graph.json'));
   const next = new Store(new Persistence(campaignDir));
-  if (isNew && path.basename(campaignDir) === 'demo' && !Object.keys(next.state.nodes).length) seedDemo(next);
+  if (isNew && (path.basename(campaignDir) === 'demo' || next.state.meta.tutorial?.on) && !Object.keys(next.state.nodes).length) seedDemo(next);
+  tutorialMapMode = 'staged';
+  const practice = () => next.state.meta.tutorial?.on === true;
   store = next;
   stopWatching = watchCampaign(next, (m) => console.log(`[watch] ${m}`));
   chat = new Chat({ store: next, port: cfg.port, token: cfg.token, campaignDir, broadcast });
-  images = new ImageService(next, path.join(campaignDir, 'images'), (job) => broadcast({ t: 'image.job', job }), undefined, { mapMode: () => mapPaintMode });
+  images = new ImageService(next, path.join(campaignDir, 'images'), (job) => broadcast({ t: 'image.job', job }), new TutorialComfy(() => ({ ...DEFAULT_COMFY, ...next.state.meta.comfy }), practice), {
+    mapMode: () => (practice() ? tutorialMapMode : mapPaintMode),
+    ai: (b, p, m) => (practice() ? tutorialAi(b, p, m) : runOnce(b, p, m)),
+  });
   next.images = images;
   const live = () => store === next; // a campaign that was swapped out must not talk to the UI any more
   next.onMeta(() => live() && broadcast({ t: 'reload', state: next.state }));
@@ -266,6 +275,35 @@ app.post('/api/campaigns/branch', async (c) => {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
+// Delete a campaign folder for good. Only campaigns inside the campaigns folder; when it is the open one, another one is opened first
+// (the most recently changed, or a fresh practice campaign when it was the last).
+app.post('/api/campaigns/delete', async (c) => {
+  const b = (await c.req.json().catch(() => ({}))) as { dir?: string };
+  const dir = path.resolve(String(b.dir ?? ''));
+  const root = path.resolve(cfg.campaignsDir);
+  if (!b.dir || !fs.existsSync(dir) || !looksLikeCampaign(dir)) return c.json({ ok: false, error: `Campaign not found: ${b.dir ?? ''}` }, 400);
+  if (path.dirname(dir) !== root) return c.json({ ok: false, error: 'Only campaigns in the campaigns folder can be deleted here — delete other folders yourself.' }, 400);
+  const current = dir === path.resolve(campaignDir);
+  try {
+    if (current) {
+      if (chat.status.busy) return c.json({ ok: false, error: 'The AI is still working — wait for it to finish (or stop it) before deleting this campaign.' }, 409);
+      if (images.jobs.some((j) => j.status === 'queued' || j.status === 'running')) return c.json({ ok: false, error: 'Images are still being generated — wait for them to finish (or stop the queue) first.' }, 409);
+      const next = listCampaigns(cfg.campaignsDir, campaignDir).all.find((x) => path.resolve(x.dir) !== dir)?.dir ?? path.join(cfg.campaignsDir, 'demo');
+      stopWatching();
+      clearInterval(backupTimer);
+      fs.rmSync(dir, { recursive: true, force: true });
+      forgetCampaign(dir);
+      openCampaign(next, { discardOld: true });
+      for (const ws of clients) send(ws, helloMsg(true));
+      return c.json({ ok: true, opened: next });
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+    forgetCampaign(dir);
+    return c.json({ ok: true });
+  } catch (err) {
+    return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+});
 app.post('/api/campaigns/create', async (c) => {
   const b = (await c.req.json().catch(() => ({}))) as { name?: string; language?: string };
   try {
@@ -275,6 +313,54 @@ app.post('/api/campaigns/create', async (c) => {
   } catch (err) {
     return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 400);
   }
+});
+
+// --- the welcome tour -------------------------------------------------------------------------------
+// A practice campaign has a scripted stand-in for the AI and for ComfyUI (see tutorial/), so the tour needs nothing installed.
+app.get('/api/tour', (c) => c.json({ practice: store.state.meta.tutorial?.on === true, campaign: path.basename(campaignDir) }));
+// before a step that needs something the GM may not have made (or has deleted): put it back
+app.post('/api/tour/ensure', async (c) => {
+  const b = (await c.req.json().catch(() => ({}))) as { need?: string[] };
+  if (!store.state.meta.tutorial?.on) return c.json({ ok: true, healed: [] });
+  try {
+    return c.json({ ok: true, healed: ensureTutorial(store, Array.isArray(b.need) ? b.need.map(String) : []) });
+  } catch (err) {
+    return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+});
+// a fresh practice campaign: this one again when it already is one (it is wiped), else a new `welcome-tour` folder next to yours
+app.post('/api/tour/start', (c) => {
+  if (chat.status.busy) return c.json({ ok: false, error: 'The AI is still working — wait for it to finish (or stop it) first.' }, 409);
+  if (images.jobs.some((j) => j.status === 'queued' || j.status === 'running')) return c.json({ ok: false, error: 'Images are still being generated — wait for them to finish (or stop the queue) first.' }, 409);
+  try {
+    // only a practice campaign inside the campaigns folder is ever wiped
+    if (store.state.meta.tutorial?.on && path.dirname(campaignDir) === path.resolve(cfg.campaignsDir)) {
+      const dir = campaignDir;
+      stopWatching();
+      clearInterval(backupTimer);
+      fs.rmSync(dir, { recursive: true, force: true });
+      createTutorialCampaign(cfg.campaignsDir, { reuse: dir });
+      openCampaign(dir, { discardOld: true });
+      for (const ws of clients) send(ws, helloMsg(true));
+      return c.json({ ok: true, dir });
+    }
+    const dir = createTutorialCampaign(cfg.campaignsDir);
+    const r = switchTo(dir);
+    return c.json({ ...r, dir }, r.ok ? 200 : 409);
+  } catch (err) {
+    return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+});
+// the tour is over: the practice campaign becomes an ordinary one (real AI, real ComfyUI) that stays as it is
+app.post('/api/tour/finish', (c) => {
+  const m = store.state.meta;
+  if (m.tutorial?.on) {
+    delete m.tutorial;
+    m.aiMode = 'live';
+    store.persistence.writeMeta(m);
+    broadcast({ t: 'reload', state: store.state });
+  }
+  return c.json({ ok: true });
 });
 
 const snapshot = () => ({ state: store.state, history: store.history.slice(-100), canUndo: store.canUndo, canRedo: store.canRedo });
@@ -568,16 +654,18 @@ app.get('/api/images-meta', (c) => c.json(images.meta()));
 
 // --- settings: ComfyUI connection + campaign image style ---------------------------------
 app.get('/api/settings', async (c) => {
-  const alive = await images.comfy.alive();
+  const practice = store.state.meta.tutorial?.on === true;
+  const alive = practice ? await (images.comfy as TutorialComfy).realAlive() : await images.comfy.alive();
   return c.json({
+    practice,
     comfy: images.comfyConfig(),
     style: images.style(),
     language: store.state.meta.language,
     aiMode: store.state.meta.aiMode ?? 'live',
     aiCreativity: store.state.meta.aiCreativity ?? 3,
-    mapPaintMode,
+    mapPaintMode: practice ? tutorialMapMode : mapPaintMode,
     alive,
-    options: alive ? await images.comfy.options() : null,
+    options: alive ? await (practice ? images.comfy.options().catch(() => null) : images.comfy.options()) : null,
   });
 });
 
@@ -585,8 +673,11 @@ app.put('/api/settings', async (c) => {
   const b = (await c.req.json()) as { comfy?: Record<string, unknown>; style?: Record<string, unknown>; language?: string; aiMode?: string; aiCreativity?: number; mapPaintMode?: string };
   const m = store.state.meta;
   if (b.mapPaintMode === 'quick' || b.mapPaintMode === 'staged') {
-    mapPaintMode = b.mapPaintMode; // this computer's setting, kept in the user's config (not in the campaign)
-    saveConfig({ mapPaintMode });
+    if (store.state.meta.tutorial?.on) tutorialMapMode = b.mapPaintMode; // the tour must not change this computer's real setting
+    else {
+      mapPaintMode = b.mapPaintMode; // this computer's setting, kept in the user's config (not in the campaign)
+      saveConfig({ mapPaintMode });
+    }
   }
   if (b.comfy) m.comfy = { ...m.comfy, ...(b.comfy as object) };
   if (b.style) m.style = { ...m.style, ...(b.style as object) };
@@ -602,7 +693,7 @@ app.put('/api/settings', async (c) => {
 app.post('/api/settings/generate-style', async (c) => {
   const b = (await c.req.json().catch(() => ({}))) as { backend?: Backend; model?: string };
   try {
-    const style = await generateStyle(store, images.style(), b.backend === 'agy' ? 'agy' : 'claude', b.model || undefined);
+    const style = await generateStyle(store, images.style(), b.backend === 'agy' ? 'agy' : 'claude', b.model || undefined, store.state.meta.tutorial?.on ? tutorialAi : undefined);
     return c.json({ ok: true, style });
   } catch (err) {
     return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 422);

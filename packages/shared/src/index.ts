@@ -180,6 +180,8 @@ export interface CampaignMeta {
   aiMode?: 'live' | 'review';
   /** how much the AI adds on its own initiative (1 = exactly what was asked … 5 = inventive); see AI_CREATIVITY. Default 3. */
   aiCreativity?: AiCreativity;
+  /** A practice campaign for the welcome tour: its AI and image maker are scripted stand-ins (nothing needs to be set up) until the tour is left. */
+  tutorial?: { on: boolean };
 }
 
 export type AiCreativity = 1 | 2 | 3 | 4 | 5;
@@ -340,12 +342,15 @@ export interface ChatMsg {
   /** Tool-call cards. */
   tool?: { name: string; summary: string; status: 'running' | 'ok' | 'error' };
   streaming?: boolean;
+  /** Written by the welcome tour's scripted stand-in, not by a real AI. */
+  demo?: boolean;
 }
 
 export interface ChatStatus {
   busy: boolean;
   backend?: Backend;
   nodeId?: string;
+  demo?: boolean;
 }
 
 export type ServerMsg =
@@ -390,3 +395,4 @@ export * from './wiki.js';
 export * from './tables.js';
 export * from './search.js';
 export * from './sounds.js';
+export * from './tutorial.js';

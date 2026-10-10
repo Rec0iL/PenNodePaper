@@ -84,7 +84,7 @@
 <svelte:window onkeydown={(e) => e.key === 'Escape' && onclose()} />
 
 <div class="scrim" role="presentation" onmousedown={(e) => e.target === e.currentTarget && onclose()}>
-  <div class="modal" role="dialog" aria-label="Backups and sync">
+  <div class="modal" data-tour="backup-modal" role="dialog" aria-label="Backups and sync">
     <header>
       <b>Backups &amp; sync</b><span class="camp">{app.meta.name}</span>
       <span class="status">{busy || msg}</span>

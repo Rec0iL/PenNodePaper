@@ -1,7 +1,7 @@
 <script lang="ts">
   // The GM's session view: where are the players, what is wrong with the plan, how do we get back on track.
   // All analysis is the shared pure code the AI's tools use too (lint_story / story_status).
-  import { DEFAULT_GROUP, NODE_TYPE_INFO, groupColor, lintStory, playerWiki, storyStatus, wikiCount, wikiMarkdown, type CampaignState } from '@pnp/shared';
+  import { DEFAULT_GROUP, NODE_TYPE_INFO, bridgePrompt, groupColor, lintStory, playerWiki, storyStatus, wikiCount, wikiMarkdown, type CampaignState } from '@pnp/shared';
   import { app, cmd, focusNode, say, sendChat } from '../lib/app.svelte';
 
   const campaign = $derived({ meta: app.meta, nodes: app.nodes, graph: app.graph } as unknown as CampaignState);
@@ -43,11 +43,18 @@
 
   const lost = $derived(st.skippedPast.length + st.untaken.length + st.unrevealed.filter((u) => u.opens.length).length);
 
+  // the railguard: how the GM wants the bridge to go (empty = the AI chooses). Kept while the tab is switched, like an unsent chat message.
+  let guidance = $state(app.drafts['bridge']?.text ?? '');
+  $effect(() => { app.drafts['bridge'] = { text: guidance, pins: [] }; });
+  // the welcome tour writes an example into it
+  $effect(() => {
+    const f = app.fill;
+    if (f && f.target === 'guidance') guidance = f.text;
+  });
+
   function bridge() {
     app.tab = 'chat';
-    void sendChat(
-      'The players went off-script. Call story_status, then help me get back on track: (1) tell me in 3-4 lines what they have effectively bypassed or not learned and what that costs the story; (2) propose the best 1-2 places to merge back (prefer frontier nodes marked converges:true) and ONE short bridge for each — create it as a node with create_node (place on the canvas next to where the players are) and link it with a "bridge" edge; (3) if an important clue was missed, add a second, different way for the players to learn it; (4) do not delete anything and do not change what already happened. Keep the new nodes brief.',
-    );
+    void sendChat(bridgePrompt(guidance));
   }
 
   function returnSkipped() {
@@ -57,7 +64,7 @@
 </script>
 
 <div class="story">
-  <section>
+  <section data-tour="story-where">
     <div class="label">Where are we</div>
     {#if st.played.length}
       {#each lanes as lane (lane.group)}
@@ -90,7 +97,7 @@
   </section>
 
   {#if st.played.length}
-    <section>
+    <section data-tour="story-back">
       <div class="label">Getting back on track {#if lost}<span class="chip warn">{lost}</span>{/if}</div>
       {#if st.frontier.length}
         <div class="sub">Where the story can pick up next</div>
@@ -122,11 +129,13 @@
           </button>
         {/each}
       {/if}
-      <button class="btn primary bridge" onclick={bridge} disabled={app.chatStatus.busy}>✦ Bridge back with the AI</button>
+      <div class="label rg" data-tour="story-guidance">Railguard <span class="dim">— how should the bridge go? (optional)</span></div>
+      <textarea class="field guidance" rows="2" bind:value={guidance} placeholder="e.g. keep it short, no fight, a person gives the lead — or leave empty and the AI chooses"></textarea>
+      <button class="btn primary bridge" data-tour="story-bridge" onclick={bridge} disabled={app.chatStatus.busy} title={guidance.trim() ? 'The AI builds the bridge the way you wrote above' : 'The AI chooses how the bridge goes'}>✦ Bridge back with the AI</button>
     </section>
   {/if}
 
-  <section>
+  <section data-tour="story-problems">
     <div class="label">Problems {#if warns.length}<span class="chip warn">{warns.length}</span>{/if}{#if infos.length}<span class="chip">{infos.length} notes</span>{/if}</div>
     {#each warns as i, k (i.code + (i.nodeId ?? '') + k)}
       <button class="issue warn" onclick={() => i.nodeId && focusNode(i.nodeId)}>⚠ {i.message}</button>
@@ -141,7 +150,7 @@
     {/if}
   </section>
 
-  <section>
+  <section data-tour="story-wiki">
     <div class="label">For the players {#if wikiN}<span class="chip">{wikiN}</span>{/if}</div>
     <p class="dim">What they have experienced and learned. Only the <b>read-aloud</b> text is shown — summaries and notes stay yours, so write a read-aloud for what you want described.{wikiN ? '' : ' Nothing yet.'}</p>
     <div class="wrow">
@@ -154,7 +163,7 @@
   </section>
 
   {#if st.clocks.length}
-    <section>
+    <section data-tour="story-clocks">
       <div class="label">Clocks</div>
       {#each st.clocks as c (c.id)}
         <div class="clock" class:full={c.full}>
@@ -203,7 +212,9 @@
 .wrow { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
   .wikipre { margin: 8px 0 0; padding: 10px 12px; background: var(--bg-3); border: 1px solid var(--line); border-radius: var(--radius-s); font-size: 11.5px; line-height: 1.55; white-space: pre-wrap; max-height: 300px; overflow: auto; color: var(--text-dim); font-family: inherit; }
   .lnk { background: none; border: 0; color: var(--accent); padding: 0; font-size: 11.5px; text-decoration: underline; text-align: left; }
-  .bridge { margin-top: 10px; width: 100%; }
+  .bridge { margin-top: 8px; width: 100%; }
+  .rg { margin-top: 12px; }
+  .guidance { margin-top: 4px; resize: vertical; min-height: 44px; font-size: 12px; }
   .issue { display: block; width: 100%; text-align: left; background: transparent; border: 0; padding: 4px 6px; border-radius: 6px; color: var(--text-dim); font-size: 12px; line-height: 1.4; }
   .issue.warn { color: #ffcf70; }
   .issue:hover { background: var(--bg-3); }

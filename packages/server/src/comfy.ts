@@ -20,8 +20,16 @@ export interface ComfyOptions {
 
 type Workflow = Record<string, { class_type: string; inputs: Record<string, unknown> }>;
 
+/** What the image queue is making (ComfyUI itself does not care; the tutorial's stand-in uses it to pick a picture). */
+export interface GenerateJob { nodeId: string; kind: string; seed: number }
+
 export class Comfy {
   constructor(private cfg: () => ComfyConfig = () => DEFAULT_COMFY) {}
+
+  /** true while this client only plays pictures back (the welcome tour): its timings say nothing about this computer */
+  get simulated(): boolean {
+    return false;
+  }
 
   private get base() {
     return this.cfg().url.replace(/\/+$/, '');
@@ -141,7 +149,7 @@ export class Comfy {
   /** Queue a workflow, report progress (0..1), and return the first image's bytes. */
   async generate(
     workflow: Workflow,
-    opts: { onProgress?: (p: number) => void; signal?: AbortSignal; timeoutMs?: number } = {},
+    opts: { onProgress?: (p: number) => void; signal?: AbortSignal; timeoutMs?: number; job?: GenerateJob } = {},
   ): Promise<{ bytes: Buffer; filename: string }> {
     if (!(await this.alive())) throw new ComfyError(`ComfyUI is not reachable at ${this.base} — start it first.`);
     const clientId = randomUUID();

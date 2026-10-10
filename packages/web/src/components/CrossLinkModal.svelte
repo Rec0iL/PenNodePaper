@@ -47,7 +47,7 @@
 {#if req && from}
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
   <div class="scrim" onclick={(e) => e.target === e.currentTarget && close()}>
-    <div class="modal" role="dialog" aria-label="Connect to another canvas">
+    <div class="modal" data-tour="crosslink-modal" role="dialog" aria-label="Connect to another canvas">
       <header><b>Connect “{from.title}” to another canvas</b><span class="grow"></span><button class="btn ghost" onclick={close}>×</button></header>
       {#if !others.length}
         <p class="hint">There is only one canvas. Create another one first (the + next to the canvas tabs).</p>

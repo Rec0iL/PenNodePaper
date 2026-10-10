@@ -70,7 +70,7 @@
   {/if}
   {#if present}
     <div class="ring" style="--pc:var(--{present.actor === 'agy' ? 'agy' : 'claude'})">
-      <span class="who">{present.actor === 'agy' ? 'agy' : 'Claude'}</span>
+      <span class="who">{app.meta.tutorial?.on ? 'Tutorial AI' : present.actor === 'agy' ? 'agy' : 'Claude'}</span>
     </div>
   {/if}
 
@@ -164,7 +164,9 @@
   .close:hover { color: var(--text); border-color: var(--tc); }
   .mapbadge { background: transparent; border: 1px solid var(--line-2); color: var(--text-dim); border-radius: 99px; padding: 0 6px; font-size: 10px; cursor: pointer; }
   .mapbadge:hover { color: var(--text); border-color: var(--tc); }
-  .card.spawn { animation: pnp-spawn 1s var(--ease); }
+  .card.spawn { animation: pnp-spawn-glow 1s var(--ease); }
+  /* only the content pops (never the card itself, see app.css): the connection dots stay where they are */
+  .card.spawn .inner, .card.spawn .thumb { animation: pnp-spawn-pop 1s var(--ease); }
   .card.flash { animation: pnp-flash 1.2s ease-out; }
   .card.ghost { animation: pnp-dissolve 0.8s ease-in forwards; pointer-events: none; }
   .card.done { opacity: 0.72; }

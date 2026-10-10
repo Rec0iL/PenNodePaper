@@ -190,7 +190,7 @@
 <svelte:document onvisibilitychange={() => document.hidden && dirty && ready && void save()} />
 
 <div class="scrim" role="presentation" onmousedown={(e) => e.target === e.currentTarget && void close()}>
-  <div class="modal" role="dialog" aria-label="World book editor">
+  <div class="modal" data-tour="editor-modal" role="dialog" aria-label="World book editor">
     <header>
       <span class="logo">◍</span>
       {#if isNew}

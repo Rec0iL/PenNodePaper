@@ -143,7 +143,7 @@
   </div>
 {:else if node && info}
   <div class="insp" style="--tc:{info.color}">
-    <div class="head">
+    <div class="head" data-tour="insp-head">
       <span class="icon">{info.icon}</span>
       <div class="id"><b>{info.label}</b><code>{node.id}</code></div>
       <div class="acts">
@@ -173,11 +173,11 @@
     </div>
 
     <div class="label">Title</div>
-    <input class="field" class:diff={diffs.title} value={node.title} onchange={(e) => patch({ title: e.currentTarget.value })} />
+    <input class="field" data-tour="insp-title" class:diff={diffs.title} value={node.title} onchange={(e) => patch({ title: e.currentTarget.value })} />
     {#if diffs.title}<div class="was">{was('title')}</div>{/if}
 
     <div class="label">Summary <span class="dim">(card text)</span></div>
-    <textarea class="field short" class:diff={diffs.summary} value={node.summary} onchange={(e) => patch({ summary: e.currentTarget.value })}></textarea>
+    <textarea class="field short" data-tour="insp-summary" class:diff={diffs.summary} value={node.summary} onchange={(e) => patch({ summary: e.currentTarget.value })}></textarea>
     {#if diffs.summary}<div class="was">{was('summary')}</div>{/if}
 
     <div class="label">Tags</div>
@@ -191,7 +191,7 @@
 
     {#if node.type === 'table'}
       <div class="label">Random table <span class="dim">· {tEntries.length ? `${dieLabel(tableFaces(tEntries))}, ${tEntries.length} entries` : 'empty'}</span></div>
-      <div class="tablebox">
+      <div class="tablebox" data-tour="insp-roll">
         <div class="trow">
           <button class="btn primary" disabled={!tEntries.length} onclick={() => roll(1)}>🎲 Roll</button>
           <button class="btn" disabled={!tEntries.length} onclick={() => roll(3)} title="Roll three times (with replacement)">×3</button>
@@ -203,7 +203,7 @@
         {/if}
         <div class="trow">
           <input class="field" placeholder="Topic for the AI (e.g. rumours at the harbour tavern)" bind:value={topic} onkeydown={(e) => e.key === 'Enter' && fillWithAi()} />
-          <button class="btn" disabled={app.chatStatus.busy} onclick={fillWithAi} title="The AI writes entries from your world books">✦ Fill with AI</button>
+          <button class="btn" data-tour="table-fill" disabled={app.chatStatus.busy} onclick={fillWithAi} title="The AI writes entries from your world books">✦ Fill with AI</button>
         </div>
         {#if rollLog(node).length > 1}
           <details class="hist"><summary>Earlier rolls</summary>{#each rollLog(node).slice(1) as h}<div>{h.text} <span class="dim">· {h.roll}</span></div>{/each}</details>
@@ -212,7 +212,7 @@
     {/if}
 
     {#if node.type === 'location' || mapId}
-      <div class="mapbox">
+      <div class="mapbox" data-tour="insp-map">
         {#if mapId}
           <button class="btn primary" onclick={() => (app.mapEditor = { mapId })}>⌗ Open the map of this place</button>
           <span class="dim">or double-click the card</span>
@@ -228,7 +228,7 @@
 
     {#if VISITABLE_TYPES.has(node.type) || node.type === 'lore' || node.type === 'item' || node.type === 'clock'}
       <div class="label">At the table</div>
-      <div class="table">
+      <div class="table" data-tour="insp-play">
         {#if VISITABLE_TYPES.has(node.type)}
           <div class="trow">
             {#if hasParty}
@@ -261,6 +261,7 @@
       </div>
     {/if}
 
+    <div data-tour="insp-notes">
     <div class="label">Notes <span class="dim">(markdown, GM only)</span></div>
     <textarea class="field tall mono" class:diff={diffs.body} value={node.body} onchange={(e) => patch({ body: e.currentTarget.value })}></textarea>
     {#if diffs.body}<div class="was">{was('body')}</div>{/if}
@@ -268,9 +269,10 @@
     <div class="label">Read aloud</div>
     <textarea class="field read" class:diff={diffs.readAloud} value={node.readAloud} placeholder="Text for the players…" onchange={(e) => patch({ readAloud: e.currentTarget.value })}></textarea>
     {#if diffs.readAloud}<div class="was">{was('readAloud')}</div>{/if}
+    </div>
 
     {#if node.type === 'npc' || node.type === 'enemy'}
-      <CharacterSheet {node} />
+      <div data-tour="insp-sheet"><CharacterSheet {node} /></div>
     {:else if node.type === 'pc'}
       <div class="label">Player character</div>
       <div class="pcbox">
@@ -284,11 +286,11 @@
       </div>
     {/if}
 
-    {#if showSounds}<SoundCues {node} />{/if}
+    {#if showSounds}<div data-tour="insp-sound"><SoundCues {node} /></div>{/if}
 
     {#if showVtt}
       <div class="label">Show to the players</div>
-      <div class="vttbox">
+      <div class="vttbox" data-tour="insp-vtt">
         <div class="vstat" class:on={!!prof}><i></i>{prof ? `${prof.name} connected` : 'no VTT connected'}</div>
         <label class="chk"><input type="checkbox" bind:checked={reveal} /> show it to the players right away</label>
         {#if pictures.length}
@@ -321,8 +323,10 @@
       </div>
     {/if}
 
+    <div data-tour="insp-images">
     <div class="label">Images</div>
     <ImagesPanel {node} {mapRenders} />
+    </div>
 
     <details class="adv" open={customFields.length > 0 && !!diffs.fields}>
       <summary class="label">Advanced · custom fields <span class="chip">{customFields.length}</span></summary>
@@ -342,8 +346,10 @@
     </div>
     </details>
 
+    <div data-tour="insp-ask">
     <div class="label">Ask the AI about this node</div>
     {#key node.id}<Chat nodeId={node.id} />{/key}
+    </div>
 
     <div class="label">Connections <span class="chip">{edges.length}</span></div>
     <div class="edges">
