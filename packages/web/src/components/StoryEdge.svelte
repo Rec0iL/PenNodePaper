@@ -1,8 +1,9 @@
 <script lang="ts">
   import { EdgeLabel, EdgeReconnectAnchor, getBezierPath, type EdgeProps } from '@xyflow/svelte';
   import { Tween } from 'svelte/motion';
-  import { EDGE_KIND_INFO, type EdgeKind } from '@pnp/shared';
+  import { EDGE_KIND_INFO, inlineBezier, roundedPath, type EdgeKind } from '@pnp/shared';
   import { app, cmd } from '../lib/app.svelte';
+  import { routing } from '../lib/routing.svelte';
 
   let { id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data: rawData, selected }: EdgeProps = $props();
   const data = $derived(rawData as { kind: EdgeKind; label: string; ghost?: boolean; played?: boolean; trailColor?: string; proposed?: boolean });
@@ -53,12 +54,22 @@
     return { destroy: () => clearTimeout(t) };
   };
 
-  const path = $derived(
-    getBezierPath({
+  // the plain curve, or - when the canvas found one - the detour around the cards and the label spot it chose
+  // (a rewired edge slides along the plain curve first)
+  const route = $derived(routing.on && !data.ghost && mode !== 'rewire' ? routing.routes.get(id) : undefined);
+  const path = $derived.by((): [string, number, number] => {
+    const [d, x, y] = getBezierPath({
       sourceX: disp.current.sx, sourceY: disp.current.sy, targetX: disp.current.tx, targetY: disp.current.ty,
       sourcePosition, targetPosition,
-    }),
-  );
+    });
+    if (!route) return [d, x, y];
+    const at = route.label ?? { x, y };
+    if (!route.routed) {
+      if (!route.inline) return [d, at.x, at.y];
+      return [inlineBezier({ x: disp.current.sx, y: disp.current.sy }, route.inline.enter, route.inline.leave, { x: disp.current.tx, y: disp.current.ty }).d, at.x, at.y];
+    }
+    return [roundedPath([{ x: disp.current.sx, y: disp.current.sy }, ...route.via, { x: disp.current.tx, y: disp.current.ty }]), at.x, at.y];
+  });
 </script>
 
 <g style="color:{present ? actorColor : data.played ? (data.trailColor ?? '#ffd166') : style.color}">

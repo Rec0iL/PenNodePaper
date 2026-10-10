@@ -397,3 +397,4 @@ export * from './search.js';
 export * from './sounds.js';
 export * from './tutorial.js';
 export * from './characters.js';
+export * from './routing.js';
