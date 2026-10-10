@@ -40,7 +40,7 @@ npm install
 npm run dev
 ```
 
-Then open **<http://localhost:5273>**. The first start creates a small demo campaign in `campaigns/demo/`.
+Then open **<http://localhost:5273>**. The first start creates a practice campaign in `campaigns/demo/` and opens the **welcome tour**, which needs nothing from this guide (its AI and pictures are stand-ins); everything below is for your own campaigns. You can reopen the tour from the **?** in the top bar.
 
 > Use `localhost` rather than `127.0.0.1` for the development UI: Vite may listen on IPv6 only, and then `127.0.0.1` is refused.
 
@@ -196,7 +196,7 @@ Any MCP client can attach to `http://127.0.0.1:4317/mcp` with the bearer token f
 claude mcp add --transport http pennodepaper "http://127.0.0.1:4317/mcp?actor=claude" --header "Authorization: Bearer <token>"
 ```
 
-No AI installed? Everything else still works: you build the story by hand, and `npm run ai-demo -w @pnp/server` shows what an AI session looks like.
+No AI installed? Everything else still works: you build the story by hand, the welcome tour shows what an AI session looks like (with a scripted stand-in), and `npm run ai-demo -w @pnp/server` plays one against the demo campaign.
 
 ---
 

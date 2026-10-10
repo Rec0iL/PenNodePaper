@@ -32,6 +32,7 @@ World & story building for pen & paper. An infinite node canvas for the story, a
 
 ## ✨ Highlights
 
+* 🎓 **A guided tour** — the first start opens a practice campaign and walks you through the whole program, with a scripted stand-in for the AI and pre-made pictures, so nothing has to be installed to try everything (see [Welcome tour](#-welcome-tour)).
 * 🧩 **Node canvas + pool** — scenes, NPCs, places, clues, items and more as typed nodes with typed connections; prepared material waits in the pool until it is needed.
 * ✍️ **Fully usable by hand** — you can build, connect, write, map, roll and run a campaign without ever touching the AI; the few conveniences that do need it (like turning imported notes into nodes) say so.
 * 🤖 **Optional AI co-GM** — if you want one, Claude or agy edit the campaign through MCP and you watch every change happen; each request is one undo step, or review it first.
@@ -41,6 +42,21 @@ World & story building for pen & paper. An infinite node canvas for the story, a
 * 🎭 **Running the session** — split the party, track where each group is, get back on track, share a spoiler-safe wiki with your players.
 * 📘 **GM binder** — the whole campaign as one printable A4 PDF with page references on every connection.
 * 🛟 **Yours to keep** — backups, branching campaigns, optional git; everything is markdown and JSON on your disk.
+
+## 🎓 Welcome tour
+
+The first time you start PenNodePaper it opens **Greywater**, a small practice campaign, and a coach that walks you through the real program step by step: what is where, and why. About 20 minutes; pause and continue whenever you like.
+
+<div align="center">
+<img src="docs/img/tour.png" alt="The welcome tour: a card explains the lit part of the screen and waits for you to try it" width="100%">
+</div>
+
+* **You do things yourself.** Select a card, double-click it, draw a connection, press Generate — the highlighted part of the screen is yours to use, and every step has a *Do it for me* button if a gesture is fiddly.
+* **Nothing needs to be set up.** The AI in the tour is a **scripted stand-in**: it takes the prepared request, then calls the very same tools a real AI calls, so the cards fly in, the connections draw themselves, the activity log fills and everything undoes. The pictures and the painted maps are **played back** (they were made with the real ComfyUI pipelines), including the two-step map painting with a terrain to choose and props painted spot by spot.
+* **Everything is covered**: the canvas, the pool, nodes and connections, notes and read-aloud text, the AI (ask, watch, undo, review mode, creativity), pictures, battle and region maps, frames, several canvases and jump markers, running a session (where are the players, a split party, getting back on track, random tables, clocks, the spoiler-safe wiki), the library, the VTT link, search, backups, the GM binder — and how to connect a real AI.
+* **It is safe.** It runs in its own practice campaign (your campaigns are never touched), the tour heals the campaign if you skip ahead or delete something, and when it is over the campaign simply becomes an ordinary one with the real AI switched on.
+
+Open it again whenever you like from the **?** in the top bar (*Welcome tour*, or jump to a single chapter). If you have used PenNodePaper before, it starts in a separate `welcome-tour` campaign next to yours.
 
 ## 🧭 The canvas
 
@@ -59,7 +75,13 @@ The story lives on an infinite canvas; the **pool** on the left holds everything
 
 Connections have kinds (leads to, if …, reveals, belongs to, foreshadows, bridge), each with its own colour that you can switch on and off from the bar at the bottom.
 
-**Look closer:** double-click a card to enlarge it in place — summary, read-aloud text, your GM notes and a bigger picture — while the camera zooms onto it. It stays until you double-click the empty canvas, pick another card, press <kbd>Esc</kbd> or use the × — then it shrinks again and the camera goes back to where it was. **More than one canvas:** acts, chapters and side quests can have their own tabs. A connection between two canvases shows as a small *jump marker* beside each end (click it to jump over; drag it by its grip to put it where you like, double-click the grip to let it place itself again). Connect to another canvas from a node's right-click menu or by dragging a connection onto the other canvas' tab.
+**Look closer:** double-click a card to enlarge it in place — summary, read-aloud text, your GM notes and a bigger picture — while the camera zooms onto it. It stays until you double-click the empty canvas, pick another card, press <kbd>Esc</kbd> or use the × — then it shrinks again and the camera goes back to where it was.
+
+<div align="center">
+<img src="docs/img/enlarge.gif" alt="Double-click a card: it grows in place with its picture, read-aloud text and notes; a double-click on the empty canvas puts it back" width="85%">
+</div>
+
+**More than one canvas:** acts, chapters and side quests can have their own tabs. A connection between two canvases shows as a small *jump marker* beside each end (click it to jump over; drag it by its grip to put it where you like, double-click the grip to let it place itself again). Connect to another canvas from a node's right-click menu or by dragging a connection onto the other canvas' tab.
 
 ### ✍️ Writing by hand
 
@@ -81,7 +103,7 @@ npm run dev          # server :4317 + web UI :5273  -> open http://localhost:527
 npm run build && npm start   # production: server serves the built UI on :4317
 ```
 
-First launch seeds a small demo campaign in `campaigns/demo/`. The server starts with the campaign you used last; switch, create or branch campaigns from the campaign menu in the top bar (or force one with `PNP_CAMPAIGN=<folder>`).
+First launch seeds the practice campaign *Greywater* in `campaigns/demo/` and starts the [welcome tour](#-welcome-tour). The server starts with the campaign you used last; switch, create or branch campaigns from the campaign menu in the top bar (or force one with `PNP_CAMPAIGN=<folder>`).
 
 **What you need:** Node 20+ — that is enough to write and run a whole campaign by hand. Optional, each unlocks one feature: the `claude` and/or `agy` CLI (the AI chat; without them the AI tab simply stays unused), a local **ComfyUI** with Krea 2 (images, painted maps), **WeasyPrint** (`pip install weasyprint`, GM binder PDF), **ImageMagick** (image thumbnails), `unzip` + `pdftotext` (importing .docx / .pdf notes), `git` (optional local git commits).
 
@@ -154,10 +176,22 @@ The **Select** tool (first in the toolbar) edits what is already drawn: click a 
 
 The editor autosaves and edits through the same ops as the AI's `edit_map`, so you and Claude/agy can work on one map at once (AI changes glow briefly). **Paint** turns the plan into a painted map via ComfyUI img2img (Krea 2): *Faithful* keeps your plan exactly, *Painterly* is richer but may drift. *Model input* shows exactly what the image model receives.
 
-**Two ways to paint a battle map** — choose once in **⚙ Settings → Map painting** (it is a setting of *this computer*, because it depends on how fast your graphics card is):
+**Two ways to paint a battle map** — choose once in **⚙ Settings → Map painting** (it is a setting of *this computer*, because it depends on how fast your graphics card is). Both start from the same plan:
+
+<div align="center">
+<img src="docs/img/map-quick-vs-precise.jpg" alt="The same tavern plan painted in one step (props drift, merge and turn into blobs) and in two steps (every table, chair and barrel where the plan put it)" width="100%">
+</div>
+
+<sub>One tavern, one plan: left the editor, in the middle the **quick** painting (a single pass: furniture drifts, merges and vanishes), right the **precise** painting (empty terrain first, then every prop group painted into its spot).</sub>
 
 * **Quick (1 step)** — the plan, props included, is painted in a single pass (about 1–2 minutes on a 16 GB card). Less exact: furniture can drift, merge or vanish.
 * **Precise (2 steps)** — **① Terrain:** only the empty place is painted (floors, walls, doors; no props), so the model is free to be creative — you pick the terrain you like or paint another. **② Props:** every prop group is then painted into exactly its spot, one after the other, each with its own AI-written prompt; touching props of the same kind count as **one** object (a row of tables is one long table, five barrels in a row stay five barrels — *show the groups on the plan* previews it). You accept the result or paint the props again. **This takes a while** — roughly 1½ minutes for the terrain plus ~40 seconds per prop group on a 16 GB card, so a map with 15 groups needs around 12 minutes; weaker cards need longer. The Paint tab shows an estimate for the map in front of you (a guess until ComfyUI has made an image on your computer, then measured) and you can stop at any time. It needs no extra models. Region maps are always painted in one step.
+
+<div align="center">
+<img src="docs/img/map-two-steps.gif" alt="Two-step painting: the plan, the empty terrain, then the 19 prop groups appear one after the other" width="85%">
+</div>
+
+<sub>The precise way in motion: the plan, the empty place only (step 1 — you accept it or paint another), then the props, group by group, each into exactly its spot (step 2).</sub>
 
 The AI (`render_map`, `paint_map_props`, `set_map_terrain`, `accept_map_terrain`) works the same two steps and waits for your choice between them.
 
@@ -211,7 +245,7 @@ Each VTT ships its own small bridge client, and PenNodePaper learns what it can 
 <sub>The <b>Story</b> tab (left), search with <kbd>Ctrl</kbd>+<kbd>K</kbd> and the campaign menu (right).</sub>
 
 * **Right-click a node** → *Move players here*: tick which players go there (or pick *Whole party* / a group). The party can split up — each part keeps its own coloured marker and trail, groups are named after who is together (“Anna & Ben”), and when they meet again they become the plain “party”. Select **several nodes** (Shift-click or Shift-drag, or Ctrl/Cmd-click) to mark the players as being at all of them at once — e.g. in the tavern while the bell is ringing — or to set all their statuses together. The same menu sets the **status** (untouched / active / done / skipped; *active* is a marker only — several nodes can be active — and doesn't move anyone). Right-click a **connection** to take the played-path highlight off it (the players went back and forth), change its kind or reverse it; right-click the **empty canvas** to add a node right there.
-* **Campaigns** — the campaign name in the top bar is a menu: open another campaign, create a new one, jump back to a recently used one, or open any campaign folder by path. (Switching waits until the AI and image queue are idle; the VTT reconnects by itself.) The server starts with the campaign you used last.
+* **Campaigns** — the campaign name in the top bar is a menu: open another campaign, create a new one, jump back to a recently used one, open any campaign folder by path — or **delete** one (🗑 next to it in the list, or *Delete this campaign…*; it asks first, and removes the whole folder, backups included). (Switching waits until the AI and image queue are idle; the VTT reconnects by itself.) The server starts with the campaign you used last.
 * **Import notes** (Library tab, *needs the AI*) — bring in your existing prep as .md, .txt, .docx, .pdf or pasted text. The text is kept in the campaign's `imports/` folder; one button lets the AI read it in chunks (`list_imports`, `read_import`) and create typed nodes — places, NPCs, items and clues go to the pool, an ordered run of scenes onto the canvas, linked by kind. It never invents facts and tells you what was unclear.
 * **Backups & sync** (campaign menu → *Backups & sync…*) — snapshots of the whole campaign folder as `.tar.gz` in `snapshots/`: automatic ones while you work (only when something changed, light = no images, the oldest are pruned; leaving a campaign also saves it), manual ones with a label (with images), and a *before restore* safety snapshot every time you restore. Restoring puts nodes, graph, maps and books back. Every snapshot can also be copied to a **mirror folder** (Dropbox / Syncthing / USB), the whole campaign can be exported as **one file** and opened on another machine, and an optional **local git** repo gets a commit per snapshot (pushing is yours to do — nothing is ever sent anywhere by itself). The AI can take a safety snapshot before risky bulk edits (`create_snapshot`) but cannot restore.
 * **Random tables** — a *Random table* node holds one entry per line (`3× Fog` = three times as likely; the die is the number of faces: 6 entries = d6). 🎲 on the card (or right-click → Roll) rolls it, the last result stays on the card and a short history in the Inspector. **✦ Fill with AI** writes entries from your world books (names, rumours, loot, weather, complications). The AI can fill and roll tables itself (`set_table`, `roll_table`).
@@ -223,7 +257,7 @@ Each VTT ships its own small bridge client, and PenNodePaper learns what it can 
 * **Branching** (campaign menu → *Branch this campaign…*) — a full copy of the open campaign (images included) under a new name, opened right away, for trying another storyline (“what if the players side with the cult?”). The original stays untouched and is one click away in the list; the copy remembers which campaign it branched from.
 * **Zooming out** — far zoomed out, cards shrink to the type colour and one big title (and frame titles grow), so a large campaign stays readable at a glance; zoom in and the full cards come back.
 * **Layout** — drag the splitters between the pool, the canvas, the side panel and the activity strip to resize them (double-click a splitter to reset it; sizes are remembered).
-* **Story tab** — where each group is, how and where they can get back on track (meeting points, what was skipped or not yet revealed), the story linter, and progress clocks.
+* **Story tab** — where each group is, how and where they can get back on track (meeting points, what was skipped or not yet revealed), the story linter, and progress clocks. **✦ Bridge back with the AI** asks the co-GM for a way to rejoin the story; the **railguard** field above the button lets you say *how* the bridge should go (“keep it short, no fight, a person gives the lead”) — leave it empty and the AI chooses.
 * **For the players** (Story tab) — a spoiler-safe wiki of what the players have experienced and learned: the story so far in play order (marked by group when the party split), the people, places and things they met, the clues they know. It uses only the **read-aloud** text (summaries and notes stay yours). Preview it, export it as markdown, send it to the VTT as a handout, or have the AI write a narrator-style recap from it (`player_wiki`, `export_player_wiki`, `push_player_wiki`). Tick *the players know this* on an NPC, place or item to list it without having visited it.
 * **Image queue** — a chip in the top bar shows what is generating and what waits (click for the list); cards show ⏳ queued / ◌ percent; the Generate button turns into *Add to queue* while something runs.
 * **Connection kinds** — hover a kind in the bar at the bottom for what it is for (leads to, if …, reveals, belongs to, foreshadows, bridge).
@@ -261,12 +295,14 @@ Plain files: git-friendly and hand-editable — external edits (including Claude
 npm run smoke   -w @pnp/server   # drive a running server through the real MCP client
 npm run ai-demo -w @pnp/server   # paced fake-AI session to watch the animations
 npm test                          # command layer / undo / persistence tests
+npx tsx packages/server/scripts/make-tutorial-assets.ts tavern=a,b   # make the welcome tour's pictures again (needs ComfyUI)
 ```
 
 ## 🧱 Layout
 
 * `packages/shared` — domain types, node/edge metadata, WebSocket protocol
 * `packages/server` — store + transaction/undo layer (`store.ts`), command registry used by both REST and MCP (`commands.ts`), MCP endpoint, CLI chat runner, file watcher
-* `packages/web` — Svelte 5 + Svelte Flow UI; `lib/app.svelte.ts` is the animation director
+* `packages/web` — Svelte 5 + Svelte Flow UI; `lib/app.svelte.ts` is the animation director; `lib/tour/` holds the welcome tour's steps (one file per group of chapters), `components/Tour.svelte` its coach
+* `packages/server/src/tutorial/` — the practice campaign: its content, the shipped pictures (`assets/tutorial/`), the stand-ins for the AI and for ComfyUI that run on the real queue and map pipelines, and the healing the tour asks for
 
 The VTT side is documented in `docs/vtt-bridge-spec.md`.
