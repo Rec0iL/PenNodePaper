@@ -98,6 +98,8 @@ export class Chat {
   private child: ChildProcess | null = null;
   /** a scripted (tutorial) run was told to stop */
   private stopDemo = false;
+  /** the GM pressed stop: the process ending with an "interrupted" error is no news */
+  private cancelled = false;
   status: ChatStatus = { busy: false };
 
   constructor(private deps: ChatDeps) {
@@ -134,6 +136,7 @@ export class Chat {
   }
 
   cancel() {
+    this.cancelled = true;
     this.stopDemo = true;
     this.child?.kill('SIGTERM');
   }
@@ -162,6 +165,7 @@ export class Chat {
     const { text, backend, nodeId } = opts;
     // a practice campaign (the welcome tour) has a scripted stand-in instead of a real AI: nothing needs to be installed
     const demo = !!this.deps.store.state.meta.tutorial?.on;
+    this.cancelled = false;
     this.push({ role: 'user', backend, text, nodeId });
     this.setStatus({ busy: true, backend, nodeId, ...(demo ? { demo: true } : {}) });
     this.save();
@@ -172,7 +176,7 @@ export class Chat {
       else if (backend === 'claude') await this.runClaude(prompt, opts.model, nodeId);
       else await this.runAgy(prompt, opts.model, nodeId);
     } catch (err) {
-      this.push({ role: 'system', backend, text: err instanceof Error ? err.message : String(err), nodeId });
+      if (!this.cancelled) this.push({ role: 'system', backend, text: err instanceof Error ? err.message : String(err), nodeId });
     } finally {
       this.child = null;
       this.deps.store.endTurn();
@@ -283,22 +287,32 @@ export class Chat {
     if (this.data.sessions.agy) args.push('--conversation', this.data.sessions.agy);
 
     const live = new Map<number, ChatMsg>(); // step_index -> message
+    // agy keeps the LAST error of a conversation and repeats it in the result of every later turn (a quota error of one
+    // model, then the GM switches the model: all later turns "finish with status ERROR" although they went through).
+    // A failure of THIS turn shows up as an error_message step in its own stream.
+    let turnError = false;
+    let reported = false;
     return this.spawnLines('agy', args, campaignDir, (ev) => {
       const e = ev as Record<string, any>;
       if (e.event === 'init' && e.conversation_id) this.data.sessions.agy = e.conversation_id;
       else if (e.event === 'step_update') {
         const u = e.step_update;
         if (u.conversation_id) this.data.sessions.agy = u.conversation_id;
-        if (u.step_type === 'user_input') return;
+        if (u.step_type === 'error_message') turnError = true;
+        // bookkeeping steps of agy itself: no tool, no words
+        if (u.step_type === 'user_input' || u.step_type === 'system_message' || u.step_type === 'error_message' || u.step_type === 'unknown') return;
         if (u.step_type === 'agent_response') {
           let m = live.get(u.step_index);
-          if (!m) {
+          // thinking-only steps have no words: no empty bubble for them
+          if (!m && u.text_delta) {
             m = this.push({ role: 'assistant', backend: 'agy', text: '', nodeId, streaming: true });
             live.set(u.step_index, m);
           }
-          if (u.text_delta) m.text += u.text_delta;
-          if (u.state === 'DONE') m.streaming = false;
-          this.update(m);
+          if (m) {
+            if (u.text_delta) m.text += u.text_delta;
+            if (u.state === 'DONE') m.streaming = false;
+            this.update(m);
+          }
         } else {
           // tool/action step. MCP calls arrive as call_mcp_tool {ServerName, ToolName, Arguments}.
           const p = (u.tool_info?.parameters ?? {}) as Record<string, any>;
@@ -325,7 +339,14 @@ export class Chat {
       } else if (e.event === 'result') {
         const r = e.result ?? {};
         if (r.conversation_id) this.data.sessions.agy = r.conversation_id;
-        if (r.status && r.status !== 'SUCCESS') this.push({ role: 'system', backend: 'agy', text: `agy finished with status ${r.status}`, nodeId });
+        if (r.status && r.status !== 'SUCCESS' && !this.cancelled) {
+          // an ERROR without an error step of its own turn is the stale one (and an interruption is the GM's own stop)
+          const stale = r.status === 'ERROR' && !turnError;
+          if (!stale) {
+            this.push({ role: 'system', backend: 'agy', text: `agy: ${String(r.error || `finished with status ${r.status}`).slice(0, 300)}`, nodeId });
+            reported = true;
+          }
+        }
         const denied = (r.denied_actions ?? []) as { action: string; display_name?: string }[];
         if (denied.length) {
           const kinds = [...new Set(denied.map((d) => d.action))];
@@ -338,6 +359,10 @@ export class Chat {
         }
         for (const m of live.values()) if (m.streaming) { m.streaming = false; this.update(m); }
       }
+    }).catch((err) => {
+      // a failed turn was already reported with agy's own words (the exit code only repeats it, cut short)
+      if (reported) return;
+      throw err;
     });
   }
 
