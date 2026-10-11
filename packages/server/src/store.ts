@@ -49,6 +49,8 @@ export interface ImageApi {
   /** Runs the AI once, headless (used to write painting prompts). */
   ai: import('./style.js').Runner;
   estimateSeconds(megapixels: number): { seconds: number; measured: boolean };
+  /** Note a picture made outside the queue (prompt and size, for the gallery). */
+  record(file: string, meta: { nodeId: string; prompt: string; seed: number; kind: import('@pnp/shared').ImageKind; w: number; h: number; at: string }): void;
 }
 
 const clone = <T>(v: T): T => (v === undefined ? v : (JSON.parse(JSON.stringify(v)) as T));

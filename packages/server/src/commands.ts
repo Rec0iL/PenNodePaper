@@ -1,7 +1,8 @@
 import { z, type ZodRawShape } from 'zod';
 import { DEFAULT_GROUP, charactersOfPlace, isCharacterNode, tokenKindOf, dieLabel, soundsOf, entryLine, fragmentName, parseEntry, rollLog, rollTable, seeded, tableEntries, tableFaces, clockOf, lintStory, nextPlayedSeq, playedPath, playerWiki, wikiMarkdown, slugify, storyStatus, validateSheet, visitsOf, type Visit } from '@pnp/shared';
 import type { Actor, Backend, DoorKind, EdgeKind, EdgeSide, ImageKind, MapDoc, NodeStatus, NodeType, PropKind, StoryEdge, StoryNode } from '@pnp/shared';
-import { DOOR_KINDS, EDGE_KINDS, FRAME_PALETTE, EDGE_SIDES, IMAGE_KINDS, NODE_STATUSES, NODE_TYPES, PROP_KINDS, REGION_KINDS, cleanKind, isKnownKind } from '@pnp/shared';
+import { DEFAULT_LABEL_STYLE, DOOR_KINDS, EDGE_KINDS, FRAME_PALETTE, EDGE_SIDES, IMAGE_KINDS, LABEL_PLACES, LABEL_SIZES, LABEL_STYLES, NODE_STATUSES, NODE_TYPES, PROP_KINDS, REGION_KINDS, cleanKind, isKnownKind } from '@pnp/shared';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { BINDER_SECTIONS, MAX_COPIES, binderParts, renderPdf } from './binder.js';
@@ -9,6 +10,7 @@ import { buildBundle, characterFromNode, mapCast, handoutFromNode, illustrations
 import { CONTROL_LEGEND, applyOps, groupProps, groupRegion, imageSize, lineStages, regionLegend, renderSvg, toPng, type MapOp } from './maps.js';
 import { propsRunner, readTerrain, regionGroupInfos, regionLook, regionStructuresRunner, regionTerrainRunner, repaintGroupRunner, terrainRunner, estimatePaint, type Fidelity } from './mappaint.js';
 import type { Store, Tx } from './store.js';
+import { printNames, printableCount } from './labels.js';
 
 // ---------------------------------------------------------------------------
 // The command layer: the single way anything (UI, MCP, chat) changes a campaign.
@@ -677,6 +679,15 @@ def({
 
 const xy = { x: z.number(), y: z.number() };
 const sideEnum = z.enum(EDGE_SIDES as unknown as [EdgeSide, ...EdgeSide[]]);
+const LABEL_STYLE_IDS = LABEL_STYLES.map((x) => x.id) as [string, ...string[]];
+const labelProps = {
+  place: z.enum(LABEL_PLACES).optional().describe('where the name stands relative to its area: above, middle (default) or below'),
+  style: z.string().optional().describe(`lettering style: ${LABEL_STYLES.map((x) => `${x.id} (${x.setting})`).join('; ')}. Without one the map’s own style (op lettering) is used.`),
+  show: z.boolean().optional().describe('false = keeps the name in the editor but does not print it on the picture'),
+  size: z.enum(LABEL_SIZES).optional(),
+};
+const labelArea = z.object({ x: z.number(), y: z.number(), w: z.number(), h: z.number() }).describe('the area the name belongs to (a room, a courtyard…): battle maps in grid cells, region maps in px. The name then stands above / in the middle of / below it.');
+
 const mapOps = z.discriminatedUnion('op', [
   z.object({ op: z.literal('room'), ...xy, w: z.number().int().min(1), h: z.number().int().min(1), floor: z.string().optional(), name: z.string().optional() }).describe('Rectangular room: floor + auto walls (also separates it from touching rooms).'),
   z.object({ op: z.literal('corridor'), from: z.tuple([z.number(), z.number()]), to: z.tuple([z.number(), z.number()]), width: z.number().int().min(1).max(6).optional(), floor: z.string().optional() }).describe('L-shaped corridor, horizontal first then vertical.'),
@@ -688,16 +699,17 @@ const mapOps = z.discriminatedUnion('op', [
   z.object({ op: z.literal('open'), ...xy, side: sideEnum }).describe('Remove the wall on a cell edge (wide passage).'),
   z.object({ op: z.literal('prop'), kind: z.enum(PROP_KINDS as unknown as [PropKind, ...PropKind[]]), ...xy, w: z.number().optional(), h: z.number().optional(), rot: z.number().optional(), label: z.string().optional(), id: z.string().optional() }).describe('Furniture/object at cell x,y spanning w x h cells.'),
   z.object({ op: z.literal('remove_prop'), id: z.string() }),
-  z.object({ op: z.literal('label'), ...xy, text: z.string() }).describe('Room name in the plan preview (never painted into the image).'),
+  z.object({ op: z.literal('label'), ...xy, text: z.string(), ...labelProps, area: labelArea.optional() }).describe('A name on the map (a room, a place, a secret entrance…). Never painted by the AI: it is set as lettering in one of the library styles, in the plan preview and — when the GM prints the names (print_map_names) — on top of the finished picture. x,y = the point it stands at; or give area and it stands above / in the middle of / below that area (x,y is then taken from it). Works on region maps too (px).'),
   z.object({ op: z.literal('token'), ...xy, kind: z.enum(['pc', 'npc', 'enemy']).optional(), label: z.string().optional(), node: z.string().optional() }).describe('Token start position for the VTT: pc = player start marker (only sent if the VTT wants it), npc / enemy = figures. node = the id of an NPC / enemy node that STANDS for this token (normally one that belongs to the place — see get_map → characters): the token is then that character, and pushing the map sends its sheet along so the VTT ties token and combat entry together. Then kind and label can be left out (they come from the node).'),
   z.object({ op: z.literal('remove_label'), ...xy }).describe('Remove labels near x,y.'),
   z.object({ op: z.literal('remove_token'), ...xy }),
   z.object({ op: z.literal('move_area'), ...xy, w: z.number().int().min(1), h: z.number().int().min(1), dx: z.number().int(), dy: z.number().int(), copy: z.boolean().optional() }).describe('Move (or copy, copy:true) everything inside the rectangle x,y,w,h — floor, walls, doors, props, tokens, labels — by dx,dy cells. Use it to shift a room or furniture group instead of redrawing it. The target must stay inside the grid; empty rock does not overwrite existing floor.'),
   z.object({ op: z.literal('edit_prop'), id: z.string(), kind: z.enum(PROP_KINDS as unknown as [PropKind, ...PropKind[]]).optional(), x: z.number().optional(), y: z.number().optional(), w: z.number().optional(), h: z.number().optional(), rot: z.number().nullable().optional(), label: z.string().nullable().optional() }).describe('Change an existing prop (get its id from get_map): move it, resize it (swap w/h to rotate), change its kind or label.'),
   z.object({ op: z.literal('edit_token'), ...xy, to: z.tuple([z.number(), z.number()]).optional(), kind: z.enum(['pc', 'npc', 'enemy']).optional(), label: z.string().nullable().optional(), node: z.string().nullable().optional() }).describe('Move or relabel the token that stands at cell x,y, or tie it to an NPC / enemy node (node) / cut the tie (node: null).'),
-  z.object({ op: z.literal('edit_label'), ...xy, to: z.tuple([z.number(), z.number()]).optional(), text: z.string().optional() }).describe('Move or rename the label near x,y.'),
+  z.object({ op: z.literal('edit_label'), ...xy, to: z.tuple([z.number(), z.number()]).optional(), text: z.string().optional(), place: labelProps.place, style: z.string().nullable().optional().describe('lettering style id, or null for the map’s own style'), show: labelProps.show, size: z.enum(LABEL_SIZES).nullable().optional(), area: labelArea.nullable().optional() }).describe('Move, rename or restyle the label near x,y (place, style, show, size, area; null clears style / size / area).'),
+  z.object({ op: z.literal('lettering'), style: z.string() }).describe(`The map’s lettering style — what every name without a style of its own is printed in: ${LABEL_STYLES.map((x) => `${x.id} (${x.setting})`).join('; ')}.`),
   z.object({ op: z.literal('resize'), cols: z.number().int(), rows: z.number().int() }),
-  z.object({ op: z.literal('shape'), type: z.enum(['polygon', 'path', 'ellipse', 'pin']), kind: z.string().min(1), points: z.array(z.tuple([z.number(), z.number()])).min(1), r: z.number().optional(), width: z.number().optional(), label: z.string().optional(), prompt: z.string().optional(), id: z.string().optional() }).describe(`REGION maps: draw a shape of a KIND. type: polygon (areas), path (roads, rivers: a multi-point line, width = line width in px), ellipse (points[0]=centre, points[1]=[rx,ry]; a round place or blob; 'pin' is only accepted for old callers: points[0]=centre, r=radius, it is stored as the round area). Places are AREAS, never dots: give a city, camp or hospital a polygon or an ellipse of a believable size (a village ~30x30 px, a town ~60x45, a city ~100x70 on a 1344x768 canvas). Coordinates in canvas pixels. kind is a terrain (painted first, as part of the land: ${REGION_KINDS.filter((k) => k.layer === 'terrain').map((k) => k.id).join(', ')}) or a structure (inpainted into exactly the shape afterwards: ${REGION_KINDS.filter((k) => k.layer === 'structure').map((k) => k.id).join(', ')}), or a custom kind of the map (define_kind). label = a place name (shown in the editor only), prompt = what the GM wants painted there in their own words (structures; optional).`),
+  z.object({ op: z.literal('shape'), type: z.enum(['polygon', 'path', 'ellipse', 'pin']), kind: z.string().min(1), points: z.array(z.tuple([z.number(), z.number()])).min(1), r: z.number().optional(), width: z.number().optional(), label: z.string().optional(), prompt: z.string().optional(), id: z.string().optional(), labelPlace: z.enum(LABEL_PLACES).optional(), labelStyle: z.string().nullable().optional(), labelSize: z.enum(LABEL_SIZES).nullable().optional(), labelShow: z.boolean().optional() }).describe(`REGION maps: draw a shape of a KIND. type: polygon (areas), path (roads, rivers: a multi-point line, width = line width in px), ellipse (points[0]=centre, points[1]=[rx,ry]; a round place or blob; 'pin' is only accepted for old callers: points[0]=centre, r=radius, it is stored as the round area). Places are AREAS, never dots: give a city, camp or hospital a polygon or an ellipse of a believable size (a village ~30x30 px, a town ~60x45, a city ~100x70 on a 1344x768 canvas). Coordinates in canvas pixels. kind is a terrain (painted first, as part of the land: ${REGION_KINDS.filter((k) => k.layer === 'terrain').map((k) => k.id).join(', ')}) or a structure (inpainted into exactly the shape afterwards: ${REGION_KINDS.filter((k) => k.layer === 'structure').map((k) => k.id).join(', ')}), or a custom kind of the map (define_kind). label = a place name (lettering: shown in the editor and printed on the picture by print_map_names, never painted by the AI; labelPlace above/middle/below its area — default: structures below, land and water middle —, labelStyle a lettering style id, labelShow false = not printed), prompt = what the GM wants painted there in their own words (structures; optional).`),
   z.object({ op: z.literal('remove_shape'), id: z.string() }),
   z.object({ op: z.literal('define_kind'), kind: z.object({ id: z.string().optional(), name: z.string(), layer: z.enum(['terrain', 'structure']), geometry: z.enum(['area', 'line', 'spot']).optional(), color: z.string().describe('hex colour like #c04a2a, distinct from the other kinds of the map'), prompt: z.string().describe('what it looks like from above, a few words'), width: z.number().optional(), size: z.number().optional(), lineGroup: z.enum(['water', 'land']).optional().describe('lines only: painted in the water pass (rivers, canals) or the land pass (roads, rails, paths, bridges); default derived from the name') }) }).describe('REGION maps: define a custom kind (terrain or structure) for this map, e.g. a "radioactive crater" terrain or a "wizard tower" structure. Then draw shapes with kind = its id.'),
   z.object({ op: z.literal('remove_kind'), id: z.string() }),
@@ -778,6 +790,7 @@ def({
       paintMode: tx.store.images?.mapMode() ?? 'quick', terrains: m.terrains ?? [], terrainPick: m.terrainPick ?? null,
       ...(m.kind === 'battle' ? { propGroups: groupProps(m).length } : { structureGroups: regionGroupInfos(m), linePasses: lineStages(m).map((st) => `${st.group}: ${st.names.join(', ')}`), view: m.view ?? 'default' }),
       consolidate: m.consolidate !== false,
+      lettering: { style: m.lettering?.style ?? DEFAULT_LABEL_STYLE, namesToPrint: printableCount(m), printedPictures: m.lettered ?? {}, styles: LABEL_STYLES.map((x) => `${x.id} — ${x.name} (${x.setting})`) },
       ...(m.kind === 'region' && (tx.state.meta.regionKinds ?? []).length ? { libraryKinds: (tx.state.meta.regionKinds ?? []).map((k) => ({ id: k.id, name: k.name, layer: k.layer, geometry: k.geometry, inThisMap: !!m.kinds?.some((x) => x.id === k.id) })) } : {}),
       propPrompts: Object.fromEntries(Object.entries(m.propPrompts ?? {}).filter(([, e]) => e.text.trim()).map(([id, e]) => [id, { kind: e.kind, text: e.text, by: e.ai ? 'ai' : 'gm' }])),
     };
@@ -1085,6 +1098,42 @@ def({
     tx.store.emitMap(m, tx.actor);
     tx.label = `Accepted the terrain of “${m.name}” as its picture`;
     return { ok: true, file };
+  },
+});
+
+def({
+  name: 'print_map_names',
+  description: 'Print the names of a map (its labels, and on region maps the names of shapes) on top of a finished picture, in the lettering styles of the library — the AI never paints text. Adds a NEW picture (the painted one is not touched) to the location’s images and the map’s renders, so it is what the VTT push and the exports use from then on. Names with show:false are left off. render = a file from get_map’s renders (default: the latest; a picture that already has names is printed again from the painted picture it was made from). Call it after the final painting step, or again after the names or their styles changed. Set the map’s style with edit_map op lettering, single names with label / edit_label / shape ops.',
+  shape: { mapId: z.string(), render: z.string().optional() },
+  run(tx, a) {
+    const m = tx.store.maps.get(a.mapId);
+    const nodeId = mapNodeId(tx, m.id);
+    if (!nodeId) throw new Error(`Map "${m.id}" is not attached to any node.`);
+    const given = a.render ?? m.renders.at(-1);
+    if (!given) throw new Error('This map has no painted picture yet — paint it first (render_map / paint_map_props).');
+    if (!m.renders.includes(given)) throw new Error(`"${given}" is not one of this map’s renders (${m.renders.join(', ') || 'none'}).`);
+    const lettered = m.lettered ?? {};
+    const source = lettered[given] ?? given;
+    if (!printableCount(m)) throw new Error('This map has no names to print: add labels (edit_map op label) or name shapes on a region map first.');
+    const dir = tx.store.imagesDir;
+    const out = printNames(m, fs.readFileSync(path.join(dir, source)));
+    // same names + styles on the same picture = the same file (a changed name makes a new one: pictures are cached for good by the browser)
+    const sig = createHash('sha1').update(JSON.stringify([m.kind, m.labels, m.kind === 'region' ? m.shapes.map((s) => [s.id, s.label, s.labelPlace, s.labelStyle, s.labelSize, s.labelShow, s.points]) : 0, m.lettering, source])).digest('hex').slice(0, 8);
+    const file = `${path.basename(source, path.extname(source))}-names-${sig}.png`;
+    fs.writeFileSync(path.join(dir, file), out);
+    // an earlier print of the same painted picture is replaced in the lists (its file stays in the gallery folder)
+    const old = Object.entries(lettered).filter(([f, src]) => src === source && f !== file).map(([f]) => f);
+    const next = { ...lettered, [file]: source };
+    for (const f of old) delete next[f];
+    m.lettered = next;
+    m.renders = [...m.renders.filter((f) => !old.includes(f) && f !== file), file];
+    tx.store.images?.record(file, { nodeId, prompt: `Names printed on ${source}`, seed: 0, kind: 'map' as ImageKind, w: 0, h: 0, at: new Date().toISOString() });
+    tx.store.maps.save(m, { backup: 'none' });
+    const n = tx.requireNode(nodeId);
+    tx.putNode({ ...n, images: [...n.images.filter((f) => !old.includes(f) && f !== file), file], updatedAt: now() });
+    tx.store.emitMap(m, tx.actor);
+    tx.label = `Printed the names on “${m.name}”`;
+    return { file, from: source, names: printableCount(m), style: m.lettering?.style ?? DEFAULT_LABEL_STYLE, note: 'A new picture with the names printed on it was added; the painted one is unchanged.' };
   },
 });
 

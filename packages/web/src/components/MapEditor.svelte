@@ -4,10 +4,11 @@
   // edit_map uses, so the GM and the AI can work on one map at the same time.
   import { onMount, untrack } from 'svelte';
   import {
-    DOOR_KINDS, FLOORS, NODE_TYPE_INFO, PROP_KINDS, REGION_KINDS, applyOps, canon, charactersOfPlace, cleanKind, derivedWalls, fallbackGroupPrompt, fallbackRegionPrompt, groupProps, groupRegion, imageSize, isLineKind, pointInShape, regionKind, renderSvg, strokeWidth, tokenKindOf,
-    type DoorKind, type MapDoc, type MapOp, type PropKind, type RegionKind,
+    DEFAULT_LABEL_STYLE, DOOR_KINDS, FLOORS, LABEL_PLACES, LABEL_STYLES, NODE_TYPE_INFO, PROP_KINDS, REGION_KINDS, applyOps, canon, charactersOfPlace, cleanKind, derivedWalls, fallbackGroupPrompt, fallbackRegionPrompt, getLabelContext, groupProps, groupRegion, imageSize, isLineKind, lettersSvg, placedLabels, pointInShape, regionKind, renderSvg, strokeWidth, tokenKindOf,
+    type DoorKind, type LabelPlace, type LabelSize, type MapDoc, type MapOp, type Placed, type PropKind, type RegionKind,
   } from '@pnp/shared';
   import { app, cmd, say, selectNode, sendChat } from '../lib/app.svelte';
+  import { initLabels, labelState } from '../lib/labels.svelte';
 
   let { mapId, onclose }: { mapId: string; onclose: () => void } = $props();
 
@@ -58,7 +59,25 @@
     lines: allKinds.filter((k) => k.geometry === 'line'),
     structures: allKinds.filter((k) => k.layer === 'structure' && k.geometry !== 'line'),
   });
-  const svgStr = $derived(doc && view !== 'painted' && view !== 'terrain' ? renderSvg(doc, view === 'control' ? (staged ? 'terrain' : 'control') : 'preview') : '');
+  const svgStr = $derived.by(() => {
+    void labelState.version; // the names are lettering: redraw when the fonts / materials arrive
+    return doc && view !== 'painted' && view !== 'terrain' ? renderSvg(doc, view === 'control' ? (staged ? 'terrain' : 'control') : 'preview') : '';
+  });
+  // names: where they stand (for picking them on the map) and, over a painted picture, their lettering
+  const placed = $derived.by((): Placed[] => {
+    void labelState.version;
+    return doc ? placedLabels(doc, getLabelContext()) : [];
+  });
+  let showNames = $state(true);
+  const selNameBox = $derived.by(() => {
+    if (!doc || sel?.t !== 'label') return null;
+    const l = doc.labels.find((x) => Math.hypot(x.x - (sel as { x: number }).x, x.y - (sel as { y: number }).y) < 0.01);
+    const q = l ? placed.find((x) => x.src.t === 'label' && x.src.i === doc!.labels.indexOf(l)) : undefined;
+    return q ? { x: q.x - 3, y: q.y - 3, w: q.w + 6, h: q.h + 6 } : null;
+  });
+  const printable = $derived(placed.filter((q) => q.shown).length);
+  const styleInfo = (id?: string) => LABEL_STYLES.find((x) => x.id === (id ?? DEFAULT_LABEL_STYLE)) ?? LABEL_STYLES[0];
+  let printing = $state(false);
   const node = $derived(nodeId ? app.nodes[nodeId] : undefined);
   // the NPCs and enemies that belong to this place, and the tokens that stand for them
   const cast = $derived(doc && battle ? charactersOfPlace({ nodes: app.nodes, graph: app.graph }, doc.id) : []);
@@ -88,6 +107,7 @@
 
   // ---- load / save --------------------------------------------------------------------
   onMount(() => {
+    initLabels();
     void (async () => {
       const r = await fetch(`/api/maps/${encodeURIComponent(mapId)}`);
       if (!r.ok) {
@@ -184,6 +204,7 @@
       if (ev.actor === 'user') {
         // the GM's own edit: keep the local plan, but take what jobs and commands changed on the server (painted results, terrains)
         doc.renders = ev.map.renders;
+        doc.lettered = ev.map.lettered;
         doc.terrains = ev.map.terrains;
         doc.terrainPick = ev.map.terrainPick;
         doc.paintPrompt = ev.map.paintPrompt;
@@ -302,11 +323,21 @@
     if (tok) return { t: 'token', x: tok.x, y: tok.y };
     const prop = [...doc.props].reverse().find((q) => c.x >= q.x && c.x < q.x + (q.w ?? 1) && c.y >= q.y && c.y < q.y + (q.h ?? 1));
     if (prop) return { t: 'prop', id: prop.id };
-    const gx = p.x / dim.cell, gy = p.y / dim.cell;
-    const lab = doc.labels.find((l) => Math.abs(l.x - gx) < Math.max(0.8, l.text.length * 0.17) && Math.abs(l.y - gy) < 0.45);
-    if (lab) return { t: 'label', x: lab.x, y: lab.y };
+    const hitName = hitLabel(p);
+    if (hitName) return { t: 'label', x: hitName.x, y: hitName.y };
     const ed = edgeOf(p);
     if (ed && doc.doors.some((d) => d.x === ed.x && d.y === ed.y && d.side === ed.side)) return { t: 'door', ...ed };
+    return null;
+  }
+
+  /** a free name (map.labels entry) under the point p (px of the picture) */
+  function hitLabel(p: { x: number; y: number }) {
+    if (!doc) return null;
+    for (const q of [...placed].reverse()) {
+      if (q.src.t !== 'label' || p.x < q.x - 3 || p.x > q.x + q.w + 3 || p.y < q.y - 3 || p.y > q.y + q.h + 3) continue;
+      const l = doc.labels[q.src.i];
+      if (l) return l;
+    }
     return null;
   }
 
@@ -318,7 +349,11 @@
     if (s.t === 'area') return s;
     if (s.t === 'prop') return selProp ? { x: selProp.x, y: selProp.y, w: selProp.w ?? 1, h: selProp.h ?? 1 } : null;
     if (s.t === 'token') return { x: s.x, y: s.y, w: 1, h: 1 };
-    if (s.t === 'label') return { x: Math.floor(s.x - 0.5), y: Math.floor(s.y - 0.5), w: Math.max(1, Math.ceil((selLabel?.text.length ?? 4) * 0.34)), h: 1 };
+    if (s.t === 'label') {
+      const i = selLabel ? doc.labels.indexOf(selLabel) : -1;
+      const q = placed.find((x) => x.src.t === 'label' && x.src.i === i);
+      return q ? { x: q.x / dim.cell, y: q.y / dim.cell, w: q.w / dim.cell, h: q.h / dim.cell } : { x: s.x - 0.5, y: s.y - 0.5, w: 1, h: 1 };
+    }
     return null;
   }
 
@@ -424,7 +459,7 @@
     if (!selShape || !doc) return;
     const s = selShape;
     const id = rid(s.kind);
-    if (edit(withKind(s.kind, { op: 'shape', type: s.type, kind: s.kind, points: translateShape(s, 24, 24), r: s.r, width: s.width, label: s.label, prompt: s.prompt, id }))) selected = id;
+    if (edit(withKind(s.kind, { op: 'shape', type: s.type, kind: s.kind, points: translateShape(s, 24, 24), r: s.r, width: s.width, label: s.label, prompt: s.prompt, labelPlace: s.labelPlace, labelStyle: s.labelStyle, labelSize: s.labelSize, labelShow: s.labelShow, id }))) selected = id;
   }
   function reorderShape(toFront: boolean) {
     if (!selShape || !doc) return;
@@ -543,12 +578,7 @@
         edit([{ op: 'prop', kind: propKind, x: Math.min(c.x, doc.grid.cols - fw), y: Math.min(c.y, doc.grid.rows - fh), w: fw, h: fh }]);
       } else if (tool === 'label') {
         if (!inGrid(c)) return;
-        const near = doc.labels.find((l) => Math.hypot(l.x - (c.x + 0.5), l.y - (c.y + 0.5)) < 1.2);
-        const text = prompt('Label (leave empty to remove)', near?.text ?? '');
-        if (text === null) return;
-        const ops: MapOp[] = near ? [{ op: 'remove_label', x: near.x, y: near.y }] : [];
-        if (text.trim()) ops.push({ op: 'label', x: c.x + 0.5, y: c.y + 0.5, text: text.trim() });
-        if (ops.length) edit(ops);
+        drag = { a: p, b: p }; // a click names the point, dragging a rectangle names that area (see pointer up)
       } else if (tool === 'select') {
         if (!inGrid(c)) { sel = null; return; }
         if (sel?.t === 'area' && inArea(c, sel)) { moving = { from: c, dx: 0, dy: 0, copy: e.altKey }; return; }
@@ -583,8 +613,15 @@
       pushUndo();
       strokePts = [pt];
       painting = true;
-    } else if (tool === 'ellipse' || tool === 'pin') drag = { a: p, b: p };
+    } else if (tool === 'ellipse' || tool === 'pin' || tool === 'label') drag = { a: p, b: p };
     else if (tool === 'select') {
+      const nm = hitLabel(p);
+      if (nm) {
+        selected = null;
+        sel = { t: 'label', x: nm.x, y: nm.y };
+        return;
+      }
+      sel = null;
       // a handle of the selected shape: drag it (Alt-click removes the point)
       if (selShape && (selShape.type === 'polygon' || selShape.type === 'path')) {
         const reach = 10 / k;
@@ -674,6 +711,8 @@
         const x0 = Math.max(0, Math.min(a.x, b.x)), y0 = Math.max(0, Math.min(a.y, b.y));
         const x1 = Math.min(doc.grid.cols - 1, Math.max(a.x, b.x)), y1 = Math.min(doc.grid.rows - 1, Math.max(a.y, b.y));
         if (x1 >= x0 && y1 >= y0) edit([autoWalls ? { op: 'room', x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1, floor: FLOORS[floor as keyof typeof FLOORS].name } : { op: 'fill', x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1, floor: FLOORS[floor as keyof typeof FLOORS].name }]);
+      } else if (tool === 'label') {
+        nameAt(d);
       } else if (battle && tool === 'select') {
         const a = cellOf(d.a), b = cellOf(d.b);
         const x0 = Math.max(0, Math.min(a.x, b.x)), y0 = Math.max(0, Math.min(a.y, b.y));
@@ -692,6 +731,56 @@
       }
     }
   }
+
+  /** the Name tool: a click names a point, a drag names the rectangle (an area the name stands above / in / below) */
+  function nameAt(d: { a: { x: number; y: number }; b: { x: number; y: number } }) {
+    if (!doc) return;
+    const dist = Math.hypot(d.b.x - d.a.x, d.b.y - d.a.y);
+    let at: { x: number; y: number }, area: { x: number; y: number; w: number; h: number } | undefined;
+    if (battle) {
+      const a = cellOf(d.a), b = cellOf(d.b);
+      if (a.x !== b.x || a.y !== b.y) {
+        const x0 = Math.max(0, Math.min(a.x, b.x)), y0 = Math.max(0, Math.min(a.y, b.y));
+        const x1 = Math.min(doc.grid.cols - 1, Math.max(a.x, b.x)), y1 = Math.min(doc.grid.rows - 1, Math.max(a.y, b.y));
+        area = { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+        at = { x: x0 + area.w / 2, y: y0 + area.h / 2 };
+      } else at = { x: a.x + 0.5, y: a.y + 0.5 };
+    } else if (dist > 12) {
+      const x0 = Math.min(d.a.x, d.b.x), y0 = Math.min(d.a.y, d.b.y);
+      area = { x: Math.round(x0), y: Math.round(y0), w: Math.round(Math.abs(d.b.x - d.a.x)), h: Math.round(Math.abs(d.b.y - d.a.y)) };
+      at = { x: area.x + area.w / 2, y: area.y + area.h / 2 };
+    } else at = { x: Math.round(d.a.x), y: Math.round(d.a.y) };
+    const near = area ? undefined : hitLabel(d.a);
+    const text = prompt('Name (leave empty to remove)', near?.text ?? '');
+    if (text === null) return;
+    const ops: MapOp[] = near ? [{ op: 'remove_label', x: near.x, y: near.y }] : [];
+    if (text.trim()) ops.push({ op: 'label', x: at.x, y: at.y, text: text.trim(), ...(area ? { area, place: 'above' as const } : {}) });
+    if (ops.length && edit(ops)) sel = text.trim() ? { t: 'label', x: at.x, y: at.y } : null;
+  }
+
+  const setLettering = (style: string) => void edit([{ op: 'lettering', style }]);
+  /** print the names onto the finished picture (a new picture; the painted one stays as it is) */
+  async function printOnPicture() {
+    if (!doc || printing) return;
+    printing = true;
+    try {
+      clearTimeout(saveTimer);
+      if (dirty) await save();
+      const r = await cmd<{ file: string }>('print_map_names', { mapId: doc.id, ...(painted ? { render: painted } : {}) });
+      if (r) {
+        const j = await (await fetch(`/api/maps/${encodeURIComponent(doc.id)}`)).json();
+        doc.renders = j.map.renders;
+        doc.lettered = j.map.lettered;
+        shownRender = r.file;
+        view = 'painted';
+        say('Names printed on a new picture');
+      }
+    } finally {
+      printing = false;
+    }
+  }
+  /** a name's printing options: where it stands, its lettering style and size, and whether it is printed at all */
+  type NameSet = { place?: LabelPlace; style?: string | null; size?: LabelSize | null; show?: boolean };
 
   function finishPending() {
     if (!pending.length) return;
@@ -934,6 +1023,7 @@
   const cancel = () => fetch('/api/images/cancel', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
 
   const painted = $derived(shownRender ?? doc?.renders.at(-1) ?? null);
+  const lettersStr = $derived(doc && (view === 'painted' || view === 'terrain') && showNames && !(view === 'painted' && painted && doc.lettered?.[painted]) ? lettersSvg(placed, { all: true }) : '');
   const FIDELITY_HINT = { faithful: 'keeps the plan exactly, flatter look', balanced: 'good mix of fidelity and painting', painterly: 'richest look, may drift from the plan' };
   const TERRAIN_HINT = { faithful: 'sticks closely to your walls and floors', balanced: 'creative, but keeps the rooms where they are', painterly: 'freest — rooms may shift a little' };
 
@@ -944,6 +1034,7 @@
     { id: 'brush', label: 'Scribble', icon: '✎', tip: 'Freehand brush in the chosen terrain' },
     { id: 'ellipse', label: 'Blob', icon: '◯', tip: 'Drag from the centre outwards' },
     { id: 'pin', label: 'Stamp', icon: '⚑', tip: 'Click to put a structure of its usual size; drag outwards to size it' },
+    { id: 'label', label: 'Name', icon: 'Aa', tip: 'Click to name a spot; drag a rectangle to name an area — the name then stands above, in the middle of or below it. Printed on the finished picture in the style you choose (Map tab).' },
   ];
   const battleTools: { id: Tool; label: string; icon: string; tip: string }[] = [
     { id: 'select', label: 'Select', icon: '⇱', tip: 'Click a prop, token, label or door — or drag a box over cells. Drag to move (Alt = copy), arrow keys nudge, Delete removes, R rotates, Ctrl+D duplicates' },
@@ -953,12 +1044,52 @@
     { id: 'door', label: 'Door', icon: '🚪', tip: 'Click a cell border (click again to remove)' },
     { id: 'wall', label: 'Wall', icon: '▮', tip: 'Add/remove an inner wall on a cell border' },
     { id: 'prop', label: 'Prop', icon: '▣', tip: 'Place furniture (R rotates, click to remove)' },
-    { id: 'label', label: 'Label', icon: 'Aa', tip: 'Room names (preview only)' },
+    { id: 'label', label: 'Name', icon: 'Aa', tip: 'Click a cell to name it; drag a rectangle (a room) to name an area — the name then stands above, in the middle of or below it. Printed on the finished picture in the style you choose (Map tab).' },
     { id: 'token', label: 'Token', icon: '●', tip: 'Start positions (for the VTT)' },
   ];
 </script>
 
 <svelte:window {onkeydown} {onkeyup} />
+
+{#snippet nameOpts(place: LabelPlace, style: string | undefined, size: LabelSize | undefined, show: boolean, set: (p: NameSet) => void)}
+  <div class="label">Stands</div>
+  <div class="seg w">{#each LABEL_PLACES as pl}<button class:on={place === pl} onclick={() => set({ place: pl })}>{pl}</button>{/each}</div>
+  <div class="label">Lettering style</div>
+  <select class="field" value={style ?? ''} onchange={(e) => set({ style: e.currentTarget.value || null })}>
+    <option value="">The map’s style ({styleInfo(doc?.lettering?.style).name})</option>
+    {#each LABEL_STYLES as st}<option value={st.id}>{st.name}</option>{/each}
+  </select>
+  <div class="label">Size</div>
+  <div class="seg w">{#each ['sm', 'md', 'lg'] as sz}<button class:on={(size ?? 'md') === sz} onclick={() => set({ size: sz === 'md' ? null : (sz as LabelSize) })}>{sz === 'sm' ? 'small' : sz === 'md' ? 'normal' : 'large'}</button>{/each}</div>
+  <label class="chk"><input type="checkbox" checked={show} onchange={(e) => set({ show: e.currentTarget.checked })} /> print it on the picture</label>
+{/snippet}
+
+{#snippet namePanel(L: MapDoc['labels'][number], withDelete: boolean)}
+  <div class="label">Name</div>
+  <input class="field" value={L.text} onchange={(e) => edit([{ op: 'edit_label', x: L.x, y: L.y, text: e.currentTarget.value }])} />
+  {@render nameOpts(L.place ?? 'middle', L.style, L.size, L.show !== false, (p) => edit([{ op: 'edit_label', x: L.x, y: L.y, ...p }]))}
+  {#if L.area}
+    <div class="dim">Stands next to an area of {Math.round(L.area.w)}×{Math.round(L.area.h)}{battle ? ' cells' : ' px'}. <button class="lnk" onclick={() => edit([{ op: 'edit_label', x: L.x, y: L.y, area: null }])}>Make it a point</button></div>
+  {:else}
+    <div class="dim">A point. With the Name tool, drag a rectangle to give a name an area — then it can stand above or below it.</div>
+  {/if}
+  {#if withDelete}<div class="acts"><button class="btn sm danger" onclick={() => { edit([{ op: 'remove_label', x: L.x, y: L.y }]); sel = null; }}>Delete</button></div>{/if}
+{/snippet}
+
+{#snippet namesSection()}
+  <div class="step"><b>Aa</b> Names on the picture <span class="dim">({printable} to print)</span></div>
+  <select class="field" value={doc?.lettering?.style ?? DEFAULT_LABEL_STYLE} onchange={(e) => setLettering(e.currentTarget.value)}>
+    {#each LABEL_STYLES as st}<option value={st.id}>{st.name} — {st.setting}</option>{/each}
+  </select>
+  <p class="dim">The AI never paints text: names are set as lettering over the finished picture, in the style of your choice (a single name can have its own). They also show in the plan.</p>
+  {#if doc?.renders.length}
+    <button class="btn sm" disabled={printing || !printable} onclick={printOnPicture}>{printing ? 'Printing…' : 'Print the names on the picture'}</button>
+    <p class="dim">A new picture is added; the painted one stays as it is. Print again after changing names or styles.</p>
+  {:else}
+    <p class="dim">Once the map is painted, the names can be printed on the finished picture.</p>
+  {/if}
+  <label class="chk"><input type="checkbox" bind:checked={showNames} /> show the names over painted pictures</label>
+{/snippet}
 
 <div class="scrim" role="presentation">
   <div class="modal" data-tour="map-modal" role="dialog" aria-label="Map editor">
@@ -1020,8 +1151,7 @@
                 <input class="field" value={selToken.label ?? ''} onchange={(e) => edit([{ op: 'edit_token', x: selToken.x, y: selToken.y, label: e.currentTarget.value }])} />
                 <div class="acts"><button class="btn sm" onclick={duplicateSel}>⧉ Duplicate</button><button class="btn sm danger" onclick={deleteSel}>Delete</button></div>
               {:else if sel.t === 'label' && selLabel}
-                <div class="label">Label</div>
-                <input class="field" value={selLabel.text} onchange={(e) => edit([{ op: 'edit_label', x: selLabel.x, y: selLabel.y, text: e.currentTarget.value }])} />
+                {@render namePanel(selLabel, false)}
                 <div class="acts"><button class="btn sm danger" onclick={deleteSel}>Delete</button></div>
               {:else if sel.t === 'door' && selDoor}
                 <div class="label">Door</div>
@@ -1083,6 +1213,7 @@
             {:else}
               {@html svgStr}
             {/if}
+            {#if lettersStr}<svg class="ov" width={dim.w} height={dim.h} viewBox="0 0 {dim.w} {dim.h}">{@html lettersStr}</svg>{/if}
             <svg class="ov" width={dim.w} height={dim.h} viewBox="0 0 {dim.w} {dim.h}">
               {#if (showGroups || hotGroup) && (view === 'plan' || view === 'control' || view === 'terrain')}
                 {#each groups.filter((x) => showGroups || x.id === hotGroup) as g (g.id)}
@@ -1112,7 +1243,7 @@
                   {/if}
                 {/if}
                 {#if moveBox}<rect class="ghost" x={moveBox.x * dim.cell} y={moveBox.y * dim.cell} width={moveBox.w * dim.cell} height={moveBox.h * dim.cell} />{/if}
-                {#if drag && (tool === 'rect' || tool === 'select')}
+                {#if drag && (tool === 'rect' || tool === 'select' || tool === 'label')}
                   {@const a = cellOf(drag.a)}{@const b = cellOf(drag.b)}
                   <rect class="sel" x={Math.min(a.x, b.x) * dim.cell} y={Math.min(a.y, b.y) * dim.cell} width={(Math.abs(a.x - b.x) + 1) * dim.cell} height={(Math.abs(a.y - b.y) + 1) * dim.cell} />
                 {/if}
@@ -1123,6 +1254,8 @@
                   {#each pending as q}<circle cx={q[0]} cy={q[1]} r="4" class="dot" />{/each}
                 {/if}
                 {#if strokePts.length}<polyline class="pend" style="stroke:{kindOf(kind).color};stroke-width:{brush};opacity:.7;fill:none" points={strokePts.map((q) => q.join(',')).join(' ')} />{/if}
+                {#if drag && tool === 'label'}<rect class="sel" x={Math.min(drag.a.x, drag.b.x)} y={Math.min(drag.a.y, drag.b.y)} width={Math.abs(drag.b.x - drag.a.x)} height={Math.abs(drag.b.y - drag.a.y)} />{/if}
+                {#if sel?.t === 'label' && selNameBox}<rect class="sel" x={selNameBox.x} y={selNameBox.y} width={selNameBox.w} height={selNameBox.h} />{/if}
                 {#if drag && tool === 'ellipse'}<ellipse class="sel" cx={drag.a.x} cy={drag.a.y} rx={Math.abs(drag.b.x - drag.a.x)} ry={Math.abs(drag.b.y - drag.a.y)} />{/if}
                 {#if drag && tool === 'pin'}<circle class="sel" cx={drag.a.x} cy={drag.a.y} r={Math.hypot(drag.b.x - drag.a.x, drag.b.y - drag.a.y) > 8 ? Math.hypot(drag.b.x - drag.a.x, drag.b.y - drag.a.y) : (stampR ?? kindOf(kind).size ?? 20)} style="fill:{kindOf(kind).color};fill-opacity:.35" />{:else if pointerPos && tool === 'pin' && !painting}<circle class="sel" cx={pointerPos.x} cy={pointerPos.y} r={stampR ?? kindOf(kind).size ?? 20} style="fill:{kindOf(kind).color};fill-opacity:.25" />{/if}
                 {#if selected}
@@ -1334,6 +1467,9 @@
             </div>
           {/if}
 
+          {#if sel?.t === 'label' && selLabel}
+            {@render namePanel(selLabel, true)}
+          {/if}
           {#if selShape}
             {@const sk = kindOf(selShape.kind)}
             <div class="step"><b>▣</b> Selected: {sk.name}{selShape.label ? ` · “${selShape.label}”` : ''}</div>
@@ -1343,8 +1479,12 @@
               <optgroup label="Lines">{#each palette.lines as o}<option value={o.id}>{o.name}</option>{/each}</optgroup>
               <optgroup label="Structures">{#each palette.structures as o}<option value={o.id}>{o.name}</option>{/each}</optgroup>
             </select>
-            <div class="label">Name <span class="dim">(only in the editor)</span></div>
+            <div class="label">Name <span class="dim">(printed on the picture, in the lettering style of your choice)</span></div>
             <input class="field" value={selShape.label ?? ''} placeholder="Eldoria, the Greywater…" onchange={(e) => updateShape(selShape!, { label: e.currentTarget.value.trim() })} />
+            {#if selShape.label}
+              {@const S = selShape}
+              {@render nameOpts(S.labelPlace ?? (sk.layer === 'structure' ? 'below' : 'middle'), S.labelStyle, S.labelSize, S.labelShow !== false, (p) => updateShape(S, { ...(p.place ? { labelPlace: p.place } : {}), ...('style' in p ? { labelStyle: p.style ?? undefined } : {}), ...('size' in p ? { labelSize: p.size ?? undefined } : {}), ...('show' in p ? { labelShow: p.show ? undefined : false } : {}) }))}
+            {/if}
             {#if sk.layer === 'structure'}
               <div class="label">What should be painted here? <span class="dim">(optional)</span></div>
               <textarea class="field" rows="3" placeholder={`${sk.prompt} — leave empty and the AI writes it from the world's style`} value={selShape.prompt ?? ''} onchange={(e) => updateShape(selShape!, { prompt: e.currentTarget.value.trim() })}></textarea>
@@ -1402,6 +1542,7 @@
             <p class="dim">Walls follow the floor automatically. Cell borders: 1 cell = {doc.grid.unit} ft.</p>
             <div class="label">Tokens <span class="dim">({doc.tokens.length}, {doc.tokens.filter((t) => t.node).length} tied to a character)</span></div>
             <p class="dim">Tokens that stand for an NPC or enemy are tied to it: the map goes to the VTT together with their sheets. Player starts are only sent if the VTT asks for them.</p>
+            {@render namesSection()}
           {:else}
             <div class="label">Canvas size</div>
             <div class="seg w">
@@ -1412,6 +1553,7 @@
             <div class="label">Background</div>
             <div class="sw">{#each palette.terrain as t}<button class:on={(doc.background ?? 'land') === t.id} style="--c:{t.color}" title={t.name} onclick={() => setBackground(t.id)}></button>{/each}</div>
             <p class="dim">Draw areas, rivers, roads and places in the <b>Draw</b> tab; the image model turns the sketch into a painted map. Rivers and roads are painted exactly along your lines.</p>
+            {@render namesSection()}
           {/if}
         {/if}
       </aside>
@@ -1476,6 +1618,7 @@
   .seg button.on { background: var(--accent); color: #0a0c11; font-weight: 600; }
   .seg button:disabled { opacity: 0.35; }
   .seg.w { width: 100%; }
+  .tools .seg button { padding: 3px 5px; font-size: 11px; }
   .row { display: flex; gap: 6px; align-items: center; }
   .row .field { width: auto; }
   .num { display: grid; gap: 3px; font-size: 11.5px; color: var(--text-dim); flex: 1; }

@@ -71,7 +71,10 @@ describe('places are areas, not dots', () => {
 describe('region maps from before kinds existed', () => {
   it('render byte-identical in the editor and in the one-pass control picture', () => {
     expect(renderSvg(oldMap(), 'control')).toBe(GOLDEN.control);
-    expect(renderSvg(oldMap(), 'preview')).toBe(GOLDEN.preview);
+    // the names are lettering now (labelstyles.ts); everything else of the editor picture is unchanged
+    const bare = (s: string) => s.replace(/<g class="letters">.*<\/g>(?=<\/svg>)/, '').replace(/<text\b[^>]*>[^<]*<\/text>/g, '');
+    expect(bare(renderSvg(oldMap(), 'preview'))).toBe(bare(GOLDEN.preview));
+    expect(renderSvg(oldMap(), 'preview')).toContain('class="letters"');
   });
 
   it('every old terrain id is still a built-in kind with its old colour', () => {
