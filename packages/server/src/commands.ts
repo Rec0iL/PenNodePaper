@@ -1,13 +1,13 @@
 import { z, type ZodRawShape } from 'zod';
 import { DEFAULT_GROUP, charactersOfPlace, isCharacterNode, tokenKindOf, dieLabel, soundsOf, entryLine, fragmentName, parseEntry, rollLog, rollTable, seeded, tableEntries, tableFaces, clockOf, lintStory, nextPlayedSeq, playedPath, playerWiki, wikiMarkdown, slugify, storyStatus, validateSheet, visitsOf, type Visit } from '@pnp/shared';
-import type { Actor, Backend, DoorKind, EdgeKind, EdgeSide, ImageKind, MapDoc, NodeStatus, NodeType, PropKind, StoryEdge, StoryNode, TerrainKind } from '@pnp/shared';
-import { DOOR_KINDS, EDGE_KINDS, FRAME_PALETTE, EDGE_SIDES, IMAGE_KINDS, NODE_STATUSES, NODE_TYPES, PROP_KINDS, TERRAINS } from '@pnp/shared';
+import type { Actor, Backend, DoorKind, EdgeKind, EdgeSide, ImageKind, MapDoc, NodeStatus, NodeType, PropKind, StoryEdge, StoryNode } from '@pnp/shared';
+import { DOOR_KINDS, EDGE_KINDS, FRAME_PALETTE, EDGE_SIDES, IMAGE_KINDS, NODE_STATUSES, NODE_TYPES, PROP_KINDS, REGION_KINDS, cleanKind, isKnownKind } from '@pnp/shared';
 import fs from 'node:fs';
 import path from 'node:path';
 import { BINDER_SECTIONS, MAX_COPIES, binderParts, renderPdf } from './binder.js';
 import { buildBundle, characterFromNode, mapCast, handoutFromNode, illustrationsOf, kinetikSession, roleFor, sceneFromImage, sceneFromMap, sheetOf, wantsPlayerStarts } from './vtt.js';
-import { CONTROL_LEGEND, REGION_LEGEND, applyOps, groupProps, imageSize, renderSvg, toPng, type MapOp } from './maps.js';
-import { propsRunner, readTerrain, terrainRunner, estimatePaint, type Fidelity } from './mappaint.js';
+import { CONTROL_LEGEND, applyOps, groupProps, groupRegion, imageSize, lineStages, regionLegend, renderSvg, toPng, type MapOp } from './maps.js';
+import { propsRunner, readTerrain, regionGroupInfos, regionLook, regionStructuresRunner, regionTerrainRunner, repaintGroupRunner, terrainRunner, estimatePaint, type Fidelity } from './mappaint.js';
 import type { Store, Tx } from './store.js';
 
 // ---------------------------------------------------------------------------
@@ -604,6 +604,47 @@ def({
 });
 
 def({
+  name: 'set_region_kind',
+  description:
+    'Define (or change) a kind of the CAMPAIGN\'s region-map library: a terrain (an area painted first: "radioactive crater"), a line (a river-like or road-like path with a width: "ley line") or a structure (an area inpainted afterwards: "wizard tower"). Every region map of the campaign can use it; a map copies the kinds it uses. id is made from the name. color = hex like #7cff3a (distinct from the other kinds); prompt = what it looks like from above in a few words (the campaign style decides the art look); width = default line width px (lines), size = default radius px (spots).',
+  shape: {
+    name: z.string().min(1),
+    id: z.string().optional(),
+    layer: z.enum(['terrain', 'structure']),
+    geometry: z.enum(['area', 'line', 'spot']).optional(),
+    color: z.string(),
+    prompt: z.string(),
+    width: z.number().optional(),
+    size: z.number().optional(),
+    lineGroup: z.enum(['water', 'land']).optional().describe('lines only: water pass (rivers, canals) or land pass (roads, rails, paths, bridges); default derived from the name'),
+  },
+  run(tx, a) {
+    const k = cleanKind(a);
+    if (REGION_KINDS.some((b) => b.id === k.id)) throw new Error(`"${k.id}" is a built-in kind; pick another name.`);
+    const m = tx.state.meta;
+    m.regionKinds = [...(m.regionKinds ?? []).filter((x) => x.id !== k.id), k];
+    tx.store.persistence.writeMeta(m);
+    tx.store.emitMeta();
+    return { kind: k };
+  },
+});
+
+def({
+  name: 'remove_region_kind',
+  description: 'Remove a kind from the campaign\'s region-map library (maps that already use it keep their copy).',
+  shape: { id: z.string() },
+  run(tx, a) {
+    const m = tx.state.meta;
+    if (!(m.regionKinds ?? []).some((k) => k.id === a.id)) throw new Error(`No library kind "${a.id}". Known: ${(m.regionKinds ?? []).map((k) => k.id).join(', ') || '(none)'}`);
+    m.regionKinds = (m.regionKinds ?? []).filter((k) => k.id !== a.id);
+    if (!m.regionKinds.length) delete m.regionKinds;
+    tx.store.persistence.writeMeta(m);
+    tx.store.emitMeta();
+    return { ok: true };
+  },
+});
+
+def({
   name: 'set_cover_image',
   description: 'Choose which of a node’s images is the cover (shown on the card).',
   shape: { nodeId: z.string(), file: z.string() },
@@ -656,8 +697,10 @@ const mapOps = z.discriminatedUnion('op', [
   z.object({ op: z.literal('edit_token'), ...xy, to: z.tuple([z.number(), z.number()]).optional(), kind: z.enum(['pc', 'npc', 'enemy']).optional(), label: z.string().nullable().optional(), node: z.string().nullable().optional() }).describe('Move or relabel the token that stands at cell x,y, or tie it to an NPC / enemy node (node) / cut the tie (node: null).'),
   z.object({ op: z.literal('edit_label'), ...xy, to: z.tuple([z.number(), z.number()]).optional(), text: z.string().optional() }).describe('Move or rename the label near x,y.'),
   z.object({ op: z.literal('resize'), cols: z.number().int(), rows: z.number().int() }),
-  z.object({ op: z.literal('shape'), type: z.enum(['polygon', 'path', 'ellipse', 'pin']), kind: z.enum(Object.keys(TERRAINS) as [TerrainKind, ...TerrainKind[]]), points: z.array(z.tuple([z.number(), z.number()])).min(1), r: z.number().optional(), width: z.number().optional(), label: z.string().optional(), id: z.string().optional() }).describe('REGION maps: polygon (areas), path (roads, rivers), ellipse (points[0]=centre, points[1]=[rx,ry]), pin (towns). Coordinates in canvas pixels.'),
+  z.object({ op: z.literal('shape'), type: z.enum(['polygon', 'path', 'ellipse']), kind: z.string().min(1), points: z.array(z.tuple([z.number(), z.number()])).min(1), r: z.number().optional(), width: z.number().optional(), label: z.string().optional(), prompt: z.string().optional(), id: z.string().optional() }).describe(`REGION maps: draw a shape of a KIND. type: polygon (areas), path (roads, rivers: a multi-point line, width = line width in px), ellipse (points[0]=centre, points[1]=[rx,ry]; a round place or blob). Places are AREAS, never dots: give a city, camp or hospital a polygon or an ellipse of a believable size (a village ~30x30 px, a town ~60x45, a city ~100x70 on a 1344x768 canvas). Coordinates in canvas pixels. kind is a terrain (painted first, as part of the land: ${REGION_KINDS.filter((k) => k.layer === 'terrain').map((k) => k.id).join(', ')}) or a structure (inpainted into exactly the shape afterwards: ${REGION_KINDS.filter((k) => k.layer === 'structure').map((k) => k.id).join(', ')}), or a custom kind of the map (define_kind). label = a place name (shown in the editor only), prompt = what the GM wants painted there in their own words (structures; optional).`),
   z.object({ op: z.literal('remove_shape'), id: z.string() }),
+  z.object({ op: z.literal('define_kind'), kind: z.object({ id: z.string().optional(), name: z.string(), layer: z.enum(['terrain', 'structure']), geometry: z.enum(['area', 'line', 'spot']).optional(), color: z.string().describe('hex colour like #c04a2a, distinct from the other kinds of the map'), prompt: z.string().describe('what it looks like from above, a few words'), width: z.number().optional(), size: z.number().optional(), lineGroup: z.enum(['water', 'land']).optional().describe('lines only: painted in the water pass (rivers, canals) or the land pass (roads, rails, paths, bridges); default derived from the name') }) }).describe('REGION maps: define a custom kind (terrain or structure) for this map, e.g. a "radioactive crater" terrain or a "wizard tower" structure. Then draw shapes with kind = its id.'),
+  z.object({ op: z.literal('remove_kind'), id: z.string() }),
   z.object({ op: z.literal('clear_all') }),
 ]);
 
@@ -732,7 +775,11 @@ def({
     return {
       mapId: m.id, nodeId: mapNodeId(tx, m.id), view: tx.store.maps.describe(m), renders: m.renders,
       ...(m.kind === 'battle' ? { characters: charactersOfPlace(tx.state, m.id).map((n) => ({ nodeId: n.id, name: n.title, type: n.type, placedAt: m.tokens.filter((t) => t.node === n.id).map((t) => `${t.x},${t.y}`) })) } : {}),
-      ...(m.kind === 'battle' ? { paintMode: tx.store.images?.mapMode() ?? 'quick', terrains: m.terrains ?? [], terrainPick: m.terrainPick ?? null, propGroups: groupProps(m).length, propPrompts: Object.fromEntries(Object.entries(m.propPrompts ?? {}).filter(([, e]) => e.text.trim()).map(([id, e]) => [id, { kind: e.kind, text: e.text, by: e.ai ? 'ai' : 'gm' }])) } : {}),
+      paintMode: tx.store.images?.mapMode() ?? 'quick', terrains: m.terrains ?? [], terrainPick: m.terrainPick ?? null,
+      ...(m.kind === 'battle' ? { propGroups: groupProps(m).length } : { structureGroups: regionGroupInfos(m), linePasses: lineStages(m).map((st) => `${st.group}: ${st.names.join(', ')}`), view: m.view ?? 'default' }),
+      consolidate: m.consolidate !== false,
+      ...(m.kind === 'region' && (tx.state.meta.regionKinds ?? []).length ? { libraryKinds: (tx.state.meta.regionKinds ?? []).map((k) => ({ id: k.id, name: k.name, layer: k.layer, geometry: k.geometry, inThisMap: !!m.kinds?.some((x) => x.id === k.id) })) } : {}),
+      propPrompts: Object.fromEntries(Object.entries(m.propPrompts ?? {}).filter(([, e]) => e.text.trim()).map(([id, e]) => [id, { kind: e.kind, text: e.text, by: e.ai ? 'ai' : 'gm' }])),
     };
   },
 });
@@ -764,7 +811,17 @@ def({
       }
       return op;
     });
-    const r = applyOps(m, ops as unknown as MapOp[]);
+    // a shape of a library kind brings its definition along (the map keeps its own copy, so renders and exports stay self-contained)
+    const lib = tx.state.meta.regionKinds ?? [];
+    const withKinds: Record<string, unknown>[] = [];
+    for (const op of ops) {
+      if (op.op === 'shape' && typeof op.kind === 'string' && !isKnownKind(op.kind, m.kinds)) {
+        const k = lib.find((x) => x.id === op.kind);
+        if (k && !withKinds.some((w) => w.op === 'define_kind' && (w.kind as { id: string }).id === k.id)) withKinds.push({ op: 'define_kind', kind: k });
+      }
+      withKinds.push(op);
+    }
+    const r = applyOps(m, withKinds as unknown as MapOp[]);
     tx.store.maps.save(m);
     tx.store.emitMap(m, tx.actor);
     return { applied: r.ok, notes: r.notes };
@@ -774,7 +831,7 @@ def({
 def({
   name: 'render_map',
   description:
-    'Paint a map with the local image model. Queues and returns immediately (check with image_queue). prompt = what the place looks like (materials, mood, lighting, setting) — NOT the layout, that comes from the map. fidelity: faithful (keeps the plan exactly, flatter look), balanced (default), painterly (richer, may drift from the plan). HOW depends on the GM’s setting “Map painting” (get_map shows paintMode). quick: one img2img pass from a colour-coded render of the plan; the finished image is added to the location’s images and the map’s renders (~1.5 min per variant). precise (battle maps only): step 1 of 2 — it paints only the EMPTY TERRAIN (floors, walls, doors; no props) and the candidates appear in the map’s terrains; the GM judges them in the map editor, picks one (or has you render again), and only then do you call paint_map_props. Tell the GM that the precise way takes a while (minutes, depending on their computer) and that they decide after each step.',
+    'Paint a map with the local image model. Queues and returns immediately (check with image_queue). prompt = what the place looks like (materials, mood, lighting, setting) — NOT the layout, that comes from the map. fidelity: faithful (keeps the plan exactly, flatter look), balanced (default), painterly (richer, may drift from the plan). HOW depends on the GM’s setting “Map painting” (get_map shows paintMode). quick: one img2img pass from a colour-coded render of the plan; the finished image is added to the location’s images and the map’s renders (~1.5 min per variant). precise (battle AND region maps): step 1 of 2 — it paints only the EMPTY TERRAIN (battle: floors, walls, doors, no props; region: the land — water, forest, desert… — plus the LINES: first the rivers, then roads, railways, paths and bridges, each drawn exactly along its path with the width the map gives it; no structures) and the candidates appear in the map’s terrains; the GM judges them in the map editor, picks one (or has you render again), and only then do you call paint_map_props. Tell the GM that the precise way takes a while (minutes, depending on their computer) and that they decide after each step.',
   shape: {
     mapId: z.string(),
     prompt: z.string().min(8),
@@ -784,6 +841,8 @@ def({
     seed: z.number().int().optional(),
     backend: z.enum(['claude', 'agy']).optional().describe('precise way only: which AI writes the description of the empty place and, later, the prop prompts (default: whoever calls)'),
     model: z.string().optional(),
+    view: z.enum(['default', 'strict', 'plan']).optional().describe('region maps, precise way: how flat the terrain is painted. default = natural painted-map look (best for most maps), strict = straight top-down plan view (best for snow/mountain maps), plan = hillshaded survey map. Stored on the map.'),
+    consolidate: z.boolean().optional().describe('precise way: after the objects are painted, blend them into the picture (a ring around every object is repainted; shadows appear). Default true; stored on the map.'),
   },
   run(tx, a) {
     const images = tx.store.images;
@@ -793,15 +852,26 @@ def({
     if (!nodeId) throw new Error(`Map "${m.id}" is not attached to any node. Create it with create_map (with nodeId to attach it to a location).`);
     const maps = tx.store.maps;
     const { w, h } = imageSize(m);
-    if (m.kind === 'battle' && images.mapMode() === 'staged') {
+    if (images.mapMode() === 'staged') {
       // precise way, step 1: the empty terrain. Candidates stay with the map (not on the node) until the GM picks one.
       const place = a.prompt.trim();
       const fidelity: Fidelity = a.fidelity ?? 'balanced';
       m.paintPrompt = place;
+      if (m.kind === 'region' && a.view !== undefined) {
+        if (a.view === 'default') delete m.view;
+        else m.view = a.view;
+      }
+      if (a.consolidate !== undefined) {
+        if (a.consolidate) delete m.consolidate;
+        else m.consolidate = false;
+      }
       maps.save(m, { backup: 'none' });
+      const runner = m.kind === 'region'
+        ? regionTerrainRunner(images, m, place, fidelity, paintAi(a, tx.actor), { denoise: a.denoise })
+        : terrainRunner(images, m, place, fidelity, paintAi(a, tx.actor));
       const jobs = images.enqueueCustom({
         nodeId, kind: 'map', prompt: place, w, h, variants: a.variants, seed: a.seed, actor: tx.actor, fileTag: 'terrain', attach: false,
-        runner: terrainRunner(images, m, place, fidelity, paintAi(a, tx.actor)),
+        runner,
         after: (file) => {
           const cur = maps.get(m.id);
           cur.terrains = [...(cur.terrains ?? []), file].slice(-8);
@@ -811,12 +881,14 @@ def({
       });
       return {
         queued: jobs.map((j) => ({ jobId: j.id, seed: j.seed })), size: `${w}x${h}`, step: '1 of 2: empty terrain',
-        note: 'Precise painting, step 1 of 2. Queued the EMPTY terrain (no props yet). When it is done the GM looks at it in the map editor (Paint tab) and picks one or has it painted again; then call paint_map_props. This takes a while — minutes, depending on the computer.',
+        note: `Precise painting, step 1 of 2. Queued the EMPTY terrain (${m.kind === 'region' ? 'no structures yet' : 'no props yet'}). When it is done the GM looks at it in the map editor (Paint tab) and picks one or has it painted again; then call paint_map_props. This takes a while — minutes, depending on the computer.`,
       };
     }
     const denoise = a.denoise ?? FIDELITY[a.fidelity ?? 'balanced'];
     const style = images.style();
-    const prompt = `${a.prompt.trim().replace(/[.\s]+$/, '')}. ${style.mapSuffix}. ${m.kind === 'battle' ? CONTROL_LEGEND : REGION_LEGEND}`;
+    const prompt = m.kind === 'battle'
+      ? `${a.prompt.trim().replace(/[.\s]+$/, '')}. ${style.mapSuffix}. ${CONTROL_LEGEND}`
+      : `${a.prompt.trim().replace(/[.\s]+$/, '')}. ${regionLook(style)}. ${regionLegend(m)}`;
     const negative = `${style.negative}, characters, people, perspective view, 3d render, photograph`;
     const png = toPng(renderSvg(m, 'control'));
     const jobs = images.enqueueCustom({
@@ -872,7 +944,7 @@ def({
 def({
   name: 'paint_map_props',
   description:
-    'Precise map painting, step 2 of 2 (only after the GM accepted a terrain from render_map): paints every prop group onto the picked terrain, each into exactly its place. Touching props of the same kind are ONE object (a row of tables = one long table, 5 barrels in a row = a row of barrels). Queues and returns immediately; the finished picture is added to the location’s images and the map’s renders like a normal render, and the GM judges it and can have it painted again. A map with many props takes a while (about 40 s per prop group on a mid-range 16 GB card). prompts is optional (group id g1, g2… -> what to paint there); normally leave it out and the AI writes them from the map and the place description. The GM can write the prompt of any group by hand in the map editor (the Props step); those are kept in the map’s propPrompts, used as they are and only the other groups are written by you — do not overwrite them.',
+    'Precise map painting, step 2 of 2 (only after the GM accepted a terrain from render_map): paints every prop group (battle maps) or STRUCTURE group (region maps: towns, camps, hospitals, castles… and any custom structure kind) onto the picked terrain, each into exactly its place. Touching props of the same kind are ONE object (a row of tables = one long table, 5 barrels in a row = a row of barrels); on region maps touching shapes of one kind are one group (a cluster of huts = one village). Queues and returns immediately; the finished picture is added to the location’s images and the map’s renders like a normal render, and the GM judges it and can have it painted again. A map with many props takes a while (about 40–60 s per prop group on a mid-range 16 GB card, plus one pass at the end that blends the objects into the picture: consolidate). prompts is optional (group id g1, g2… -> what to paint there); normally leave it out and the AI writes them from the map and the place description. The GM can write the prompt of any group by hand in the map editor (the Props step); those are kept in the map’s propPrompts, used as they are and only the other groups are written by you — do not overwrite them.',
   shape: {
     mapId: z.string(),
     prompt: z.string().optional().describe('what the place looks like (default: the description given to the terrain step)'),
@@ -882,16 +954,22 @@ def({
     backend: z.enum(['claude', 'agy']).optional(),
     model: z.string().optional(),
     prompts: z.record(z.string(), z.string()).optional(),
+    consolidate: z.boolean().optional().describe('blend the objects into the picture at the end (default: the map\'s setting, normally on)'),
   },
   run(tx, a) {
     const images = tx.store.images;
     if (!images) throw new Error('Image generation is not available.');
     const m = tx.store.maps.get(a.mapId);
-    if (m.kind !== 'battle') throw new Error('Only battle maps have props to paint.');
     const nodeId = mapNodeId(tx, m.id);
     if (!nodeId) throw new Error(`Map "${m.id}" is not attached to any node. Create it with create_map (with nodeId to attach it to a location).`);
-    const groups = groupProps(m);
-    if (!groups.length) throw new Error('This map has no props to paint. Add some with edit_map — or accept the terrain as the finished picture with accept_map_terrain.');
+    const region = m.kind === 'region';
+    if (a.consolidate !== undefined) {
+      if (a.consolidate) delete m.consolidate;
+      else m.consolidate = false;
+      tx.store.maps.save(m, { backup: 'none' });
+    }
+    const groups = region ? groupRegion(m) : groupProps(m);
+    if (!groups.length) throw new Error(region ? 'This map has no structures to paint. Draw some with edit_map (shape with a structure kind) — or accept the terrain as the finished picture with accept_map_terrain.' : 'This map has no props to paint. Add some with edit_map — or accept the terrain as the finished picture with accept_map_terrain.');
     const file = pickTerrain(m, a.terrain);
     const terrain = readTerrain(tx.store.imagesDir, file);
     const place = (a.prompt ?? m.paintPrompt ?? '').trim();
@@ -899,19 +977,82 @@ def({
     const { w, h } = imageSize(m);
     const maps = tx.store.maps;
     const est = estimatePaint(images, m);
+    // keep what was written, so the GM can read and change it in the editor (only where the GM has no wording of their own)
+    const keepWritten = (written: Record<string, string>) => {
+      const cur = maps.get(m.id);
+      const now = region ? groupRegion(cur) : groupProps(cur);
+      const pp = { ...(cur.propPrompts ?? {}) };
+      for (const g of now) {
+        const text = written[g.id];
+        if (!text || g.kind !== groups.find((x) => x.id === g.id)?.kind) continue;
+        if (pp[g.id]?.text?.trim() && !pp[g.id].ai && pp[g.id].kind === g.kind) continue;
+        pp[g.id] = { kind: g.kind, text, ai: true };
+      }
+      cur.propPrompts = pp;
+      maps.save(cur, { backup: 'none' });
+      tx.store.emitMap(cur, tx.actor);
+    };
+    const given = { ...gmPrompts(m, groups), ...a.prompts };
+    const runner = region
+      ? regionStructuresRunner(images, m, terrain, place, paintAi(a, tx.actor), given, keepWritten)
+      : propsRunner(images, m, terrain, place, paintAi(a, tx.actor), given, keepWritten);
     const jobs = images.enqueueCustom({
       nodeId, kind: 'map', prompt: place, w, h, variants: a.variants, seed: a.seed, actor: tx.actor,
-      runner: propsRunner(images, m, terrain, place, paintAi(a, tx.actor), { ...gmPrompts(m, groups), ...a.prompts }, (written) => {
-        // keep what was written, so the GM can read and change it in the editor (only where the GM has no wording of their own)
+      runner,
+      after: (out) => {
         const cur = maps.get(m.id);
-        const now = groupProps(cur);
+        cur.renders.push(out);
+        maps.save(cur, { backup: 'none' });
+        tx.store.emitMap(cur, tx.actor);
+      },
+    });
+    return {
+      queued: jobs.map((j) => ({ jobId: j.id, seed: j.seed })), groups: groups.length, terrain: file,
+      estimate: `about ${Math.max(1, Math.round((est.propsSeconds / 60) * jobs.length))} min${est.measured ? '' : ' (a guess until an image has been made on this computer)'}`,
+      note: `Precise painting, step 2 of 2: painting the ${region ? 'structure' : 'prop'} groups one after the other. The result becomes the node cover; the GM judges it and can have it painted again.`,
+    };
+  },
+});
+
+def({
+  name: 'repaint_map_group',
+  description:
+    'Paint ONE prop / structure group of a finished map again with a new seed (the rest of the picture is not touched; with the blend on, only the ring around this group is blended again). Use it when one object came out wrong (a broken chair, a melted barrel) instead of repainting everything. group = the id from get_map (g1, g2…; propGroups / structureGroups). It paints on the latest render of the map (or `render`, a file from get_map’s renders) and adds a new render, so the GM can compare. The wording the GM wrote for the group is used as written, else what was written for it before (the same object, a new roll); `prompt` overrides it for this run only. ~40–60 s.',
+  shape: {
+    mapId: z.string(),
+    group: z.string().describe('group id: g1, g2…'),
+    prompt: z.string().optional().describe('what to paint in this group, this run only'),
+    render: z.string().optional().describe('the picture to repaint on (default: the latest render of the map)'),
+    seed: z.number().int().optional(),
+    backend: z.enum(['claude', 'agy']).optional(),
+    model: z.string().optional(),
+  },
+  run(tx, a) {
+    const images = tx.store.images;
+    if (!images) throw new Error('Image generation is not available.');
+    const m = tx.store.maps.get(a.mapId);
+    const nodeId = mapNodeId(tx, m.id);
+    if (!nodeId) throw new Error(`Map "${m.id}" is not attached to any node.`);
+    const file = a.render ?? m.renders.at(-1);
+    if (!file) throw new Error('This map has no finished picture yet — paint the props (paint_map_props) first.');
+    if (!m.renders.includes(file)) throw new Error(`"${file}" is not one of this map’s renders (${m.renders.join(', ') || 'none'}).`);
+    const region = m.kind === 'region';
+    const groups = region ? groupRegion(m) : groupProps(m);
+    const g = groups.find((x) => x.id === a.group);
+    if (!g) throw new Error(`This map has no group "${a.group}". Groups: ${groups.map((x) => `${x.id} (${x.kind})`).join(', ') || 'none'}.`);
+    const place = (m.paintPrompt ?? '').trim() || m.name;
+    const picture = readTerrain(tx.store.imagesDir, file);
+    const { w, h } = imageSize(m);
+    const maps = tx.store.maps;
+    // the GM's wording, else what was written for this group before (the same object, a new roll)
+    const stored = m.propPrompts?.[a.group];
+    const text = a.prompt ?? (stored && stored.kind === g.kind && stored.text.trim() ? stored.text : undefined);
+    const jobs = images.enqueueCustom({
+      nodeId, kind: 'map', prompt: place, w, h, seed: a.seed, actor: tx.actor,
+      runner: repaintGroupRunner(images, m, picture, a.group, place, paintAi(a, tx.actor), text, (written) => {
+        const cur = maps.get(m.id);
         const pp = { ...(cur.propPrompts ?? {}) };
-        for (const g of now) {
-          const text = written[g.id];
-          if (!text || g.kind !== groups.find((x) => x.id === g.id)?.kind) continue;
-          if (pp[g.id]?.text?.trim() && !pp[g.id].ai && pp[g.id].kind === g.kind) continue;
-          pp[g.id] = { kind: g.kind, text, ai: true };
-        }
+        if (!pp[a.group]?.text?.trim()) pp[a.group] = { kind: g.kind, text: written, ai: true };
         cur.propPrompts = pp;
         maps.save(cur, { backup: 'none' });
         tx.store.emitMap(cur, tx.actor);
@@ -923,11 +1064,8 @@ def({
         tx.store.emitMap(cur, tx.actor);
       },
     });
-    return {
-      queued: jobs.map((j) => ({ jobId: j.id, seed: j.seed })), groups: groups.length, terrain: file,
-      estimate: `about ${Math.max(1, Math.round((est.propsSeconds / 60) * jobs.length))} min${est.measured ? '' : ' (a guess until an image has been made on this computer)'}`,
-      note: 'Precise painting, step 2 of 2: painting the prop groups one after the other. The result becomes the node cover; the GM judges it and can have it painted again.',
-    };
+    tx.label = `Repainted group ${a.group} of “${m.name}”`;
+    return { queued: jobs.map((j) => ({ jobId: j.id, seed: j.seed })), group: a.group, kind: g.kind, on: file, note: 'Painting this one group again on the latest picture; the result is added as a new render and becomes the node cover.' };
   },
 });
 

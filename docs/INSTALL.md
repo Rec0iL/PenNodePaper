@@ -31,12 +31,34 @@ PenNodePaper runs entirely on your machine. The server only listens on `127.0.0.
 
 ## ⚡ Quick start
 
-If you already have Node.js 20+ and git:
+**1. Get the code** — download the ZIP from GitHub (green **Code** button → *Download ZIP*) and unpack it, **or** clone it:
 
 ```bash
 git clone https://github.com/Rec0iL/PenNodePaper.git
-cd PenNodePaper
+```
+
+**2. Go into the folder** — the one that contains `package.json`. All commands below must be run there; `npm install` anywhere else does nothing useful:
+
+```bash
+cd PenNodePaper          # or PenNodePaper-main if you downloaded the ZIP
+```
+
+**3. Install** — with the install script (checks Node 20+, runs `npm install`, builds the UI and offers the optional helper tools: WeasyPrint, ImageMagick, poppler, unzip, git; it never installs the AI assistants or ComfyUI):
+
+```bash
+./scripts/install.sh            # --check only reports · --yes answers yes · --only-tools skips Node/npm and only installs the helper tools
+                                # works with apt, dnf, pacman, zypper, apk and Homebrew
+```
+
+or by hand, if you only want the core:
+
+```bash
 npm install
+```
+
+**4. Start**
+
+```bash
 npm run dev
 ```
 

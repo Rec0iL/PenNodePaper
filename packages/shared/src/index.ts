@@ -1,4 +1,5 @@
 import type { MapDoc } from './mapdata.js';
+import type { RegionKind } from './regionkinds.js';
 
 // Shared domain types for PenNodePaper (server, web, MCP all speak this).
 
@@ -123,6 +124,8 @@ export interface StyleConfig {
   negative: string;
   /** Appended to map render prompts instead of `suffix` (maps need a plan view, not cinematic lighting). */
   mapSuffix: string;
+  /** How region (overland) maps look; absent = derived from `mapSuffix`. */
+  regionSuffix?: string;
 }
 
 export const DEFAULT_STYLE: StyleConfig = {
@@ -175,6 +178,8 @@ export interface CampaignMeta {
   createdAt: string;
   comfy?: Partial<ComfyConfig>;
   style?: Partial<StyleConfig>;
+  /** the campaign's own region-map kinds (terrain / line / structure types the GM defined); a map copies the ones it uses */
+  regionKinds?: RegionKind[];
   backup?: Partial<BackupSettings>;
   /** live = AI edits stand until you undo them; review = they wait for your Accept / Reject after the AI is done */
   aiMode?: 'live' | 'review';
@@ -388,6 +393,10 @@ export function slugify(input: string): string {
 export * from './mapdata.js';
 export * from './maps.js';
 export * from './mapgroups.js';
+export * from './regionkinds.js';
+export * from './regiongroups.js';
+export * from './regionlines.js';
+export * from './consolidate.js';
 export * from './vtt.js';
 export * from './sheet.js';
 export * from './story.js';

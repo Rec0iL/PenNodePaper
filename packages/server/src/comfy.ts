@@ -128,7 +128,8 @@ export class Comfy {
     wf['20'] = { class_type: 'LoadImage', inputs: { image: o.image } };
     wf['21'] = { class_type: 'ImageCrop', inputs: { image: ['20', 0], width: c.w, height: c.h, x: c.x, y: c.y } };
     wf['22'] = { class_type: 'ImageScale', inputs: { image: ['21', 0], upscale_method: 'lanczos', width: c.tw, height: c.th, crop: 'disabled' } };
-    wf['23'] = { class_type: 'VAEEncode', inputs: { pixels: ['22', 0], vae: ['3', 0] } };
+    const pixels: [string, number] = ['22', 0];
+    wf['23'] = { class_type: 'VAEEncode', inputs: { pixels, vae: ['3', 0] } };
     wf['24'] = { class_type: 'LoadImageMask', inputs: { image: o.sampleMask, channel: 'red' } };
     wf['25'] = { class_type: 'SetLatentNoiseMask', inputs: { samples: ['23', 0], mask: ['24', 0] } };
     wf['13'].inputs.latent_image = ['25', 0];
@@ -136,6 +137,30 @@ export class Comfy {
     wf['26'] = { class_type: 'ImageScale', inputs: { image: ['14', 0], upscale_method: 'lanczos', width: c.w, height: c.h, crop: 'disabled' } };
     wf['27'] = { class_type: 'LoadImageMask', inputs: { image: o.composeMask, channel: 'red' } };
     wf['28'] = { class_type: 'ImageCompositeMasked', inputs: { destination: ['20', 0], source: ['26', 0], x: c.x, y: c.y, resize_source: false, mask: ['27', 0] } };
+    wf['15'].inputs.images = ['28', 0];
+    return wf;
+  }
+
+  /**
+   * Whole-picture img2img whose result is only kept inside a soft mask; everything else is the untouched original.
+   *   corridor: `image` (the picture with the lines drawn in) is sampled completely, `original` (without them) is what
+   *             stays outside the corridor — rivers, roads (low denoise, ~0.30).
+   *   ring:     `image` is the picture itself; only the masked ring is re-sampled (noise mask) and kept — consolidating (0.7 / 0.8).
+   * `image`, `original` and `mask` are names of files uploaded to ComfyUI (the mask uses the red channel).
+   */
+  buildRefine(prompt: string, negative: string, o: { image: string; original?: string; mask: string; noiseMask?: boolean }, seed: number, denoise: number): Workflow {
+    const wf = this.buildImg2Img(prompt, negative, o.image, seed, denoise);
+    wf['24'] = { class_type: 'LoadImageMask', inputs: { image: o.mask, channel: 'red' } };
+    if (o.noiseMask) {
+      wf['25'] = { class_type: 'SetLatentNoiseMask', inputs: { samples: ['21', 0], mask: ['24', 0] } };
+      wf['13'].inputs.latent_image = ['25', 0];
+    }
+    let destination: [string, number] = ['20', 0];
+    if (o.original) {
+      wf['50'] = { class_type: 'LoadImage', inputs: { image: o.original } };
+      destination = ['50', 0];
+    }
+    wf['28'] = { class_type: 'ImageCompositeMasked', inputs: { destination, source: ['14', 0], x: 0, y: 0, resize_source: false, mask: ['24', 0] } };
     wf['15'].inputs.images = ['28', 0];
     return wf;
   }

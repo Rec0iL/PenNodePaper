@@ -97,15 +97,39 @@ The AI is a shortcut for the same actions, never the only way to them.
 
 ## 🚀 Install & run
 
+PenNodePaper runs from its own folder; nothing is installed system-wide. The only thing you need up front is [**Node.js 20+**](https://nodejs.org/en/download) (check with `node -v`).
+
+**1. Get the code** — either way works:
+
+* **Download:** on the GitHub page click the green **Code** button → **Download ZIP**, then unpack it somewhere (your home folder is fine). The folder is called `PenNodePaper-main` or similar.
+* **or clone it with git:** `git clone https://github.com/Rec0iL/PenNodePaper.git` — this creates the folder `PenNodePaper`.
+
+**2. Open a terminal inside that folder** — the one that contains `package.json`:
+
 ```bash
-npm install
-npm run dev          # server :4317 + web UI :5273  -> open http://localhost:5273
-npm run build && npm start   # production: server serves the built UI on :4317
+cd PenNodePaper          # or the name of the folder you unpacked, e.g. cd PenNodePaper-main
+```
+
+> ⚠️ Every command below has to be run **in that folder**. `npm install` somewhere else (your home folder, the folder *containing* the project…) does nothing useful.
+
+**3. Install what it needs** (Linux, macOS, or Windows via [WSL2](docs/INSTALL.md#-windows)):
+
+```bash
+./scripts/install.sh          # or: bash scripts/install.sh   (if your unzip dropped the executable bit)
+```
+
+The script checks your Node version, runs `npm install` for you, builds the web UI, and then offers to install the optional helper tools with your system's package manager — **apt** (Debian, Ubuntu, Mint…), **dnf** (Fedora), **pacman** (Arch, Manjaro…), **zypper** (openSUSE), **apk** (Alpine) or **Homebrew** (macOS); it shows the exact command and asks first: **WeasyPrint** (the GM binder PDF), **ImageMagick** (thumbnails), **poppler + unzip** (importing `.pdf` / `.docx` notes), **git**. It does **not** install the AI assistants or ComfyUI — those are yours to pick and log in to (see [The AI](#-the-ai-optional)); it only tells you whether it can see them. `./scripts/install.sh --check` just reports and changes nothing; `--yes` says yes to everything. The core app needs nothing but Node: `npm install` alone is enough to write and run a whole campaign by hand.
+
+**4. Start it**
+
+```bash
+npm run dev                  # development: server :4317 + web UI :5273 -> open http://localhost:5273
+npm run build && npm start   # or production: one port, the server serves the built UI -> http://localhost:4317
 ```
 
 First launch seeds the practice campaign *Greywater* in `campaigns/demo/` and starts the [welcome tour](#-welcome-tour). The server starts with the campaign you used last; switch, create or branch campaigns from the campaign menu in the top bar (or force one with `PNP_CAMPAIGN=<folder>`).
 
-**What you need:** Node 20+ — that is enough to write and run a whole campaign by hand. Optional, each unlocks one feature: the `claude` and/or `agy` CLI (the AI chat; without them the AI tab simply stays unused), a local **ComfyUI** with Krea 2 (images, painted maps), **WeasyPrint** (`pip install weasyprint`, GM binder PDF), **ImageMagick** (image thumbnails), `unzip` + `pdftotext` (importing .docx / .pdf notes), `git` (optional local git commits).
+**What you need:** Node 20+ — that is enough to write and run a whole campaign by hand (`./scripts/install.sh` installs the rest on request). Optional, each unlocks one feature: the `claude` and/or `agy` CLI (the AI chat; without them the AI tab simply stays unused), a local **ComfyUI** with Krea 2 (images, painted maps), **WeasyPrint** (`pip install weasyprint`, GM binder PDF), **ImageMagick** (image thumbnails), `unzip` + `pdftotext` (importing .docx / .pdf notes), `git` (optional local git commits).
 
 **Start-menu launcher (Linux):** `scripts/install-launcher.sh` adds a *PenNodePaper* entry to your application menu — it starts the server in the background (building the UI when needed), opens the browser and shows a **tray icon**. Right-click the menu entry for *Start in LAN mode*, *Show LAN address and access code*, *Open in browser*, *Stop* and *Show tray icon*. Or run `scripts/pennodepaper.sh start|start-lan|stop|open|status|lan-info|tray` yourself. The log is in `~/.local/state/pennodepaper/server.log`.
 
@@ -170,7 +194,7 @@ Per node: **Inspector → Images**. Pick a kind (portrait / scene / item / hando
 Two kinds, both stored as plain JSON in `maps/` and attached to a **location** (double-click the location's card, or Inspector → *Open the map of this place*):
 
 * **Battle maps** — a grid floor plan: rows of text, one character per cell (stone, wood, water, …), doors/props/labels/tokens; **walls are derived** from the floor, so you never draw them. 1 cell = 6 ft by default.
-* **Region maps** — colour-coded vector shapes (sea, forest, mountains, roads, towns) with a freehand *Scribble* brush.
+* **Region maps** — vector shapes in three layers: **terrain areas** (sea, forest, desert, snow, … painted first), **lines** (rivers, roads, railways, paths, bridges: multi-point paths with a **width you set**, painted exactly along their path) and **structures** (a city, a camp, a hospital, a tent — always an **area**, never a dot, painted into exactly its shape). The **Draw** tab has the palette, the width of the line you are drawing, and the properties of the selected shape (kind, name, "what should be painted here", width / size, drawing order); drag the white corners of a shape to reshape it (Alt-click removes a corner). **Your own types** (a "radioactive crater", a "ley line", a "wizard tower": name, colour, what it looks like, and whether it is terrain, a line or a structure) go into the campaign's library and can be used on every region map — the AI can define and use them too (`set_region_kind`). Tools: *Area*, *Line*, *Scribble*, *Blob*, *Stamp* (click = a structure of its usual size, drag outwards = sized by hand).
 
 The **Select** tool (first in the toolbar) edits what is already drawn: click a prop, token, label or door — or drag a box over cells — then drag to move it (Alt = copy), nudge with the arrow keys, rotate props with R, duplicate with Ctrl+D, delete with Delete, and change kind/size/name in the panel; a selected box can be moved with everything on it, filled with another floor or deleted. On region maps it moves, recolours and renames shapes. The AI has the same moves (`move_area`, `edit_prop`, `edit_token`, `edit_label`).
 
@@ -181,16 +205,48 @@ The editor autosaves and edits through the same ops as the AI's `edit_map`, so y
 **Two ways to paint a battle map** — choose once in **⚙ Settings → Map painting** (it is a setting of *this computer*, because it depends on how fast your graphics card is). Both start from the same plan:
 
 <div align="center">
-<img src="docs/img/map-quick-vs-precise.jpg" alt="The same tavern plan painted in one step (props drift, merge and turn into blobs) and in two steps (every table, chair and barrel where the plan put it)" width="100%">
+<img src="docs/img/battle-before-after.jpg" alt="The same tavern plan: the plan, painted in one pass (tables drift, turn and merge), and painted in steps (every table, chair and barrel where the plan put it, with soft shadows)" width="100%">
 </div>
 
-<sub>One tavern, one plan: left the editor, in the middle the **quick** painting (a single pass: furniture drifts, merges and vanishes), right the **precise** painting (empty terrain first, then every prop group painted into its spot).</sub>
+<sub>One tavern, one plan, painted by the app itself: left the plan in the editor, in the middle the **quick** way (a single pass: the furniture drifts, turns and merges), right the **precise** way (terrain first, then every prop group into its place, then a blend pass that settles the objects into the floor).</sub>
 
 * **Quick (1 step)** — the plan, props included, is painted in a single pass (about 1–2 minutes on a 16 GB card). Less exact: furniture can drift, merge or vanish.
-* **Precise (2 steps)** — **① Terrain:** only the empty place is painted (floors, walls, doors; no props), so the model is free to be creative — you pick the terrain you like or paint another. **② Props:** every prop group is then painted into exactly its spot, one after the other, each with its own AI-written prompt; touching props of the same kind count as **one** object (a row of tables is one long table, five barrels in a row stay five barrels — *show the groups on the plan* previews it). You accept the result or paint the props again. **This takes a while** — roughly 1½ minutes for the terrain plus ~40 seconds per prop group on a 16 GB card, so a map with 15 groups needs around 12 minutes; weaker cards need longer. The Paint tab shows an estimate for the map in front of you (a guess until ComfyUI has made an image on your computer, then measured) and you can stop at any time. It needs no extra models. The **Props** step has an expandable **Painting prompts of the groups** section: every prop group has its own prompt, and you can write it yourself (no AI needed — empty groups get a plain default, or the AI's words if one is connected). Your wording is used exactly as written; after a run, what the AI wrote is shown there so you can adjust it and paint again. Region maps are always painted in one step.
+* **Precise (2 steps + a blend)** — **① Terrain:** only the empty place is painted (floors, walls, doors; no props), so the model is free to be creative — you pick the terrain you like or paint another. **② Props:** every prop group is then painted into exactly its spot, one after the other, each with its own AI-written prompt; touching props of the same kind count as **one** object (a row of tables is one long table, five barrels in a row stay five barrels — *show the groups on the plan* previews it). **③ Blend (optional, on by default):** a ring around every object is repainted so shadows appear and the object settles into the floor — the objects themselves and everything else stay exactly as they were. You accept the result or paint the props again — and if just **one object** came out wrong (a broken chair, a melted barrel), **↻ paint this one again** in the group list paints only that group on the finished picture with a new seed, leaves the rest untouched and adds the result as a new picture to compare (the AI can do the same with `repaint_map_group`). **This takes a while** — roughly 1½ minutes for the terrain plus ~40 seconds per prop group on a 16 GB card, so a map with 15 groups needs around 12 minutes; weaker cards need longer. The Paint tab shows an estimate for the map in front of you (a guess until ComfyUI has made an image on your computer, then measured) and you can stop at any time. It needs no extra models. The **Props** step has an expandable **Painting prompts of the groups** section: every prop group has its own prompt, and you can write it yourself (no AI needed — empty groups get a plain default, or the AI's words if one is connected). Your wording is used exactly as written; after a run, what the AI wrote is shown there so you can adjust it and paint again.
 
 <div align="center">
-<img src="docs/img/map-two-steps.gif" alt="Two-step painting: the plan, the empty terrain, then the 19 prop groups appear one after the other" width="85%">
+<img src="docs/img/battle-two-step.gif" alt="Painting a battle map in steps: the plan, the empty room, then every prop group appears in its place, then the blend" width="85%">
+</div>
+
+**Region maps work in the same two steps.** **① Terrain:** the land is painted from your areas (sea, forest, desert, snow… and your own terrain types); rivers and roads are *not* part of this sketch, so the model cannot invent or lose them. Then the **lines** are painted one kind at a time — rivers first, then roads, railways, paths and bridges: each line is drawn exactly along your path with its width, the whole picture is refined at a low strength, and only a corridor around the line is kept (everything else is untouched). *Camera* chooses how flat the land is painted: natural (painted-map look), top-down, or a hillshaded survey map. **② Structures:** every structure you drew as an **area** (a city, a camp, a hospital, a custom type — a place is never a dot) is painted into exactly its shape, each with its own AI-written prompt that follows the campaign's style (a camp is tipis, yurts or canvas tents depending on the world); touching shapes of one kind are one object. **③ Blend** as for battle maps. About 1 minute per pass on a 16 GB card.
+
+<div align="center">
+<img src="docs/img/region-before-after.jpg" alt="The same region plan: the plan, painted in one pass (the city turns into a sunburst of blocks, roads and rivers wander off) and painted in steps (the land, then rivers and roads along the drawn lines, then every structure in its area)" width="100%">
+</div>
+
+<sub>One kingdom, one plan: left the plan, in the middle the **quick** way, right the stepped way — rivers and roads follow the lines you drew, and the city, castle, port and villages sit exactly in the areas you marked.</sub>
+
+<div align="center">
+<img src="docs/img/region-two-step.gif" alt="Painting a region map in steps: the plan, the land, the river, the roads and the bridge, then every structure appears in its area, then the blend" width="85%">
+</div>
+
+**A second one — a snowy mountain pass** (the *top-down* camera, so the mountains are painted as relief seen from above instead of side-on icons): the river, the road with its bridge and the footpath follow the drawn lines, and the fort, the camps, the towers and the cave sit in their areas.
+
+<div align="center">
+<img src="docs/img/region2-before-after.jpg" alt="A second region plan, a snowy mountain pass: the plan, painted in one pass (a different landscape, the river and the road drift) and painted in steps (the river, road and bridge follow the lines, the fort, camps and towers sit in their areas)" width="100%">
+</div>
+
+<div align="center">
+<img src="docs/img/region2-two-step.gif" alt="Painting the mountain pass in steps: the plan, the land, the river, the road and bridge, then every structure appears in its area, then the blend" width="85%">
+</div>
+
+**And a third — a green river valley** with a market town, farms, a hospital, a camp and a railway: asphalt road, gravel road, footpath, railway and the bridge are five different line kinds, painted in the land pass along their drawn paths after the river; every house, farm and the hospital sits in its own area.
+
+<div align="center">
+<img src="docs/img/region3-before-after.jpg" alt="A third region plan, a river valley: the plan, painted in one pass (a different street layout, the railway and the road merge) and painted in steps (river, asphalt road, railway and footpath follow the drawn lines, the town, farms, hospital and camp sit in their areas)" width="100%">
+</div>
+
+<div align="center">
+<img src="docs/img/region3-two-step.gif" alt="Painting the valley in steps: the plan, the land, the river, the roads, rails and bridge, then every structure appears in its area, then the blend" width="85%">
 </div>
 
 <sub>The precise way in motion: the plan, the empty place only (step 1 — you accept it or paint another), then the props, group by group, each into exactly its spot (step 2).</sub>

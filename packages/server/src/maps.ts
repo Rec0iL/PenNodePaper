@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { Resvg } from '@resvg/resvg-js';
-import { FLOORS, slugify, type MapDoc } from '@pnp/shared';
+import { FLOORS, REGION_KINDS, migratePins, regionKind, slugify, type MapDoc } from '@pnp/shared';
 import { newMap } from '@pnp/shared';
 
 export * from '@pnp/shared';
@@ -23,12 +23,17 @@ export class Maps {
     return path.join(this.dir, `${path.basename(id)}.json`);
   }
   list(): MapDoc[] {
-    return fs.readdirSync(this.dir).filter((f) => f.endsWith('.json')).map((f) => JSON.parse(fs.readFileSync(path.join(this.dir, f), 'utf8')) as MapDoc);
+    return fs.readdirSync(this.dir).filter((f) => f.endsWith('.json')).map((f) => {
+      const m = JSON.parse(fs.readFileSync(path.join(this.dir, f), 'utf8')) as MapDoc;
+      if (m.kind === 'region') migratePins(m);
+      return m;
+    });
   }
   get(id: string): MapDoc {
     try {
       const m = JSON.parse(fs.readFileSync(this.file(id), 'utf8')) as MapDoc;
       m.background ??= 'land';
+      if (m.kind === 'region') migratePins(m); // places are areas now, not dots
       return m;
     } catch {
       throw new Error(`No such map "${id}". Known maps: ${this.list().map((m) => m.id).join(', ') || '(none)'}`);
@@ -64,7 +69,20 @@ export class Maps {
   }
   /** Compact text view for the AI: rows + feature lists. */
   describe(m: MapDoc): string {
-    if (m.kind === 'region') return `Region map "${m.name}" ${m.size.w}x${m.size.h}px, background ${m.background}. Shapes: ${m.shapes.map((s) => `${s.id}(${s.kind}${s.label ? `:${s.label}` : ''})`).join(', ') || 'none'}`;
+    if (m.kind === 'region') {
+      const shape = (s: MapDoc['shapes'][number]) => {
+        const k = regionKind(s.kind, m.kinds);
+        const where = s.type === 'ellipse' ? `ellipse c=${s.points[0]?.join(',')} rx,ry=${s.points[1]?.join(',')}` : `${s.type} ${s.points.map((p) => p.join(',')).join(' ')}${s.type === 'path' ? ` width=${s.width ?? k.width ?? 14}` : ''}`;
+        return `${s.id} [${k.layer}] ${s.kind}${s.label ? ` "${s.label}"` : ''}${s.prompt ? ` prompt="${s.prompt}"` : ''}: ${where}`;
+      };
+      const ids = (layer: 'terrain' | 'structure') => [...REGION_KINDS.filter((k) => k.layer === layer).map((k) => k.id), ...(m.kinds ?? []).filter((k) => k.layer === layer).map((k) => `${k.id}*`)].join(' ');
+      return [
+        `Region map "${m.name}" ${m.size.w}x${m.size.h}px, background ${m.background}. Origin top-left, x right, y down, canvas pixels.`,
+        `Terrain kinds (painted first): ${ids('terrain')}`,
+        `Structure kinds (inpainted into the shape afterwards): ${ids('structure')}   (* = custom kind of this map)`,
+        ...(m.shapes.length ? m.shapes.map(shape) : ['no shapes']),
+      ].join('\n');
+    }
     const legend = Object.entries(FLOORS).map(([c, f]) => `${c}=${f.name}`).join(' ');
     return [
       `Battle map "${m.name}" ${m.grid.cols}x${m.grid.rows} cells, ${m.grid.unit} ft per cell. Row y=0 is the top. '.' = rock. Floors: ${legend}`,

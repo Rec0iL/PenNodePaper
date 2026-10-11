@@ -125,11 +125,12 @@ export function cropFor(g: Pick<PropGroup, 'bbox'>, cell: number, W: number, H: 
 /** How far the paint mask reaches around a prop (in cells), and how items in a row are kept apart. */
 export const MASK = { grow: 0.16, composeGrow: 0.1, blur: 0.06, gap: 0.03 };
 
-const shapeSvg = (r: PropRect, round: boolean, cell: number, grow: number) => {
+/** One prop rectangle (or ellipse) as SVG markup in a flat colour, grown by `grow` px. */
+export const propShapeSvg = (r: PropRect, round: boolean, cell: number, grow: number, color = '#fff') => {
   const w = r.w * cell + grow * 2, h = r.h * cell + grow * 2;
   const inner = round
-    ? `<ellipse cx="0" cy="0" rx="${w / 2}" ry="${h / 2}" fill="#fff"/>`
-    : `<rect x="${-w / 2}" y="${-h / 2}" width="${w}" height="${h}" rx="${Math.min(w, h) * 0.12}" fill="#fff"/>`;
+    ? `<ellipse cx="0" cy="0" rx="${w / 2}" ry="${h / 2}" fill="${color}"/>`
+    : `<rect x="${-w / 2}" y="${-h / 2}" width="${w}" height="${h}" rx="${Math.min(w, h) * 0.12}" fill="${color}"/>`;
   return `<g transform="translate(${r.cx * cell} ${r.cy * cell}) rotate(${r.rot})">${inner}</g>`;
 };
 
@@ -138,7 +139,7 @@ const shapeSvg = (r: PropRect, round: boolean, cell: number, grow: number) => {
  * `grow` / `blur` are in cells; a negative grow shrinks each item so touching items stay separate blobs.
  */
 export function maskSvg(g: Pick<PropGroup, 'rects' | 'round'>, c: Crop, cell: number, grow: number, blur: number, out: { w: number; h: number }): string {
-  const shapes = g.rects.map((r) => shapeSvg(r, g.round, cell, grow * cell)).join('');
+  const shapes = g.rects.map((r) => propShapeSvg(r, g.round, cell, grow * cell)).join('');
   const filter = blur > 0 ? `<filter id="b" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="${blur * cell}"/></filter>` : '';
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${out.w}" height="${out.h}" viewBox="${c.x} ${c.y} ${c.w} ${c.h}"><defs>${filter}</defs><rect x="${c.x}" y="${c.y}" width="${c.w}" height="${c.h}" fill="#000"/><g ${blur > 0 ? 'filter="url(#b)"' : ''}>${shapes}</g></svg>`;
 }
