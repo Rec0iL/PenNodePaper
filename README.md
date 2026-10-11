@@ -181,7 +181,7 @@ The editor autosaves and edits through the same ops as the AI's `edit_map`, so y
 **Two ways to paint a battle map** — choose once in **⚙ Settings → Map painting** (it is a setting of *this computer*, because it depends on how fast your graphics card is). Both start from the same plan:
 
 <div align="center">
-<img src="docs/img/battle-before-after.jpg" alt="The same tavern plan: the plan, painted in one pass (tables drift, turn and merge), and painted in steps (every table, chair and barrel where the plan put it, with shadows)" width="100%">
+<img src="docs/img/battle-before-after.jpg" alt="The same tavern plan: the plan, painted in one pass (tables drift, turn and merge), and painted in steps (every table, chair and barrel where the plan put it, with soft shadows)" width="100%">
 </div>
 
 <sub>One tavern, one plan, painted by the app itself: left the plan in the editor, in the middle the **quick** way (a single pass: the furniture drifts, turns and merges), right the **precise** way (terrain first, then every prop group into its place, then a blend pass that settles the objects into the floor).</sub>
@@ -203,6 +203,16 @@ The editor autosaves and edits through the same ops as the AI's `edit_map`, so y
 
 <div align="center">
 <img src="docs/img/region-two-step.gif" alt="Painting a region map in steps: the plan, the land, the river, the roads and the bridge, then every structure appears in its area, then the blend" width="85%">
+</div>
+
+**A second one — a snowy mountain pass** (the *top-down* camera, so the mountains are painted as relief seen from above instead of side-on icons): the river, the road with its bridge and the footpath follow the drawn lines, and the fort, the camps, the towers and the cave sit in their areas.
+
+<div align="center">
+<img src="docs/img/region2-before-after.jpg" alt="A second region plan, a snowy mountain pass: the plan, painted in one pass (a different landscape, the river and the road drift) and painted in steps (the river, road and bridge follow the lines, the fort, camps and towers sit in their areas)" width="100%">
+</div>
+
+<div align="center">
+<img src="docs/img/region2-two-step.gif" alt="Painting the mountain pass in steps: the plan, the land, the river, the road and bridge, then every structure appears in its area, then the blend" width="85%">
 </div>
 
 <sub>The precise way in motion: the plan, the empty place only (step 1 — you accept it or paint another), then the props, group by group, each into exactly its spot (step 2).</sub>
