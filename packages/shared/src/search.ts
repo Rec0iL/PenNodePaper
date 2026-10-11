@@ -38,7 +38,7 @@ export function parseQuery(q: string): ParsedQuery {
 
 const fieldText = (n: StoryNode) =>
   Object.entries(n.fields)
-    .filter(([k]) => !['sheet', 'visits', 'history', 'entries', 'syncedAt', 'portraitHash'].includes(k))
+    .filter(([k]) => !['sheet', 'visits', 'history', 'entries', 'syncedAt', 'portraitHash', 'imagePrompt'].includes(k))
     .map(([, v]) => (typeof v === 'string' ? v : ''))
     .join(' ');
 

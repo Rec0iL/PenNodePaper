@@ -18,7 +18,7 @@
   // npc/enemy sheets are edited in the schema-driven sheet form; map ids / sheet internals never belong in the raw list
   const hasRoles = $derived(!!app.vtt?.profile?.characters?.roles?.length);
   // bookkeeping the app manages itself (where the players are, the sound list …): not for typing into
-  const genericHidden = $derived(new Set(['role', 'preset', 'sheet', 'mapId', 'visits', 'sound', 'sounds', ...(node?.type === 'table' ? ['entries', 'last', 'history'] : []), ...(hasRoles && (node?.type === 'npc' || node?.type === 'enemy') ? Object.keys(node.fields) : [])]));
+  const genericHidden = $derived(new Set(['role', 'preset', 'sheet', 'mapId', 'imagePrompt', 'visits', 'sound', 'sounds', ...(node?.type === 'table' ? ['entries', 'last', 'history'] : []), ...(hasRoles && (node?.type === 'npc' || node?.type === 'enemy') ? Object.keys(node.fields) : [])]));
 
   const clock = $derived(node?.type === 'clock' ? clockOf(node) : null);
   const customFields = $derived(node ? Object.entries(node.fields).filter(([k]) => !genericHidden.has(k)) : []);

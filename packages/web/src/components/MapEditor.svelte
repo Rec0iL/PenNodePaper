@@ -833,6 +833,14 @@
 
   let prompt_ = $state('');
   let promptTouched = $state(false);
+  /** typing in the description: it is part of the map (saved with the autosave) */
+  function promptInput() {
+    promptTouched = true;
+    if (doc) {
+      doc.paintPrompt = prompt_;
+      touch();
+    }
+  }
   let fidelity = $state<'faithful' | 'balanced' | 'painterly'>('balanced');
   let variants = $state(1);
   /** region maps: how flat the terrain is painted; both kinds: blend the objects in at the end */
@@ -846,7 +854,7 @@
     }
   });
   $effect(() => {
-    if (!promptTouched && node) prompt_ = [node.title, node.summary].filter(Boolean).join('. ');
+    if (!promptTouched && node) prompt_ = doc?.paintPrompt?.trim() || [node.title, node.summary].filter(Boolean).join('. ');
   });
   const jobs = $derived(app.jobs.filter((j) => j.kind === 'map' && j.nodeId === nodeId && (j.status === 'queued' || j.status === 'running' || j.status === 'error')).slice(-4));
   const busy = $derived(jobs.some((j) => j.status === 'queued' || j.status === 'running'));
@@ -1174,7 +1182,7 @@
             <p class="warn">⏱ This takes a while — {dur(paint?.terrainSeconds ?? 0)} for the terrain, then {dur(paint?.propsSeconds ?? 0)} for {paint?.groups ?? 0} {battle ? 'prop' : 'structure'} group{paint?.groups === 1 ? '' : 's'}, on this computer{paint?.measured ? '' : ' (a rough guess until ComfyUI has made an image here)'}. You decide after each step, and you can stop at any time.</p>
 
             <div class="step"><b>①</b> Terrain <span class="dim">{battle ? '— the empty place, no props' : '— the land, then rivers and roads along your lines; no structures'}</span></div>
-            <textarea class="field" data-tour="map-prompt" rows="3" placeholder="Materials, mood, lighting, setting… (the AI turns this into a description of the empty place)" bind:value={prompt_} oninput={() => (promptTouched = true)}></textarea>
+            <textarea class="field" data-tour="map-prompt" rows="3" placeholder="Materials, mood, lighting, setting… (the AI turns this into a description of the empty place)" bind:value={prompt_} oninput={promptInput}></textarea>
             <div class="seg w">
               {#each ['faithful', 'balanced', 'painterly'] as f}<button class:on={fidelity === f} onclick={() => (fidelity = f as typeof fidelity)}>{f}</button>{/each}
             </div>
@@ -1249,7 +1257,7 @@
             {#if doc?.renders.length}<div class="dim">Not happy? Paint the {battle ? 'props' : 'structures'} again for a new variation, choose another terrain — or, if just one object came out wrong, open <i>Painting prompts of the groups</i> and use <b>↻ paint this one again</b> on it.</div>{/if}
           {:else}
             <div class="label">What does the place look like?</div>
-            <textarea class="field" rows="4" placeholder="Materials, mood, lighting, setting… (not the layout — that comes from your plan)" bind:value={prompt_} oninput={() => (promptTouched = true)}></textarea>
+            <textarea class="field" rows="4" placeholder="Materials, mood, lighting, setting… (not the layout — that comes from your plan)" bind:value={prompt_} oninput={promptInput}></textarea>
             <div class="label">Fidelity ↔ creativity</div>
             <div class="seg w">
               {#each ['faithful', 'balanced', 'painterly'] as f}<button class:on={fidelity === f} onclick={() => (fidelity = f as typeof fidelity)}>{f}</button>{/each}

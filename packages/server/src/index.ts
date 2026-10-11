@@ -614,7 +614,10 @@ app.put('/api/maps/:id', async (c) => {
   doc.renders = cur.renders;
   doc.terrains = cur.terrains;
   doc.terrainPick = cur.terrainPick;
-  doc.paintPrompt = cur.paintPrompt;
+  // the description of the place is typed in the editor and saved with the map; without one the stored one stays
+  if (typeof doc.paintPrompt === 'string' && doc.paintPrompt.trim()) doc.paintPrompt = doc.paintPrompt.slice(0, 2000);
+  else if (cur.paintPrompt) doc.paintPrompt = cur.paintPrompt;
+  else delete doc.paintPrompt;
   // the GM's prompts come from the editor; what the AI wrote meanwhile is kept where the editor has nothing yet
   const aiWritten = Object.fromEntries(Object.entries(cur.propPrompts ?? {}).filter(([, e]) => e.ai));
   const pp = { ...aiWritten, ...(doc.propPrompts ?? {}) };

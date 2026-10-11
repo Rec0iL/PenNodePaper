@@ -308,7 +308,7 @@ export function portraitImage(dir: string, file: string, max = 256): UpfImage {
   return { name: `${path.basename(file, path.extname(file))}-portrait.png`, mime: 'image/png', b64: toPng(svg).toString('base64') };
 }
 
-const RESERVED_FIELDS = new Set(['role', 'preset', 'sheet', 'mapId']);
+const RESERVED_FIELDS = new Set(['role', 'preset', 'sheet', 'mapId', 'imagePrompt']);
 
 /** The sheet stored on a node. Nodes written before sheets existed keep loose fields (tier, level, …): treat those as the sheet. */
 export function sheetOf(n: StoryNode): Record<string, unknown> {

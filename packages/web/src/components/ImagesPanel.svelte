@@ -8,6 +8,9 @@
   let variants = $state(1);
   let prompt = $state('');
   let touched = $state(false);
+  /** the node's own wording for its picture, saved with the node (fields.imagePrompt); until there is one the title and summary are the start */
+  const defaultPrompt = $derived([node.title, node.summary].filter(Boolean).join('. '));
+  const saved = $derived(typeof node.fields.imagePrompt === 'string' ? node.fields.imagePrompt : '');
 
   // sensible default kind + prompt per node type
   const defaultKind: Record<string, ImageKind> = { npc: 'portrait', location: 'scene', scene: 'scene', encounter: 'scene', event: 'scene', item: 'item', handout: 'handout', faction: 'banner' };
@@ -18,8 +21,15 @@
       touched = false;
       kind = defaultKind[node.type] ?? 'square';
     }
-    if (!touched) prompt = [node.title, node.summary].filter(Boolean).join('. ');
+    if (!touched) prompt = saved || defaultPrompt;
   });
+  /** keep the wording with the node: a prompt that is empty or just the default is not stored */
+  async function keepPrompt() {
+    const text = prompt.trim();
+    const want = text && text !== defaultPrompt.trim() ? text : '';
+    if (want === saved.trim()) return;
+    await cmd('update_node', { id: node.id, fields: { imagePrompt: want || null } });
+  }
 
   const jobs = $derived(app.jobs.filter((j) => j.nodeId === node.id && (j.status === 'queued' || j.status === 'running' || j.status === 'error')).slice(-6));
   const busy = $derived(jobs.some((j) => j.status === 'queued' || j.status === 'running'));
@@ -27,6 +37,7 @@
   let justQueued = $state(false);
   async function generate() {
     const before = activeJobs().length;
+    void keepPrompt();
     const r = await cmd('generate_image', { nodeId: node.id, prompt, kind, variants });
     if (!r) return;
     touched = true;
@@ -93,7 +104,7 @@
         {#each [1, 2, 3, 4] as n}<option value={n}>{n}×</option>{/each}
       </select>
     </div>
-    <textarea class="field" data-tour="img-prompt" rows="3" placeholder="Describe the image…" bind:value={prompt} oninput={() => (touched = true)}></textarea>
+    <textarea class="field" data-tour="img-prompt" rows="3" placeholder="Describe the image…" bind:value={prompt} oninput={() => (touched = true)} onchange={keepPrompt}></textarea>
     <div class="acts">
       <button class="btn primary" data-tour="img-generate" onclick={generate} disabled={prompt.trim().length < 8}>{justQueued ? '✓ Queued' : busy ? 'Add to queue' : 'Generate'}</button>
       <button class="btn" onclick={askAi} title="Let the AI write the prompt and generate">✦ AI writes it</button>
