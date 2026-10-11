@@ -303,8 +303,8 @@ describe('precise painting (two steps)', () => {
     expect(r.groups).toBe(3); // one long table (2 touching), 2 barrels in a row, a chest
     expect(r.estimate).toMatch(/min/);
     await idle();
-    expect(wfs).toHaveLength(3);
-    for (const wf of wfs) {
+    expect(wfs).toHaveLength(4); // 3 prop groups + the consolidate pass
+    for (const wf of wfs.slice(0, 3)) {
       expect(wf['21'].class_type).toBe('ImageCrop');
       expect(wf['25'].class_type).toBe('SetLatentNoiseMask');
       expect(wf['28'].class_type).toBe('ImageCompositeMasked');
@@ -313,8 +313,14 @@ describe('precise painting (two steps)', () => {
       expect(wf['10'].inputs.text).toMatch(/AI says: a detailed object for g\d/);
       expect(wf['10'].inputs.text).toMatch(/thick dark ink outline/);
     }
-    expect(new Set(wfs.map((w) => w['13'].inputs.seed)).size).toBe(3); // each group its own seed
-    expect(wfs.every((w) => w['21'].inputs.width % 16 === 0 && w['22'].inputs.width % 16 === 0)).toBe(true);
+    expect(new Set(wfs.slice(0, 3).map((w) => w['13'].inputs.seed)).size).toBe(3); // each group its own seed
+    expect(wfs.slice(0, 3).every((w) => w['21'].inputs.width % 16 === 0 && w['22'].inputs.width % 16 === 0)).toBe(true);
+    // the last pass: the surroundings of the objects are blended in, the objects and the rest stay as painted (battle: 0.70)
+    const ring = wfs[3];
+    expect(ring['13'].inputs.denoise).toBe(0.7);
+    expect(ring['25'].class_type).toBe('SetLatentNoiseMask');
+    expect(ring['28'].inputs.destination).toEqual(['20', 0]);
+    expect(ring['10'].inputs.text).toMatch(/One coherent painting/);
     // the result is a normal render of the map: node picture + map render
     const m = store.maps.get(mapId);
     expect(m.renders).toHaveLength(1);
@@ -340,8 +346,8 @@ describe('precise painting (two steps)', () => {
     aiMode = 'down';
     run('paint_map_props', { mapId });
     await idle();
-    expect(wfs).toHaveLength(3);
-    expect(wfs.map((w) => w['10'].inputs.text).join('|')).toMatch(/oak barrels/);
+    expect(wfs).toHaveLength(4);
+    expect(wfs.slice(0, 3).map((w) => w['10'].inputs.text).join('|')).toMatch(/oak barrels/);
     expect(wfs.map((w) => w['10'].inputs.text).join('|')).not.toMatch(/AI says/);
     // prompts for every group: no AI call at all, the wording is used as it is
     wfs.length = 0;
@@ -446,11 +452,18 @@ describe('quick painting is unchanged', () => {
     expect(aiCalls).toEqual([]); // no AI involved
   });
 
-  it('region maps always use the quick way', async () => {
+  it('region maps in quick mode: one pass from the sketch, with a legend of the kinds that are really drawn', async () => {
+    mode = 'quick';
     run('create_node', { id: 'coast', type: 'location', title: 'Coast', summary: 'A coast.' });
     const { mapId } = run('create_map', { name: 'Coast', nodeId: 'coast', kind: 'region' });
+    run('edit_map', { mapId, ops: [{ op: 'shape', type: 'polygon', kind: 'forest', points: [[100, 100], [400, 100], [300, 300]] }, { op: 'shape', type: 'ellipse', kind: 'hospital', points: [[500, 400], [20, 20]] }] });
     run('render_map', { mapId, prompt: 'A rugged northern coastline in autumn' });
     await idle();
+    expect(wfs).toHaveLength(1);
+    const text = wfs[0]['10'].inputs.text as string;
+    expect(text).toContain('forest');
+    expect(text).toContain('hospital');
+    expect(text).not.toContain('battle map');
     expect(store.maps.get(mapId).renders).toHaveLength(1);
     expect(store.maps.get(mapId).terrains ?? []).toEqual([]);
   });

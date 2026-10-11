@@ -1,7 +1,8 @@
 import {
-  DOOR_KINDS, FLOORS, PROP_KINDS, TERRAINS,
-  type DoorKind, type EdgeSide, type FloorChar, type MapDoc, type PropKind, type TerrainKind,
+  DOOR_KINDS, FLOORS, PROP_KINDS,
+  type DoorKind, type EdgeSide, type FloorChar, type MapDoc, type PropKind,
 } from './mapdata.js';
+import { cleanKind, isKnownKind, isLineKind, regionKind, REGION_KINDS, type RegionKind } from './regionkinds.js';
 
 // ---------------------------------------------------------------------------
 // Map logic shared by the server (edit_map, renders) and the browser editor:
@@ -28,8 +29,10 @@ export type MapOp =
   | { op: 'edit_token'; x: number; y: number; to?: [number, number]; kind?: 'pc' | 'npc' | 'enemy'; label?: string | null; node?: string | null }
   | { op: 'edit_label'; x: number; y: number; to?: [number, number]; text?: string }
   | { op: 'resize'; cols: number; rows: number }
-  | { op: 'shape'; type: 'polygon' | 'path' | 'ellipse' | 'pin'; kind: TerrainKind; points: [number, number][]; r?: number; width?: number; label?: string; id?: string }
+  | { op: 'shape'; type: 'polygon' | 'path' | 'ellipse' | 'pin'; kind: string; points: [number, number][]; r?: number; width?: number; label?: string; prompt?: string; id?: string }
   | { op: 'remove_shape'; id: string }
+  | { op: 'define_kind'; kind: Partial<RegionKind> }
+  | { op: 'remove_kind'; id: string }
   | { op: 'clear_all' };
 
 const FLOOR_BY_NAME = Object.fromEntries(Object.entries(FLOORS).map(([c, f]) => [f.name, c])) as Record<string, FloorChar>;
@@ -254,12 +257,24 @@ export function applyOps(m: MapDoc, ops: MapOp[]): { ok: number; notes: string[]
         break;
       }
       case 'shape': {
-        if (!(o.kind in TERRAINS)) throw new Error(`Unknown terrain "${o.kind}". Use: ${Object.keys(TERRAINS).join(', ')}`);
+        if (!isKnownKind(o.kind, m.kinds)) throw new Error(`Unknown kind "${o.kind}". Use: ${[...REGION_KINDS.map((k) => k.id), ...(m.kinds ?? []).map((k) => k.id)].join(', ')} (define your own with define_kind).`);
         const id = o.id ?? `${o.kind}-${Math.random().toString(36).slice(2, 6)}`;
         m.shapes = m.shapes.filter((s) => s.id !== id);
-        m.shapes.push({ id, type: o.type, kind: o.kind, points: o.points, r: o.r, width: o.width, label: o.label });
+        const prompt = o.prompt?.replace(/\s+/g, ' ').trim();
+        // no dots: a place is an AREA (a round one is an ellipse). A pin from an old caller becomes a round area.
+        const sh = o.type === 'pin' ? pinToEllipse({ id, type: 'pin', kind: o.kind, points: o.points, r: o.r }, m.kinds) : { type: o.type, points: o.points, r: o.r };
+        m.shapes.push({ id, type: sh.type, kind: o.kind, points: sh.points, ...(sh.r !== undefined ? { r: sh.r } : {}), width: o.width, label: o.label, ...(prompt ? { prompt } : {}) });
         break;
       }
+      case 'define_kind': {
+        const k = cleanKind(o.kind);
+        m.kinds = [...(m.kinds ?? []).filter((x) => x.id !== k.id), k];
+        break;
+      }
+      case 'remove_kind':
+        if (m.shapes.some((s) => s.kind === o.id)) throw new Error(`Kind "${o.id}" is still used by shapes; remove or restyle them first.`);
+        m.kinds = (m.kinds ?? []).filter((x) => x.id !== o.id);
+        break;
       case 'remove_shape':
         m.shapes = m.shapes.filter((s) => s.id !== o.id);
         break;
@@ -333,6 +348,25 @@ export function imageSize(m: MapDoc, maxSide = 1344): { w: number; h: number; ce
   const cell = cellPx(m, maxSide);
   const up = (n: number) => Math.ceil(n / 16) * 16;
   return { w: up(m.grid.cols * cell), h: up(m.grid.rows * cell), cell };
+}
+
+/** A legacy pin (a dot) as the round area it stands for: radius r, else the kind's usual size. */
+export function pinToEllipse(s: MapDoc['shapes'][number], kinds?: MapDoc['kinds']): { type: 'ellipse'; points: [number, number][]; r?: number } {
+  const [x, y] = s.points[0] ?? [0, 0];
+  const r = s.r ?? regionKind(s.kind, kinds).size ?? 14;
+  return { type: 'ellipse', points: [[x, y], [r, r]] };
+}
+
+/** Maps from before places were areas: every pin becomes a round area. Returns true when something changed. */
+export function migratePins(m: MapDoc): boolean {
+  let changed = false;
+  m.shapes = (m.shapes ?? []).map((s) => {
+    if (s.type !== 'pin') return s;
+    changed = true;
+    const { r: _r, ...rest } = s;
+    return { ...rest, ...pinToEllipse(s, m.kinds) };
+  });
+  return changed;
 }
 
 export function renderSvg(m: MapDoc, style: MapStyle = 'preview', maxSide = 1344): string {
@@ -416,20 +450,27 @@ function renderBattle(m: MapDoc, style: MapStyle, maxSide: number): string {
   return o.join('');
 }
 
+/**
+ * preview = the editor; control = the whole sketch for one-pass painting; terrain = only what step 1 paints (the
+ * land: structures are left out (inpainted later) and so are rivers, roads and other lines (painted in their own passes)).
+ */
 function renderRegion(m: MapDoc, style: MapStyle): string {
   const { w: W, h: H } = m.size;
-  const ctrl = style === 'control';
-  const o: string[] = [`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><rect width="${W}" height="${H}" fill="${TERRAINS[m.background ?? 'land']}"/>`];
+  const ctrl = style !== 'preview';
+  const bare = style === 'terrain';
+  const bg = regionKind(m.background ?? 'land', m.kinds).color;
+  const o: string[] = [`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><rect width="${W}" height="${H}" fill="${bg}"/>`];
   const pts = (p: [number, number][]) => p.map(([x, y]) => `${x},${y}`).join(' ');
   for (const s of m.shapes) {
-    const col = TERRAINS[s.kind];
-    const lineKinds = s.type === 'path';
+    const k = regionKind(s.kind, m.kinds);
+    if (bare && (k.layer === 'structure' || isLineKind(k))) continue;
+    const col = k.color;
     if (s.type === 'polygon') o.push(`<polygon points="${pts(s.points)}" fill="${col}" stroke="${ctrl ? col : '#0b0c10'}" stroke-width="${ctrl ? 0 : 1.5}" stroke-linejoin="round"/>`);
-    else if (lineKinds) o.push(`<polyline points="${pts(s.points)}" fill="none" stroke="${col}" stroke-width="${s.width ?? (s.kind === 'road' ? 10 : 14)}" stroke-linecap="round" stroke-linejoin="round"${s.kind === 'road' ? ' stroke-dasharray="1 0"' : ''}/>`);
+    else if (s.type === 'path') o.push(`<polyline points="${pts(s.points)}" fill="none" stroke="${col}" stroke-width="${s.width ?? k.width ?? 14}" stroke-linecap="round" stroke-linejoin="round"${s.kind === 'road' ? ' stroke-dasharray="1 0"' : ''}/>`);
     else if (s.type === 'ellipse') {
       const [cx, cy] = s.points[0] ?? [0, 0];
       const [rx, ry] = s.points[1] ?? [s.r ?? 30, s.r ?? 30];
-      o.push(`<ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" fill="${col}"/>`);
+      o.push(`<ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" fill="${col}"${!ctrl && k.layer === 'structure' ? ' stroke="#0b0c10" stroke-width="1.5"' : ''}/>`);
     } else if (s.type === 'pin') {
       const [x, y] = s.points[0] ?? [0, 0];
       o.push(`<circle cx="${x}" cy="${y}" r="${s.r ?? 14}" fill="${col}" stroke="#0b0c10" stroke-width="3"/>`);

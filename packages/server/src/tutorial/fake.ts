@@ -23,6 +23,8 @@ export class TutorialComfy extends Comfy {
   private branch = new Map<string, number>();
   private terrainRuns = new Map<string, number>();
   private hashes = new Map<string, string>();
+  /** what was uploaded for the passes that only blend into a picture (lines, consolidate): a stand-in returns it unchanged */
+  private passes = new Map<string, Buffer>();
 
   constructor(cfg: () => ComfyConfig, private on: () => boolean) {
     super(cfg);
@@ -43,6 +45,7 @@ export class TutorialComfy extends Comfy {
 
   override async uploadImage(bytes: Buffer, name: string): Promise<string> {
     if (!this.on()) return super.uploadImage(bytes, name);
+    if (/-(orig|ring)\.png$/.test(name)) this.passes.set(name, bytes);
     // the base picture of a props step tells which terrain this is (the terrain itself, or what was painted on it)
     if (/-base\.png$/.test(name)) {
       const mapId = /^pnp-(.+)-\d+-base\.png$/.exec(name)?.[1];
@@ -63,7 +66,20 @@ export class TutorialComfy extends Comfy {
   ): Promise<{ bytes: Buffer; filename: string }> {
     if (!this.on()) return super.generate(wf, opts);
     const load = Object.values(wf).find((n) => n.class_type === 'LoadImage')?.inputs.image;
-    const { file, seconds } = this.pick(typeof load === 'string' ? load : '', opts.job);
+    const loadName = typeof load === 'string' ? load : '';
+    // a line pass or the consolidate pass refines the picture it is given: here that is the picture, unchanged
+    const same = /-ring\.png$/.test(loadName) ? this.passes.get(loadName) : /-drawn\.png$/.test(loadName) ? this.passes.get(loadName.replace(/-drawn\.png$/, '-orig.png')) : undefined;
+    if (same) {
+      const ticks = Math.max(1, Math.round(1100 / 250));
+      for (let i = 1; i <= ticks; i++) {
+        if (opts.signal?.aborted) throw new ComfyError('Cancelled.');
+        await sleep(250);
+        opts.onProgress?.(Math.min(0.99, i / ticks));
+      }
+      opts.onProgress?.(1);
+      return { bytes: same, filename: 'refined.png' };
+    }
+    const { file, seconds } = this.pick(loadName, opts.job);
     // progress like a real sampler: steady ticks, never instant
     const ticks = Math.max(1, Math.round((seconds * 1000) / 250));
     for (let i = 1; i <= ticks; i++) {

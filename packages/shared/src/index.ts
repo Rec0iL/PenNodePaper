@@ -123,6 +123,8 @@ export interface StyleConfig {
   negative: string;
   /** Appended to map render prompts instead of `suffix` (maps need a plan view, not cinematic lighting). */
   mapSuffix: string;
+  /** How region (overland) maps look; absent = derived from `mapSuffix`. */
+  regionSuffix?: string;
 }
 
 export const DEFAULT_STYLE: StyleConfig = {
@@ -388,6 +390,10 @@ export function slugify(input: string): string {
 export * from './mapdata.js';
 export * from './maps.js';
 export * from './mapgroups.js';
+export * from './regionkinds.js';
+export * from './regiongroups.js';
+export * from './regionlines.js';
+export * from './consolidate.js';
 export * from './vtt.js';
 export * from './sheet.js';
 export * from './story.js';

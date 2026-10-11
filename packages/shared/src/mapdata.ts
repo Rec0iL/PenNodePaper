@@ -1,4 +1,5 @@
 // Map data model: floors, props, terrains and the MapDoc document (pure data, no imports).
+import type { RegionKind } from './regionkinds.js';
 
 // --- maps ---------------------------------------------------------------------------
 
@@ -55,9 +56,16 @@ export interface MapDoc {
   tokens: { x: number; y: number; kind: 'pc' | 'npc' | 'enemy'; label?: string; node?: string }[];
   /** region: canvas size in px + vector shapes in that space */
   size: { w: number; h: number };
-  /** region maps: base colour of the canvas */
-  background?: TerrainKind;
-  shapes: { id: string; type: 'polygon' | 'path' | 'ellipse' | 'pin'; kind: TerrainKind; points: [number, number][]; r?: number; width?: number; label?: string }[];
+  /** region maps: base terrain of the canvas (a terrain kind id) */
+  background?: string;
+  /**
+   * region maps. `kind` is a built-in id (TERRAINS / REGION_KINDS) or the id of a custom kind in `kinds`.
+   * `width` = stroke width of a path (px), `r` = radius of a pin, `prompt` = what to paint here, in the GM's own words
+   * (a structure's step-2 prompt; overrides the kind's wording).
+   */
+  shapes: { id: string; type: 'polygon' | 'path' | 'ellipse' | 'pin'; kind: string; points: [number, number][]; r?: number; width?: number; label?: string; prompt?: string }[];
+  /** region maps: the custom kinds (terrain / structure types the GM defined) this map uses — a copy of the campaign library, so the map stays self-contained */
+  kinds?: RegionKind[];
   /** finished painted renders (files in images/), cover first */
   renders: string[];
   /** two-step paint: finished images of the EMPTY terrain (candidates the GM chooses from) and the one picked for step 2 */
@@ -70,6 +78,10 @@ export interface MapDoc {
    * The GM's own wording (`ai` absent) is used as it is; `ai: true` is only what the AI wrote last time, shown for editing.
    */
   propPrompts?: Record<string, { kind: string; text: string; ai?: boolean }>;
+  /** region maps: how strictly the terrain is painted as a flat plan view (default = natural painted-map look) */
+  view?: 'default' | 'strict' | 'plan';
+  /** the last, optional painting step: the surroundings of every painted object are blended into the picture (default on) */
+  consolidate?: boolean;
   updatedAt: string;
 }
 
