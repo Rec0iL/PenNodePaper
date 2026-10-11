@@ -200,7 +200,7 @@
           <section class="wide practice"><p class="hint"><b>Practice campaign.</b> ComfyUI is simulated here: the pictures and maps are played back, and the Map painting choice below only applies while the tour runs. {alive ? 'A real ComfyUI answers on this address.' : 'No real ComfyUI answers on this address — everything except pictures works without one.'}</p></section>
         {/if}
         <section class="wide">
-          <h4>Map painting <span class="dim">how battle maps are painted — saved for this computer, all campaigns</span></h4>
+          <h4>Map painting <span class="dim">how maps are painted — saved for this computer, all campaigns</span></h4>
           <div class="modes" data-tour="settings-map-modes" role="radiogroup" aria-label="Map painting">
             <button class="mode" class:on={mapMode === 'quick'} role="radio" aria-checked={mapMode === 'quick'} onclick={() => (mapMode = 'quick')}>
               <b>Quick <span class="tag">1 step</span></b>
@@ -215,7 +215,7 @@
               <span class="con">⏱ Takes a while: about 1½ minutes for the terrain plus about 40 seconds per prop group on a 16 GB card — a map with 15 prop groups takes around 12 minutes. A weaker graphics card needs proportionally longer.</span>
             </button>
           </div>
-          <p class="hint">Both use the Krea 2 model you already have; precise needs no extra downloads. In the map editor, the Paint tab shows an estimate for the map in front of you (it gets accurate once ComfyUI has made an image on this computer), and you can stop a job at any time. Precise painting works on battle maps; region maps are always painted in one step.</p>
+          <p class="hint">Both use the Krea 2 model you already have; precise needs no extra downloads. In the map editor, the Paint tab shows an estimate for the map in front of you (it gets accurate once ComfyUI has made an image on this computer), and you can stop a job at any time. Precise painting works on battle maps (terrain, then props) and on region maps (land with rivers and roads, then structures); both end with an optional pass that blends the objects into the picture.</p>
         </section>
 
         <section class="wide">

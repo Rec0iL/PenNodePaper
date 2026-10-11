@@ -120,13 +120,13 @@ const maps: TourStep[] = [
     id: 'map-settings', target: ['[data-tour="settings-map-modes"]'], side: 'left',
     enter: async () => { calm({ settings: true }); app.mapEditor = null; app.settingsOpen = true; await waitFor(() => !!el('[data-tour="settings-map-modes"]')); },
     title: 'Quick or precise',
-    body: 'Here is the choice, in **⚙ Settings → Map painting** — a setting of *this computer*, because it depends on how fast your graphics card is.\n\n**Quick** is one pass: fine for a rough scene or a weak card. **Precise** costs about 1½ minutes for the terrain plus ~40 s per prop group on a 16 GB card — for the maps you will print or put on the table.\n\nChange it here to compare: the tour’s next “Paint it” will use the other way. (Region maps are always one step.)',
+    body: 'Here is the choice, in **⚙ Settings → Map painting** — a setting of *this computer*, because it depends on how fast your graphics card is.\n\n**Quick** is one pass: fine for a rough scene or a weak card. **Precise** costs about 1½ minutes for the terrain plus ~40 s per prop group on a 16 GB card — for the maps you will print or put on the table.\n\nChange it here to compare: the tour’s next “Paint it” will use the other way. (Region maps work in steps too: the land with its rivers and roads first, then every structure.)',
   }),
   s('maps', {
     id: 'map-region', target: ['[data-tour="map-view"]'], side: 'left', pad: 0,
     enter: async () => { calm({ map: true }); openMap(COAST); await editorReady(); },
     title: 'Region maps',
-    body: 'The other kind: **region maps** — a vector sketch for a coast, a country or a town: areas (sea, forest, hills), roads and rivers, and pins for towns and ruins. *Scribble* is a freehand brush. The image model paints your sketch in one step — this one is the coast around Greywater.',
+    body: 'The other kind: **region maps** — a vector sketch for a coast, a country or a town: areas (sea, forest, hills), roads and rivers as lines, and places for towns and ruins. *Scribble* is a freehand brush. The image model paints your sketch — this one is the coast around Greywater.',
   }),
   s('maps', {
     id: 'map-close', target: [card('rusty-anchor'), '[data-tour="insp-map"]'], side: 'right',

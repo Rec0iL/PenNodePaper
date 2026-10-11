@@ -4,7 +4,7 @@
   // edit_map uses, so the GM and the AI can work on one map at the same time.
   import { onMount, untrack } from 'svelte';
   import {
-    DOOR_KINDS, FLOORS, NODE_TYPE_INFO, PROP_KINDS, TERRAINS, applyOps, canon, charactersOfPlace, derivedWalls, fallbackGroupPrompt, groupProps, imageSize, renderSvg, tokenKindOf,
+    DOOR_KINDS, FLOORS, NODE_TYPE_INFO, PROP_KINDS, TERRAINS, applyOps, canon, charactersOfPlace, derivedWalls, fallbackGroupPrompt, fallbackRegionPrompt, groupProps, groupRegion, imageSize, regionKind, renderSvg, tokenKindOf,
     type DoorKind, type MapDoc, type MapOp, type PropKind, type TerrainKind,
   } from '@pnp/shared';
   import { app, cmd, say, selectNode, sendChat } from '../lib/app.svelte';
@@ -37,10 +37,10 @@
   let tokenNode = $state<string | null>(null);
 
   const battle = $derived(doc?.kind === 'battle');
-  // how this computer paints battle maps (Settings → Map painting): quick = one pass, staged = precise, two steps
+  // how this computer paints maps (Settings → Map painting): quick = one pass, staged = precise, several steps
   interface PaintInfo { mode: 'quick' | 'staged'; groups: number; quickSeconds: number; terrainSeconds: number; propsSeconds: number; measured: boolean }
   let paint = $state<PaintInfo | null>(null);
-  const staged = $derived(battle && paint?.mode === 'staged');
+  const staged = $derived(paint?.mode === 'staged');
   const dim = $derived(doc ? imageSize(doc) : { w: 1, h: 1, cell: 1 });
   const svgStr = $derived(doc && view !== 'painted' && view !== 'terrain' ? renderSvg(doc, view === 'control' ? (staged ? 'terrain' : 'control') : 'preview') : '');
   const node = $derived(nodeId ? app.nodes[nodeId] : undefined);
@@ -486,7 +486,9 @@
     else if (tool === 'pin') {
       const label = prompt('Name (optional)', '') ?? null;
       if (label === null) return;
-      edit([{ op: 'shape', type: 'pin', kind: pinKind, points: [pt], label: label.trim() || undefined }]);
+      // a place is an area, not a dot: stamp a round one of the kind's usual size (the full region editor rework replaces this tool)
+      const r = regionKind(pinKind, doc?.kinds).size ?? 20;
+      edit([{ op: 'shape', type: 'ellipse', kind: pinKind, points: [pt, [r, r]], label: label.trim() || undefined }]);
     } else if (tool === 'select') {
       selected = hitShape(p);
       if (selected) shapeMove = { from: p, dx: 0, dy: 0 };
@@ -683,16 +685,29 @@
   // ---- painting ------------------------------------------------------------------------------------------
   // quick: one img2img pass. precise (Settings → Map painting): ① the empty terrain, you pick one, ② every prop group painted into its spot.
   let showGroups = $state(false);
-  const groups = $derived(doc && battle ? groupProps(doc) : []);
-  /** the prop group whose prompt is being edited: outlined on the plan */
+  /** what step 2 paints, the same shape for both kinds: battle = touching props of one kind, region = touching structures of one kind */
+  interface UiGroup { id: string; kind: string; count: number; rect: { x: number; y: number; w: number; h: number }; fallback: string }
+  const groups = $derived.by((): UiGroup[] => {
+    if (!doc) return [];
+    if (battle) {
+      const cell = imageSize(doc).cell;
+      return groupProps(doc).map((g) => ({ id: g.id, kind: g.kind, count: g.props.length, rect: { x: g.bbox.x0 * cell, y: g.bbox.y0 * cell, w: (g.bbox.x1 - g.bbox.x0) * cell, h: (g.bbox.y1 - g.bbox.y0) * cell }, fallback: fallbackGroupPrompt({ kind: g.kind, count: g.props.length }) }));
+    }
+    return groupRegion(doc).map((g) => ({
+      id: g.id, kind: g.kind, count: g.shapes.length,
+      rect: { x: g.bbox.x0, y: g.bbox.y0, w: g.bbox.x1 - g.bbox.x0, h: g.bbox.y1 - g.bbox.y0 },
+      fallback: fallbackRegionPrompt({ kindPrompt: regionKind(g.kind, doc!.kinds).prompt, shapePrompts: g.shapes.map((x) => x.prompt ?? '').filter(Boolean), count: g.shapes.length }),
+    }));
+  });
+  /** the prop / structure group whose prompt is being edited: outlined on the plan */
   let hotGroup = $state('');
-  type Group = (typeof groups)[number];
+  type Group = UiGroup;
   const promptOf = (g: Group) => {
     const e = doc?.propPrompts?.[g.id];
     return e && e.kind === g.kind ? e : null;
   };
   const ownPrompts = $derived(groups.filter((g) => { const e = promptOf(g); return e && !e.ai && e.text.trim(); }).length);
-  const defaultPrompt = (g: Group) => fallbackGroupPrompt({ kind: g.kind, count: g.props.length });
+  const defaultPrompt = (g: Group) => g.fallback;
   /** the GM's own wording (an empty text = "no wording of mine", the AI writes it) */
   function setPrompt(g: Group, text: string) {
     if (!doc) return;
@@ -712,6 +727,16 @@
   let promptTouched = $state(false);
   let fidelity = $state<'faithful' | 'balanced' | 'painterly'>('balanced');
   let variants = $state(1);
+  /** region maps: how flat the terrain is painted; both kinds: blend the objects in at the end */
+  let viewMode = $state<'default' | 'strict' | 'plan'>('default');
+  let consolidate = $state(true);
+  const VIEW_HINT = { default: 'the natural painted-map look (mountains as icons) — best for most maps', strict: 'straight down like a satellite image — best for snow, mountains and plans', plan: 'a hillshaded survey map: heavy relief, very flat' };
+  $effect(() => {
+    if (doc && !untrack(() => promptTouched)) {
+      viewMode = doc.view ?? 'default';
+      consolidate = doc.consolidate !== false;
+    }
+  });
   $effect(() => {
     if (!promptTouched && node) prompt_ = [node.title, node.summary].filter(Boolean).join('. ');
   });
@@ -750,7 +775,7 @@
   /** quick: the whole picture. precise: step 1, the empty terrain (the server decides by the setting). */
   async function renderNow() {
     await save();
-    const r = await cmd('render_map', { mapId, prompt: prompt_, fidelity, variants, ...aiArgs() });
+    const r = await cmd('render_map', { mapId, prompt: prompt_, fidelity, variants, ...(battle ? {} : { view: viewMode }), consolidate, ...aiArgs() });
     if (r) promptTouched = true;
   }
   async function pickTerrain(f: string) {
@@ -761,7 +786,7 @@
   }
   async function paintProps() {
     await save();
-    const r = await cmd('paint_map_props', { mapId, prompt: prompt_, variants: 1, ...aiArgs() });
+    const r = await cmd('paint_map_props', { mapId, prompt: prompt_, variants: 1, consolidate, ...aiArgs() });
     if (r) promptTouched = true;
   }
   async function acceptTerrain() {
@@ -952,10 +977,10 @@
               {@html svgStr}
             {/if}
             <svg class="ov" width={dim.w} height={dim.h} viewBox="0 0 {dim.w} {dim.h}">
-              {#if battle && (showGroups || hotGroup) && (view === 'plan' || view === 'control')}
+              {#if (showGroups || hotGroup) && (view === 'plan' || view === 'control' || view === 'terrain')}
                 {#each groups.filter((x) => showGroups || x.id === hotGroup) as g (g.id)}
-                  <rect class="grp" class:hot={g.id === hotGroup} x={g.bbox.x0 * dim.cell} y={g.bbox.y0 * dim.cell} width={(g.bbox.x1 - g.bbox.x0) * dim.cell} height={(g.bbox.y1 - g.bbox.y0) * dim.cell} rx="4" />
-                  <text class="grpid" x={g.bbox.x0 * dim.cell + 3} y={g.bbox.y0 * dim.cell + 13}>{g.id.slice(1)}</text>
+                  <rect class="grp" class:hot={g.id === hotGroup} x={g.rect.x} y={g.rect.y} width={g.rect.w} height={g.rect.h} rx="4" />
+                  <text class="grpid" x={g.rect.x + 3} y={g.rect.y + 13}>{g.id.slice(1)}</text>
                 {/each}
               {/if}
               {#if battle && view === 'plan'}
@@ -1042,14 +1067,21 @@
 
           {#if staged}
             <div class="mode" data-tour="map-mode">Precise painting · 2 steps <button class="lnk" onclick={() => (app.settingsOpen = true)} title="Change in Settings → Map painting">change</button></div>
-            <p class="warn">⏱ This takes a while — {dur(paint?.terrainSeconds ?? 0)} for the terrain, then {dur(paint?.propsSeconds ?? 0)} for {paint?.groups ?? 0} prop group{paint?.groups === 1 ? '' : 's'}, on this computer{paint?.measured ? '' : ' (a rough guess until ComfyUI has made an image here)'}. You decide after each step, and you can stop at any time.</p>
+            <p class="warn">⏱ This takes a while — {dur(paint?.terrainSeconds ?? 0)} for the terrain, then {dur(paint?.propsSeconds ?? 0)} for {paint?.groups ?? 0} {battle ? 'prop' : 'structure'} group{paint?.groups === 1 ? '' : 's'}, on this computer{paint?.measured ? '' : ' (a rough guess until ComfyUI has made an image here)'}. You decide after each step, and you can stop at any time.</p>
 
-            <div class="step"><b>①</b> Terrain <span class="dim">— the empty place, no props</span></div>
+            <div class="step"><b>①</b> Terrain <span class="dim">{battle ? '— the empty place, no props' : '— the land, then rivers and roads along your lines; no structures'}</span></div>
             <textarea class="field" data-tour="map-prompt" rows="3" placeholder="Materials, mood, lighting, setting… (the AI turns this into a description of the empty place)" bind:value={prompt_} oninput={() => (promptTouched = true)}></textarea>
             <div class="seg w">
               {#each ['faithful', 'balanced', 'painterly'] as f}<button class:on={fidelity === f} onclick={() => (fidelity = f as typeof fidelity)}>{f}</button>{/each}
             </div>
             <div class="dim">{TERRAIN_HINT[fidelity]}</div>
+            {#if !battle}
+              <div class="label">Camera <span class="dim">— how flat the land is painted</span></div>
+              <div class="seg w">
+                {#each [['default', 'natural'], ['strict', 'top-down'], ['plan', 'survey map']] as [v, n]}<button class:on={viewMode === v} onclick={() => (viewMode = v as typeof viewMode)}>{n}</button>{/each}
+              </div>
+              <div class="dim">{VIEW_HINT[viewMode]}</div>
+            {/if}
             <div class="row">
               <select class="field" bind:value={variants} title="How many terrains to paint to choose from">{#each [1, 2, 3, 4] as n}<option value={n}>{n}×</option>{/each}</select>
               <button class="btn primary grow" data-tour="map-terrain-btn" onclick={renderNow} disabled={prompt_.trim().length < 8 || !nodeId || busy}>{doc?.terrains?.length ? 'Paint another terrain' : 'Paint the terrain'}</button>
@@ -1071,8 +1103,8 @@
               </div>
             {/if}
 
-            <div class="step"><b>②</b> Props <span class="dim">— painted into their spots</span></div>
-            <p class="dim" data-tour="map-groups">Touching props of the same kind are painted as one object (a row of tables is one long table). <label class="chk"><input type="checkbox" bind:checked={showGroups} /> show the groups on the plan</label></p>
+            <div class="step"><b>②</b> {battle ? 'Props' : 'Structures'} <span class="dim">— painted into their spots</span></div>
+            <p class="dim" data-tour="map-groups">{battle ? 'Touching props of the same kind are painted as one object (a row of tables is one long table).' : 'Touching structures of the same kind are painted as one object (a cluster of huts is one village). Names and wording you give a shape are used.'} <label class="chk"><input type="checkbox" bind:checked={showGroups} /> show the groups on the plan</label></p>
             {#if groups.length}
               <details class="pp" data-tour="map-prop-prompts">
                 <summary>Painting prompts of the groups{#if ownPrompts} <span class="dim">· {ownPrompts} written by you</span>{/if}</summary>
@@ -1081,7 +1113,7 @@
                   {@const e = promptOf(g)}
                   <div class="gp" class:hot={hotGroup === g.id}>
                     <div class="gh">
-                      <b>{g.id.slice(1)}</b> {g.kind.replace(/_/g, ' ')}{g.props.length > 1 ? ` ×${g.props.length}` : ''}
+                      <b>{g.id.slice(1)}</b> {g.kind.replace(/_/g, ' ')}{g.count > 1 ? ` ×${g.count}` : ''}
                       {#if e?.ai && e.text}<span class="tag ai">written by the AI</span>{:else if e?.text.trim()}<span class="tag">yours</span>{/if}
                     </div>
                     <textarea class="field" rows="2" placeholder={`${defaultPrompt(g)} (default)`} value={e?.text ?? ''}
@@ -1095,18 +1127,21 @@
                 {/each}
               </details>
             {/if}
+            {#if groups.length}
+              <label class="chk" title="After the objects are painted, the surroundings of each one are blended into the picture: shadows appear, edges settle. Takes one more pass."><input type="checkbox" bind:checked={consolidate} /> blend the {battle ? 'props' : 'structures'} into the picture at the end <span class="dim">(+1 pass)</span></label>
+            {/if}
             {#if !groups.length}
-              <p class="warn">This map has no props. Accept a terrain as the finished picture, or place some props first.</p>
+              <p class="warn">This map has no {battle ? 'props' : 'structures'}. Accept a terrain as the finished picture, or {battle ? 'place some props' : 'draw some structures'} first.</p>
               <button class="btn primary" onclick={acceptTerrain} disabled={!doc?.terrainPick || busy}>Use the chosen terrain as the finished picture</button>
             {:else}
               <button class="btn primary" data-tour="map-props-btn" onclick={paintProps} disabled={!doc?.terrainPick || prompt_.trim().length < 8 || !nodeId || busy}>
-                {doc?.renders.length ? 'Paint the props again' : 'Paint the props on the chosen terrain'}
+                {doc?.renders.length ? `Paint the ${battle ? 'props' : 'structures'} again` : `Paint the ${battle ? 'props' : 'structures'} on the chosen terrain`}
               </button>
               {#if !doc?.terrainPick}<div class="dim">Choose a terrain above first.</div>{/if}
             {/if}
             {@render jobsView()}
             {@render rendersView()}
-            {#if doc?.renders.length}<div class="dim">Not happy? Paint the props again for a new variation, or choose another terrain.</div>{/if}
+            {#if doc?.renders.length}<div class="dim">Not happy? Paint the {battle ? 'props' : 'structures'} again for a new variation, or choose another terrain.</div>{/if}
           {:else}
             <div class="label">What does the place look like?</div>
             <textarea class="field" rows="4" placeholder="Materials, mood, lighting, setting… (not the layout — that comes from your plan)" bind:value={prompt_} oninput={() => (promptTouched = true)}></textarea>
