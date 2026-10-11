@@ -181,18 +181,28 @@ The editor autosaves and edits through the same ops as the AI's `edit_map`, so y
 **Two ways to paint a battle map** — choose once in **⚙ Settings → Map painting** (it is a setting of *this computer*, because it depends on how fast your graphics card is). Both start from the same plan:
 
 <div align="center">
-<img src="docs/img/map-quick-vs-precise.jpg" alt="The same tavern plan painted in one step (props drift, merge and turn into blobs) and in two steps (every table, chair and barrel where the plan put it)" width="100%">
+<img src="docs/img/battle-before-after.jpg" alt="The same tavern plan: the plan, painted in one pass (tables drift, turn and merge), and painted in steps (every table, chair and barrel where the plan put it, with shadows)" width="100%">
 </div>
 
-<sub>One tavern, one plan: left the editor, in the middle the **quick** painting (a single pass: furniture drifts, merges and vanishes), right the **precise** painting (empty terrain first, then every prop group painted into its spot).</sub>
+<sub>One tavern, one plan, painted by the app itself: left the plan in the editor, in the middle the **quick** way (a single pass: the furniture drifts, turns and merges), right the **precise** way (terrain first, then every prop group into its place, then a blend pass that settles the objects into the floor).</sub>
 
 * **Quick (1 step)** — the plan, props included, is painted in a single pass (about 1–2 minutes on a 16 GB card). Less exact: furniture can drift, merge or vanish.
 * **Precise (2 steps + a blend)** — **① Terrain:** only the empty place is painted (floors, walls, doors; no props), so the model is free to be creative — you pick the terrain you like or paint another. **② Props:** every prop group is then painted into exactly its spot, one after the other, each with its own AI-written prompt; touching props of the same kind count as **one** object (a row of tables is one long table, five barrels in a row stay five barrels — *show the groups on the plan* previews it). **③ Blend (optional, on by default):** a ring around every object is repainted so shadows appear and the object settles into the floor — the objects themselves and everything else stay exactly as they were. You accept the result or paint the props again. **This takes a while** — roughly 1½ minutes for the terrain plus ~40 seconds per prop group on a 16 GB card, so a map with 15 groups needs around 12 minutes; weaker cards need longer. The Paint tab shows an estimate for the map in front of you (a guess until ComfyUI has made an image on your computer, then measured) and you can stop at any time. It needs no extra models. The **Props** step has an expandable **Painting prompts of the groups** section: every prop group has its own prompt, and you can write it yourself (no AI needed — empty groups get a plain default, or the AI's words if one is connected). Your wording is used exactly as written; after a run, what the AI wrote is shown there so you can adjust it and paint again.
 
+<div align="center">
+<img src="docs/img/battle-two-step.gif" alt="Painting a battle map in steps: the plan, the empty room, then every prop group appears in its place, then the blend" width="85%">
+</div>
+
 **Region maps work in the same two steps.** **① Terrain:** the land is painted from your areas (sea, forest, desert, snow… and your own terrain types); rivers and roads are *not* part of this sketch, so the model cannot invent or lose them. Then the **lines** are painted one kind at a time — rivers first, then roads, railways, paths and bridges: each line is drawn exactly along your path with its width, the whole picture is refined at a low strength, and only a corridor around the line is kept (everything else is untouched). *Camera* chooses how flat the land is painted: natural (painted-map look), top-down, or a hillshaded survey map. **② Structures:** every structure you drew as an **area** (a city, a camp, a hospital, a custom type — a place is never a dot) is painted into exactly its shape, each with its own AI-written prompt that follows the campaign's style (a camp is tipis, yurts or canvas tents depending on the world); touching shapes of one kind are one object. **③ Blend** as for battle maps. About 1 minute per pass on a 16 GB card.
 
 <div align="center">
-<img src="docs/img/map-two-steps.gif" alt="Two-step painting: the plan, the empty terrain, then the 19 prop groups appear one after the other" width="85%">
+<img src="docs/img/region-before-after.jpg" alt="The same region plan: the plan, painted in one pass (the city turns into a sunburst of blocks, roads and rivers wander off) and painted in steps (the land, then rivers and roads along the drawn lines, then every structure in its area)" width="100%">
+</div>
+
+<sub>One kingdom, one plan: left the plan, in the middle the **quick** way, right the stepped way — rivers and roads follow the lines you drew, and the city, castle, port and villages sit exactly in the areas you marked.</sub>
+
+<div align="center">
+<img src="docs/img/region-two-step.gif" alt="Painting a region map in steps: the plan, the land, the river, the roads and the bridge, then every structure appears in its area, then the blend" width="85%">
 </div>
 
 <sub>The precise way in motion: the plan, the empty place only (step 1 — you accept it or paint another), then the props, group by group, each into exactly its spot (step 2).</sub>
