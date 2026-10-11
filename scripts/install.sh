@@ -7,6 +7,7 @@
 #     ./scripts/install.sh --yes        say yes to everything (install the optional tools too)
 #     ./scripts/install.sh --no-tools   never touch system packages
 #     ./scripts/install.sh --no-build   skip building the web UI (npm run dev does not need it)
+#     ./scripts/install.sh --only-tools only the optional helper tools (skip Node check, npm install, build)
 #
 # What it does:  checks Node.js 20+, runs `npm install` in this folder, builds the web UI, and — if you agree —
 # installs the optional helper tools (WeasyPrint for the GM binder PDF, ImageMagick for thumbnails, poppler + unzip
@@ -18,7 +19,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CHECK=0 YES=0 TOOLS=ask BUILD=1
+CHECK=0 YES=0 TOOLS=ask BUILD=1 ONLY_TOOLS=0
 for a in "$@"; do
   case "$a" in
     --check) CHECK=1 ;;
@@ -26,7 +27,8 @@ for a in "$@"; do
     --no-tools) TOOLS=no ;;
     --tools) TOOLS=yes ;;
     --no-build) BUILD=0 ;;
-    -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --only-tools) ONLY_TOOLS=1 ;;
+    -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $a (try --help)"; exit 2 ;;
   esac
 done
@@ -52,7 +54,7 @@ fi
 
 # ---- which system are we on -------------------------------------------------------------------------------
 PM=""
-if have apt-get; then PM=apt; elif have dnf; then PM=dnf; elif have pacman; then PM=pacman; elif have zypper; then PM=zypper; elif have brew; then PM=brew; fi
+if have apt-get; then PM=apt; elif have dnf; then PM=dnf; elif have pacman; then PM=pacman; elif have zypper; then PM=zypper; elif have apk; then PM=apk; elif have brew; then PM=brew; fi
 OS="$(uname -s)"
 if [ "$OS" = Linux ] && grep -qi microsoft /proc/version 2>/dev/null; then OS="Linux (WSL2)"; fi
 echo "  ${D}system: $OS · package manager: ${PM:-none found}${X}"
@@ -60,7 +62,9 @@ echo "  ${D}system: $OS · package manager: ${PM:-none found}${X}"
 # ---- 1. Node.js -------------------------------------------------------------------------------------------
 head_ "1/4  Node.js"
 node_ok=0
-if have node && have npm; then
+if [ "$ONLY_TOOLS" = 1 ]; then
+  warn "skipped (--only-tools)"; node_ok=1
+elif have node && have npm; then
   major="$(node -v | sed 's/^v//; s/\..*//')"
   if [ "${major:-0}" -ge 20 ] 2>/dev/null; then ok "Node $(node -v), npm $(npm -v)"; node_ok=1; else bad "Node $(node -v) is too old; PenNodePaper needs Node 20 or newer"; fi
 else
@@ -74,6 +78,7 @@ if [ "$node_ok" = 0 ]; then
     pacman) echo "    sudo pacman -S nodejs npm" ;;
     brew)   echo "    brew install node" ;;
     zypper) echo "    sudo zypper install nodejs20 npm20" ;;
+    apk)    echo "    apk add nodejs npm   (as root)" ;;
     apt)    echo "    (the distro's nodejs is usually too old)" ;;
   esac
   echo "    nvm (any system, no root):  https://github.com/nvm-sh/nvm  then  nvm install --lts"
@@ -83,7 +88,9 @@ fi
 
 # ---- 2. npm install ---------------------------------------------------------------------------------------
 head_ "2/4  Project dependencies"
-if [ "$CHECK" = 1 ]; then
+if [ "$ONLY_TOOLS" = 1 ]; then
+  warn "skipped (--only-tools)"
+elif [ "$CHECK" = 1 ]; then
   if [ -d node_modules/@pnp ] || [ -d node_modules/hono ]; then ok "dependencies are installed"; else warn "dependencies are not installed yet (npm install)"; fi
 else
   echo "  ${D}npm install (this takes a minute the first time)…${X}"
@@ -92,7 +99,9 @@ fi
 
 # ---- 3. build the web UI ----------------------------------------------------------------------------------
 head_ "3/4  Web UI"
-if [ "$CHECK" = 1 ]; then
+if [ "$ONLY_TOOLS" = 1 ]; then
+  warn "skipped (--only-tools)"
+elif [ "$CHECK" = 1 ]; then
   if [ -f packages/web/dist/index.html ]; then ok "the web UI is built"; else warn "the web UI is not built (only needed for 'npm start'; 'npm run dev' does not need it)"; fi
 elif [ "$BUILD" = 1 ]; then
   if npm run build >/dev/null 2>&1; then ok "built (npm start serves it on http://localhost:4317)"; else bad "build failed — run 'npm run build' to see why"; fi
@@ -109,6 +118,7 @@ pkg_for() { # pkg_for <key>
     dnf:weasyprint) echo weasyprint ;;     dnf:magick) echo ImageMagick ;;     dnf:pdftotext) echo poppler-utils ;;   dnf:unzip) echo unzip ;;  dnf:git) echo git ;;
     pacman:weasyprint) echo python-weasyprint ;; pacman:magick) echo imagemagick ;; pacman:pdftotext) echo poppler ;;   pacman:unzip) echo unzip ;; pacman:git) echo git ;;
     zypper:weasyprint) echo python3-weasyprint ;; zypper:magick) echo ImageMagick ;; zypper:pdftotext) echo poppler-tools ;; zypper:unzip) echo unzip ;; zypper:git) echo git ;;
+    apk:weasyprint) echo py3-weasyprint ;; apk:magick) echo imagemagick ;; apk:pdftotext) echo poppler-utils ;; apk:unzip) echo unzip ;; apk:git) echo git ;;
     brew:weasyprint) echo weasyprint ;;    brew:magick) echo imagemagick ;;    brew:pdftotext) echo poppler ;;        brew:unzip) echo unzip ;; brew:git) echo git ;;
   esac
 }
@@ -133,25 +143,41 @@ if [ "${#missing_keys[@]}" -gt 0 ] && [ "$CHECK" = 0 ] && [ "$TOOLS" != no ]; th
   if [ -z "$PM" ]; then
     warn "no supported package manager found; install the missing tools by hand (docs/INSTALL.md → Other optional tools)"
   else
+    # who may install packages: root directly, else sudo / doas (Homebrew never needs either)
+    PRIV=""
+    if [ "$PM" != brew ] && [ "$(id -u)" != 0 ]; then
+      if have sudo; then PRIV="sudo "; elif have doas; then PRIV="doas "; else PRIV="?"; fi
+    fi
+    cmds=()
     case "$PM" in
-      apt) cmd=(sudo apt-get install -y "${pkgs[@]}") ;;
-      dnf) cmd=(sudo dnf install -y "${pkgs[@]}") ;;
-      pacman) cmd=(sudo pacman -S --needed --noconfirm "${pkgs[@]}") ;;
-      zypper) cmd=(sudo zypper install -y "${pkgs[@]}") ;;
-      brew) cmd=(brew install "${pkgs[@]}") ;;
+      apt) cmds=("${PRIV}apt-get update" "${PRIV}apt-get install -y ${pkgs[*]}") ;;
+      dnf) cmds=("${PRIV}dnf install -y ${pkgs[*]}") ;;
+      pacman) cmds=("${PRIV}pacman -S --needed --noconfirm ${pkgs[*]}") ;;
+      zypper) cmds=("${PRIV}zypper --non-interactive install ${pkgs[*]}") ;;
+      apk) cmds=("${PRIV}apk add ${pkgs[*]}") ;;
+      brew) cmds=("brew install ${pkgs[*]}") ;;
     esac
     echo
-    echo "  To install the missing tools this would run:"
-    echo "    ${B}${cmd[*]}${X}"
-    if ask "  Run it now?"; then
-      if "${cmd[@]}"; then ok "installed"; else
+    if [ "$PRIV" = "?" ]; then
+      warn "you are not root and neither sudo nor doas is installed. As root, run:"
+      for c in "${cmds[@]}"; do echo "    ${B}${c//\?/}${X}"; done
+      cmds=()
+    else
+      echo "  To install the missing tools this would run:"
+      for c in "${cmds[@]}"; do echo "    ${B}$c${X}"; done
+    fi
+    if [ "${#cmds[@]}" -gt 0 ] && ask "  Run it now?"; then
+      failed=0
+      for c in "${cmds[@]}"; do bash -c "$c" || { failed=1; break; }; done
+      if [ "$failed" = 0 ]; then ok "installed"; else
         warn "the package manager reported a problem"
+        [ "$PM" = pacman ] && echo "  ${D}on Arch a stale package database is the usual cause: update the system first (sudo pacman -Syu), then run this again${X}"
         if printf '%s\n' "${missing_keys[@]}" | grep -qx weasyprint && have pip3; then
           echo "  ${D}trying WeasyPrint through pip instead…${X}"
           pip3 install --user weasyprint && ok "WeasyPrint installed with pip (make sure ~/.local/bin is on your PATH)"
         fi
       fi
-    else
+    elif [ "${#cmds[@]}" -gt 0 ]; then
       warn "skipped — run the command above any time (or ./scripts/install.sh --tools)"
     fi
   fi

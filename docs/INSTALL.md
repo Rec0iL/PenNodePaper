@@ -46,7 +46,8 @@ cd PenNodePaper          # or PenNodePaper-main if you downloaded the ZIP
 **3. Install** — with the install script (checks Node 20+, runs `npm install`, builds the UI and offers the optional helper tools: WeasyPrint, ImageMagick, poppler, unzip, git; it never installs the AI assistants or ComfyUI):
 
 ```bash
-./scripts/install.sh            # ./scripts/install.sh --check  only reports; --yes answers yes to everything
+./scripts/install.sh            # --check only reports · --yes answers yes · --only-tools skips Node/npm and only installs the helper tools
+                                # works with apt, dnf, pacman, zypper, apk and Homebrew
 ```
 
 or by hand, if you only want the core:
