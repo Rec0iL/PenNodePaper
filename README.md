@@ -215,6 +215,16 @@ The editor autosaves and edits through the same ops as the AI's `edit_map`, so y
 <img src="docs/img/region2-two-step.gif" alt="Painting the mountain pass in steps: the plan, the land, the river, the road and bridge, then every structure appears in its area, then the blend" width="85%">
 </div>
 
+**And a third — a green river valley** with a market town, farms, a hospital, a camp and a railway: asphalt road, gravel road, footpath, railway and the bridge are five different line kinds, painted in the land pass along their drawn paths after the river; every house, farm and the hospital sits in its own area.
+
+<div align="center">
+<img src="docs/img/region3-before-after.jpg" alt="A third region plan, a river valley: the plan, painted in one pass (a different street layout, the railway and the road merge) and painted in steps (river, asphalt road, railway and footpath follow the drawn lines, the town, farms, hospital and camp sit in their areas)" width="100%">
+</div>
+
+<div align="center">
+<img src="docs/img/region3-two-step.gif" alt="Painting the valley in steps: the plan, the land, the river, the roads, rails and bridge, then every structure appears in its area, then the blend" width="85%">
+</div>
+
 <sub>The precise way in motion: the plan, the empty place only (step 1 — you accept it or paint another), then the props, group by group, each into exactly its spot (step 2).</sub>
 
 The AI (`render_map`, `paint_map_props`, `set_map_terrain`, `accept_map_terrain`) works the same two steps and waits for your choice between them.
