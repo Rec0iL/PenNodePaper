@@ -105,7 +105,7 @@ export const SEED_NODES: SeedNode[] = [
   {
     id: 'greywater-coast', type: 'location', title: 'Greywater and the coast', tags: ['map'],
     summary: 'A day’s ride along the coast: the harbour, a ruined lighthouse, the smugglers’ cove.',
-    body: 'A region map: roads, forests and the places that matter. Pins are towns, ruins and caves.',
+    body: 'A region map: roads, forests and the places that matter. The places are small marked areas: towns, ruins and caves.',
     poolHint: 'Show it when the players ask what is around.',
   },
 ];
@@ -177,11 +177,11 @@ export const COAST_OPS: Record<string, unknown>[] = [
   { op: 'shape', type: 'path', kind: 'river', points: [[1180, 250], [1010, 330], [880, 360], [700, 340], [520, 300], [430, 290]], width: 10, id: 'river' },
   { op: 'shape', type: 'path', kind: 'road', points: [[420, 330], [560, 400], [700, 420], [860, 400], [980, 470], [1100, 520]], width: 8, id: 'road-east' },
   { op: 'shape', type: 'path', kind: 'road', points: [[420, 330], [470, 470], [560, 600]], width: 8, id: 'road-south' },
-  { op: 'shape', type: 'pin', kind: 'port', points: [[420, 330]], r: 18, label: 'Greywater', id: 'pin-greywater' },
-  { op: 'shape', type: 'pin', kind: 'ruins', points: [[330, 560]], r: 14, label: 'Old lighthouse', id: 'pin-lighthouse' },
-  { op: 'shape', type: 'pin', kind: 'cave', points: [[300, 210]], r: 14, label: 'Smugglers’ cove', id: 'pin-cove' },
-  { op: 'shape', type: 'pin', kind: 'village', points: [[1100, 520]], r: 14, label: 'Millbrook', id: 'pin-millbrook' },
-  { op: 'shape', type: 'pin', kind: 'castle', points: [[1250, 160]], r: 16, label: 'Hollow Keep', id: 'pin-keep' },
+  { op: 'shape', type: 'ellipse', kind: 'port', points: [[420, 330], [18, 18]], label: 'Greywater', id: 'pin-greywater' },
+  { op: 'shape', type: 'ellipse', kind: 'ruins', points: [[330, 560], [14, 14]], label: 'Old lighthouse', id: 'pin-lighthouse' },
+  { op: 'shape', type: 'ellipse', kind: 'cave', points: [[300, 210], [14, 14]], label: 'Smugglers’ cove', id: 'pin-cove' },
+  { op: 'shape', type: 'ellipse', kind: 'village', points: [[1100, 520], [14, 14]], label: 'Millbrook', id: 'pin-millbrook' },
+  { op: 'shape', type: 'ellipse', kind: 'castle', points: [[1250, 160], [16, 16]], label: 'Hollow Keep', id: 'pin-keep' },
 ];
 
 /** Where the practice campaign's frames and extra canvases appear once the tour creates them. */

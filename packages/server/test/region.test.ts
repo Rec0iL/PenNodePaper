@@ -625,6 +625,15 @@ describe('the campaign library of region kinds', () => {
     expect(store.maps.get(mapId).kinds).toHaveLength(1);
   });
 
+  it('edit_map still accepts a pin from an old caller (an AI with a stale tool list) and stores a round area', () => {
+    const mapId = setup();
+    run('edit_map', { mapId, ops: [{ op: 'shape', type: 'pin', kind: 'village', points: [[100, 100]], r: 20, label: 'Millbrook', id: 'p1' }, { op: 'shape', type: 'pin', kind: 'city', points: [[300, 100]], id: 'p2' }] });
+    const m = store.maps.get(mapId);
+    expect(m.shapes.some((s) => s.type === 'pin')).toBe(false);
+    expect(m.shapes.find((s) => s.id === 'p1')).toMatchObject({ type: 'ellipse', points: [[100, 100], [20, 20]], label: 'Millbrook' });
+    expect(m.shapes.find((s) => s.id === 'p2')?.type).toBe('ellipse');
+  });
+
   it('refuses built-in ids and unusable definitions with a message for the AI', () => {
     expect(() => run('set_region_kind', { name: 'City', id: 'city', layer: 'structure', color: '#aa0000', prompt: 'a big city' })).toThrow(/built-in/);
     expect(() => run('set_region_kind', { name: 'Odd', layer: 'terrain', color: 'green', prompt: 'a green thing' })).toThrow(/hex colour/);

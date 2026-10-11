@@ -506,6 +506,3 @@ export function terrainLegend(m: MapDoc): string {
 export const CONTROL_LEGEND =
   'Input is a flat colour-coded top-down floor plan: near-black = solid rock, thick black lines = walls, orange gaps in walls = wooden doors, grey = stone floor, brown = wooden floor, green = grass, blue = water, red = carpet, small coloured shapes = furniture and props.';
 
-export const REGION_LEGEND =
-  'Input is a flat colour-coded map sketch: blue = sea and lakes, light-blue lines = rivers, dark green = forest, grey = mountains, olive/tan = hills and desert, brown lines = roads, coloured dots = towns, villages and castles.';
-
