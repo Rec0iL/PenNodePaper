@@ -76,11 +76,6 @@
     return q ? { x: q.x - 3, y: q.y - 3, w: q.w + 6, h: q.h + 6 } : null;
   });
   const printable = $derived(placed.filter((q) => q.shown).length);
-  const LABEL_GROUPS = [
-    { label: 'Plain', styles: LABEL_STYLES.filter((x) => x.group === 'neutral') },
-    { label: 'KINETIK looks', styles: LABEL_STYLES.filter((x) => x.group === 'kinetik') },
-    { label: 'Settings', styles: LABEL_STYLES.filter((x) => x.group === 'setting') },
-  ];
   const styleInfo = (id?: string) => LABEL_STYLES.find((x) => x.id === (id ?? DEFAULT_LABEL_STYLE)) ?? LABEL_STYLES[0];
   let printing = $state(false);
   const node = $derived(nodeId ? app.nodes[nodeId] : undefined);
@@ -1062,7 +1057,7 @@
   <div class="label">Lettering style</div>
   <select class="field" value={style ?? ''} onchange={(e) => set({ style: e.currentTarget.value || null })}>
     <option value="">The map’s style ({styleInfo(doc?.lettering?.style).name})</option>
-    {#each LABEL_GROUPS as g}<optgroup label={g.label}>{#each g.styles as st}<option value={st.id}>{st.name}</option>{/each}</optgroup>{/each}
+    {#each LABEL_STYLES as st}<option value={st.id}>{st.name}</option>{/each}
   </select>
   <div class="label">Size</div>
   <div class="seg w">{#each ['sm', 'md', 'lg'] as sz}<button class:on={(size ?? 'md') === sz} onclick={() => set({ size: sz === 'md' ? null : (sz as LabelSize) })}>{sz === 'sm' ? 'small' : sz === 'md' ? 'normal' : 'large'}</button>{/each}</div>
@@ -1084,7 +1079,7 @@
 {#snippet namesSection()}
   <div class="step"><b>Aa</b> Names on the picture <span class="dim">({printable} to print)</span></div>
   <select class="field" value={doc?.lettering?.style ?? DEFAULT_LABEL_STYLE} onchange={(e) => setLettering(e.currentTarget.value)}>
-    {#each LABEL_GROUPS as g}<optgroup label={g.label}>{#each g.styles as st}<option value={st.id}>{st.name} — {st.setting}</option>{/each}</optgroup>{/each}
+    {#each LABEL_STYLES as st}<option value={st.id}>{st.name} — {st.setting}</option>{/each}
   </select>
   <p class="dim">The AI never paints text: names are set as lettering over the finished picture, in the style of your choice (a single name can have its own). They also show in the plan.</p>
   {#if doc?.renders.length}

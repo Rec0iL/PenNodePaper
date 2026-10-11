@@ -2,8 +2,6 @@
 // Pure data and SVG strings — the browser editor and the server (resvg) draw the same thing.
 // Fonts: every font id below is a file `assets/fonts/<id>.ttf` whose family name is "PNP <id>" (see FONT_FAMILY).
 
-export type LabelGroup = 'neutral' | 'kinetik' | 'setting';
-
 type Kind = 'pips' | 'inkmap' | 'halo' | 'rect' | 'cut' | 'skew' | 'pixel' | 'brackets' | 'tape' | 'seal' | 'double' | 'bar' | 'blueprint' | 'stencil' | 'stone' | 'banner';
 type Deco = 'wave' | 'rivets' | 'hazard' | 'drips' | 'moss' | 'tag' | 'paw' | 'squiggle' | 'flourish';
 
@@ -12,7 +10,6 @@ export interface LabelStyleDef {
   name: string;
   /** which kind of campaign it is for */
   setting: string;
-  group: LabelGroup;
   kind: Kind;
   font: string;
   /** font size relative to the map's base lettering size */
@@ -47,30 +44,33 @@ export interface LabelStyleDef {
 
 export const DEFAULT_LABEL_STYLE = 'plain-light';
 
-export const LABEL_STYLES: LabelStyleDef[] = [
-  { id: 'plain-light', name: 'Plain · light text', setting: 'any setting, any picture', group: 'neutral', kind: 'halo', font: 'barlow', size: 1, tracking: 0.04, ink: '#ffffff', halo: ['#101319', 0.2], padX: 0.15, padY: 0.1 },
-  { id: 'plain-dark', name: 'Plain · dark text', setting: 'any setting, light pictures', group: 'neutral', kind: 'halo', font: 'barlow', size: 1, tracking: 0.04, ink: '#14161c', halo: ['#f6f3ea', 0.2], padX: 0.15, padY: 0.1 },
+const STYLES: LabelStyleDef[] = [
+  { id: 'plain-light', name: 'Plain · light text', setting: 'any setting, any picture', kind: 'halo', font: 'barlow', size: 1, tracking: 0.04, ink: '#ffffff', halo: ['#101319', 0.2], padX: 0.15, padY: 0.1 },
+  { id: 'plain-dark', name: 'Plain · dark text', setting: 'any setting, light pictures', kind: 'halo', font: 'barlow', size: 1, tracking: 0.04, ink: '#14161c', halo: ['#f6f3ea', 0.2], padX: 0.15, padY: 0.1 },
 
-  { id: 'noir', name: 'Neo-Noir', setting: 'near-future, cyber, thrillers', group: 'kinetik', kind: 'cut', font: 'bebas', size: 1.15, caps: true, tracking: 0.08, ink: '#e6eaf0', fill: '#0b0c10', stroke: '#00e5ff', strokeW: 0.07, shadow: '#ffb800', padX: 0.55, padY: 0.3, accent: '#00e5ff' },
-  { id: 'terminal', name: 'Terminal', setting: 'hacking, sci-fi stations, bunkers', group: 'kinetik', kind: 'brackets', font: 'vt323', size: 1.35, caps: true, tracking: 0.04, ink: '#bfe9d6', fill: '#030605', stroke: '#29e0a0', strokeW: 0.06, padX: 0.5, padY: 0.2, accent: '#29e0a0' },
-  { id: 'cyberdeck', name: 'Cyberdeck', setting: 'cyberpunk, megacities', group: 'kinetik', kind: 'cut', font: 'tektur', size: 1, caps: true, tracking: 0.1, ink: '#e9e6ff', fill: '#07061a', stroke: '#ff2bd6', strokeW: 0.08, shadow: '#19e9ff', padX: 0.6, padY: 0.32, accent: '#19e9ff' },
-  { id: 'filmnoir', name: 'Film Noir', setting: 'crime, detectives, black and white', group: 'kinetik', kind: 'rect', font: 'bigshoulders', size: 1.2, caps: true, tracking: 0.06, ink: '#ffffff', fill: '#000000', stroke: '#f2f2f2', strokeW: 0.05, shadow: '#ec1c24', padX: 0.5, padY: 0.2, accent: '#f2f2f2' },
-  { id: 'wushu', name: 'Wushu', setting: 'martial arts, wuxia, ancient east', group: 'kinetik', kind: 'seal', font: 'notoserif', size: 1.05, tracking: 0.1, ink: '#261f17', fill: '#e8dec6', stroke: '#261f17', strokeW: 0.07, padX: 0.5, padY: 0.28, accent: '#b9301d' , texture: 'wushu' },
-  { id: '8bit', name: '8-Bit', setting: 'retro games, arcade, pixel worlds', group: 'kinetik', kind: 'pixel', font: 'silkscreen', size: 0.95, caps: true, tracking: 0.04, ink: '#f4f4f4', fill: '#1a1c2c', stroke: '#ffcd75', strokeW: 0.1, shadow: '#41a6f6', padX: 0.5, padY: 0.3, accent: '#ffcd75' },
-  { id: 'manga', name: 'Manga', setting: 'anime, shonen, comic action', group: 'kinetik', kind: 'skew', font: 'bangers', size: 1.3, tracking: 0.05, ink: '#121216', fill: '#f1eee6', stroke: '#121216', strokeW: 0.1, shadow: '#ffd400', padX: 0.6, padY: 0.2, accent: '#b84a00' },
-  { id: 'western', name: 'Western', setting: 'wild west, frontier, saloons', group: 'kinetik', kind: 'double', font: 'rye', size: 1, caps: true, tracking: 0.05, ink: '#ecdcb9', fill: '#170f0a', stroke: '#dba94a', strokeW: 0.06, padX: 0.7, padY: 0.32, accent: '#d2603f' , texture: 'western' , texShade: 0.1 },
-  { id: 'ukiyo', name: 'Ukiyo-e', setting: 'feudal Japan, woodblock prints', group: 'kinetik', kind: 'seal', font: 'shippori', size: 1.05, tracking: 0.08, ink: '#f3e9d2', fill: '#0e2135', stroke: '#e8c26a', strokeW: 0.05, padX: 0.5, padY: 0.28, accent: '#c8372d' , texture: 'ukiyo' , texShade: 0.3 },
-  { id: 'casefile', name: 'Case file', setting: 'investigation, 1920s–70s, mystery', group: 'kinetik', kind: 'tape', font: 'specialelite', size: 1, caps: true, tracking: 0.06, ink: '#1d1a14', fill: '#e6d8b3', stroke: '#b3202a', strokeW: 0.05, padX: 0.6, padY: 0.28, accent: '#b3202a' , texture: 'casefile' },
+  { id: 'noir', name: 'Neo-Noir', setting: 'near-future, cyber, thrillers', kind: 'cut', font: 'bebas', size: 1.15, caps: true, tracking: 0.08, ink: '#e6eaf0', fill: '#0b0c10', stroke: '#00e5ff', strokeW: 0.07, shadow: '#ffb800', padX: 0.55, padY: 0.3, accent: '#00e5ff' },
+  { id: 'terminal', name: 'Terminal', setting: 'hacking, sci-fi stations, bunkers', kind: 'brackets', font: 'vt323', size: 1.35, caps: true, tracking: 0.04, ink: '#bfe9d6', fill: '#030605', stroke: '#29e0a0', strokeW: 0.06, padX: 0.5, padY: 0.2, accent: '#29e0a0' },
+  { id: 'cyberdeck', name: 'Cyberdeck', setting: 'cyberpunk, megacities', kind: 'cut', font: 'tektur', size: 1, caps: true, tracking: 0.1, ink: '#e9e6ff', fill: '#07061a', stroke: '#ff2bd6', strokeW: 0.08, shadow: '#19e9ff', padX: 0.6, padY: 0.32, accent: '#19e9ff' },
+  { id: 'filmnoir', name: 'Film Noir', setting: 'crime, detectives, black and white', kind: 'rect', font: 'bigshoulders', size: 1.2, caps: true, tracking: 0.06, ink: '#ffffff', fill: '#000000', stroke: '#f2f2f2', strokeW: 0.05, shadow: '#ec1c24', padX: 0.5, padY: 0.2, accent: '#f2f2f2' },
+  { id: 'wushu', name: 'Wushu', setting: 'martial arts, wuxia, ancient east', kind: 'seal', font: 'notoserif', size: 1.05, tracking: 0.1, ink: '#261f17', fill: '#e8dec6', stroke: '#261f17', strokeW: 0.07, padX: 0.5, padY: 0.28, accent: '#b9301d' , texture: 'wushu' },
+  { id: '8bit', name: '8-Bit', setting: 'retro games, arcade, pixel worlds', kind: 'pixel', font: 'silkscreen', size: 0.95, caps: true, tracking: 0.04, ink: '#f4f4f4', fill: '#1a1c2c', stroke: '#ffcd75', strokeW: 0.1, shadow: '#41a6f6', padX: 0.5, padY: 0.3, accent: '#ffcd75' },
+  { id: 'manga', name: 'Manga', setting: 'anime, shonen, comic action', kind: 'skew', font: 'bangers', size: 1.3, tracking: 0.05, ink: '#121216', fill: '#f1eee6', stroke: '#121216', strokeW: 0.1, shadow: '#ffd400', padX: 0.6, padY: 0.2, accent: '#b84a00' },
+  { id: 'western', name: 'Western', setting: 'wild west, frontier, saloons', kind: 'double', font: 'rye', size: 1, caps: true, tracking: 0.05, ink: '#ecdcb9', fill: '#170f0a', stroke: '#dba94a', strokeW: 0.06, padX: 0.7, padY: 0.32, accent: '#d2603f' , texture: 'western' , texShade: 0.1 },
+  { id: 'ukiyo', name: 'Ukiyo-e', setting: 'feudal Japan, woodblock prints', kind: 'seal', font: 'shippori', size: 1.05, tracking: 0.08, ink: '#f3e9d2', fill: '#0e2135', stroke: '#e8c26a', strokeW: 0.05, padX: 0.5, padY: 0.28, accent: '#c8372d' , texture: 'ukiyo' , texShade: 0.3 },
+  { id: 'casefile', name: 'Case file', setting: 'investigation, 1920s–70s, mystery', kind: 'tape', font: 'specialelite', size: 1, caps: true, tracking: 0.06, ink: '#1d1a14', fill: '#e6d8b3', stroke: '#b3202a', strokeW: 0.05, padX: 0.6, padY: 0.28, accent: '#b3202a' , texture: 'casefile' },
 
-  { id: 'pips', name: 'Pips & Paws', setting: 'cozy, cute, mouse and animal tales, storybooks', group: 'setting', kind: 'pips', font: 'caveat', size: 1.45, tracking: 0.01, ink: '#241e13', fill: '#fdf9ee', stroke: '#241e13', strokeW: 0.1, padX: 0.55, padY: 0.12, deco: ['paw', 'squiggle'], accent: '#5b5136', wobble: 0.04, palette: ['#cdd6ad', '#bfcfda', '#f1c3b8', '#f3dc9c', '#d9cbe4'] },
-  { id: 'inkmap', name: 'Cartographer’s ink', setting: 'hand-drawn maps, fantasy atlases, any world', group: 'setting', kind: 'inkmap', font: 'cherish', size: 1.95, tracking: 0, ink: '#24170c', halo: ['#f6eeda', 0.075], deco: ['flourish'], accent: '#4a3622', padX: 0.2, padY: 0.06 },
-  { id: 'grimoire', name: 'Grimoire', setting: 'gothic horror, vampires, curses', group: 'setting', kind: 'bar', font: 'pirata', size: 1.45, tracking: 0.04, ink: '#b3141b', fill: '#1b0b0f', stroke: '#cdbf9f', strokeW: 0.05, padX: 0.95, padY: 0.3, deco: ['drips'], accent: '#5a0a10', texture: 'grimoire' },
-  { id: 'seachart', name: 'Sea chart', setting: 'pirates, seafaring, exploration', group: 'setting', kind: 'halo', font: 'imfellit', size: 1.3, tracking: 0.02, ink: '#2b2118', halo: ['#f4ecd6', 0.16], deco: ['wave'], padX: 0.2, padY: 0.1, accent: '#2b2118' },
-  { id: 'blueprint', name: 'Blueprint', setting: 'sci-fi, heists, ships, building plans', group: 'setting', kind: 'blueprint', font: 'sharetech', size: 1, caps: true, tracking: 0.1, ink: '#ffffff', fill: '#1d4f8f', stroke: '#ffffff', strokeW: 0.05, padX: 0.55, padY: 0.28, deco: ['tag'], accent: '#cfe1fb' , texture: 'blueprint' },
-  { id: 'wasteland', name: 'Wasteland', setting: 'post-apocalypse, road warriors', group: 'setting', kind: 'stencil', font: 'stardos', size: 1.15, caps: true, tracking: 0.08, ink: '#ecd9a0', fill: '#7a3b1d', stroke: '#2a160b', strokeW: 0.1, padX: 0.7, padY: 0.3, deco: ['rivets', 'hazard'], accent: '#e8c21a', texture: 'wasteland' , texShade: 0.18 },
-  { id: 'runestone', name: 'Runestone', setting: 'dark fantasy, Norse, ancient ruins', group: 'setting', kind: 'stone', font: 'uncial', size: 1.2, tracking: 0.02, ink: '#202220', fill: '#8f918d', stroke: '#5d5f5b', strokeW: 0.12, padX: 0.75, padY: 0.32, deco: ['moss'], accent: '#5f8a3c', texture: 'runestone' , texShade: 0.12 },
-  { id: 'banner', name: 'Banner', setting: 'high fantasy, kingdoms, orders, cities', group: 'setting', kind: 'banner', font: 'cinzeldeco', size: 1.05, tracking: 0.04, ink: '#e9c95c', fill: '#1f3a6b', stroke: '#d4a537', strokeW: 0.07, padX: 0.7, padY: 0.38, accent: '#5a3a1c', texture: 'banner' },
+  { id: 'pips', name: 'Pips & Paws', setting: 'cozy, cute, mouse and animal tales, storybooks', kind: 'pips', font: 'caveat', size: 1.45, tracking: 0.01, ink: '#241e13', fill: '#fdf9ee', stroke: '#241e13', strokeW: 0.1, padX: 0.55, padY: 0.12, deco: ['paw', 'squiggle'], accent: '#5b5136', wobble: 0.04, palette: ['#cdd6ad', '#bfcfda', '#f1c3b8', '#f3dc9c', '#d9cbe4'] },
+  { id: 'inkmap', name: 'Cartographer’s ink', setting: 'hand-drawn maps, fantasy atlases, any world', kind: 'inkmap', font: 'cherish', size: 1.95, tracking: 0, ink: '#24170c', halo: ['#f6eeda', 0.075], deco: ['flourish'], accent: '#4a3622', padX: 0.2, padY: 0.06 },
+  { id: 'grimoire', name: 'Grimoire', setting: 'gothic horror, vampires, curses', kind: 'bar', font: 'pirata', size: 1.45, tracking: 0.04, ink: '#b3141b', fill: '#1b0b0f', stroke: '#cdbf9f', strokeW: 0.05, padX: 0.95, padY: 0.3, deco: ['drips'], accent: '#5a0a10', texture: 'grimoire' },
+  { id: 'seachart', name: 'Sea chart', setting: 'pirates, seafaring, exploration', kind: 'halo', font: 'imfellit', size: 1.3, tracking: 0.02, ink: '#2b2118', halo: ['#f4ecd6', 0.16], deco: ['wave'], padX: 0.2, padY: 0.1, accent: '#2b2118' },
+  { id: 'blueprint', name: 'Blueprint', setting: 'sci-fi, heists, ships, building plans', kind: 'blueprint', font: 'sharetech', size: 1, caps: true, tracking: 0.1, ink: '#ffffff', fill: '#1d4f8f', stroke: '#ffffff', strokeW: 0.05, padX: 0.55, padY: 0.28, deco: ['tag'], accent: '#cfe1fb' , texture: 'blueprint' },
+  { id: 'wasteland', name: 'Wasteland', setting: 'post-apocalypse, road warriors', kind: 'stencil', font: 'stardos', size: 1.15, caps: true, tracking: 0.08, ink: '#ecd9a0', fill: '#7a3b1d', stroke: '#2a160b', strokeW: 0.1, padX: 0.7, padY: 0.3, deco: ['rivets', 'hazard'], accent: '#e8c21a', texture: 'wasteland' , texShade: 0.18 },
+  { id: 'runestone', name: 'Runestone', setting: 'dark fantasy, Norse, ancient ruins', kind: 'stone', font: 'uncial', size: 1.2, tracking: 0.02, ink: '#202220', fill: '#8f918d', stroke: '#5d5f5b', strokeW: 0.12, padX: 0.75, padY: 0.32, deco: ['moss'], accent: '#5f8a3c', texture: 'runestone' , texShade: 0.12 },
+  { id: 'banner', name: 'Banner', setting: 'high fantasy, kingdoms, orders, cities', kind: 'banner', font: 'cinzeldeco', size: 1.05, tracking: 0.04, ink: '#e9c95c', fill: '#1f3a6b', stroke: '#d4a537', strokeW: 0.07, padX: 0.7, padY: 0.38, accent: '#5a3a1c', texture: 'banner' },
 ];
+
+/** The library as one list: the two plain styles first, then every look by name. */
+export const LABEL_STYLES: LabelStyleDef[] = [...STYLES.slice(0, 2), ...STYLES.slice(2).sort((a, b) => a.name.localeCompare(b.name))];
 
 export const labelStyle = (id?: string): LabelStyleDef => LABEL_STYLES.find((s) => s.id === id) ?? LABEL_STYLES[0];
 export const isLabelStyle = (id: string) => LABEL_STYLES.some((s) => s.id === id);
