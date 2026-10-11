@@ -1,7 +1,9 @@
 import {
-  DOOR_KINDS, FLOORS, PROP_KINDS,
-  type DoorKind, type EdgeSide, type FloorChar, type MapDoc, type PropKind,
+  DOOR_KINDS, FLOORS, LABEL_PLACES, LABEL_SIZES, PROP_KINDS,
+  type DoorKind, type EdgeSide, type FloorChar, type LabelPlace, type LabelSize, type MapDoc, type PropKind,
 } from './mapdata.js';
+import { estimateWidth, isLabelStyle, LABEL_STYLES, type LabelCtx } from './labelstyles.js';
+import { lettersSvg, placeLabels, type Placed } from './letters.js';
 import { cleanKind, isKnownKind, isLineKind, regionKind, REGION_KINDS, type RegionKind } from './regionkinds.js';
 
 // ---------------------------------------------------------------------------
@@ -20,16 +22,17 @@ export type MapOp =
   | { op: 'open'; x: number; y: number; side: EdgeSide }
   | { op: 'prop'; kind: PropKind; x: number; y: number; w?: number; h?: number; rot?: number; label?: string; id?: string }
   | { op: 'remove_prop'; id: string }
-  | { op: 'label'; x: number; y: number; text: string }
+  | { op: 'label'; x: number; y: number; text: string; place?: LabelPlace; style?: string; show?: boolean; size?: LabelSize; area?: { x: number; y: number; w: number; h: number } }
   | { op: 'token'; x: number; y: number; kind: 'pc' | 'npc' | 'enemy'; label?: string; node?: string }
   | { op: 'remove_label'; x: number; y: number }
   | { op: 'remove_token'; x: number; y: number }
   | { op: 'move_area'; x: number; y: number; w: number; h: number; dx: number; dy: number; copy?: boolean }
   | { op: 'edit_prop'; id: string; kind?: PropKind; x?: number; y?: number; w?: number; h?: number; rot?: number | null; label?: string | null }
   | { op: 'edit_token'; x: number; y: number; to?: [number, number]; kind?: 'pc' | 'npc' | 'enemy'; label?: string | null; node?: string | null }
-  | { op: 'edit_label'; x: number; y: number; to?: [number, number]; text?: string }
+  | { op: 'edit_label'; x: number; y: number; to?: [number, number]; text?: string; place?: LabelPlace; style?: string | null; show?: boolean; size?: LabelSize | null; area?: { x: number; y: number; w: number; h: number } | null }
+  | { op: 'lettering'; style: string }
   | { op: 'resize'; cols: number; rows: number }
-  | { op: 'shape'; type: 'polygon' | 'path' | 'ellipse' | 'pin'; kind: string; points: [number, number][]; r?: number; width?: number; label?: string; prompt?: string; id?: string }
+  | { op: 'shape'; type: 'polygon' | 'path' | 'ellipse' | 'pin'; kind: string; points: [number, number][]; r?: number; width?: number; label?: string; prompt?: string; id?: string; labelPlace?: LabelPlace; labelStyle?: string | null; labelSize?: LabelSize | null; labelShow?: boolean }
   | { op: 'remove_shape'; id: string }
   | { op: 'define_kind'; kind: Partial<RegionKind> }
   | { op: 'remove_kind'; id: string }
@@ -60,6 +63,46 @@ export function newMap(id: string, name: string, kind: MapDoc['kind'], cols = 24
 }
 
 const clampInt = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, Math.round(n)));
+
+type LabelProps = { place?: LabelPlace; style?: string | null; show?: boolean; size?: LabelSize | null; area?: { x: number; y: number; w: number; h: number } | null };
+/** Printing options of a label (ops `label` and `edit_label`): null / default values are not stored. */
+function applyLabelProps(l: MapDoc['labels'][number], o: LabelProps) {
+  if (o.place !== undefined) {
+    if (!LABEL_PLACES.includes(o.place)) throw new Error(`place must be one of: ${LABEL_PLACES.join(', ')}`);
+    if (o.place === 'middle') delete l.place; else l.place = o.place;
+  }
+  if (o.style !== undefined) {
+    if (o.style === null || o.style === '') delete l.style;
+    else if (!isLabelStyle(o.style)) throw new Error(`Unknown lettering style "${o.style}". Use: ${LABEL_STYLES.map((x) => x.id).join(', ')}`);
+    else l.style = o.style;
+  }
+  if (o.show !== undefined) { if (o.show) delete l.show; else l.show = false; }
+  if (o.size !== undefined) {
+    if (o.size === null || o.size === 'md') delete l.size;
+    else if (!LABEL_SIZES.includes(o.size)) throw new Error(`size must be one of: ${LABEL_SIZES.join(', ')}`);
+    else l.size = o.size;
+  }
+  if (o.area !== undefined) {
+    if (o.area === null) delete l.area;
+    else {
+      l.area = { x: o.area.x, y: o.area.y, w: Math.max(0, o.area.w), h: Math.max(0, o.area.h) };
+      [l.x, l.y] = [l.area.x + l.area.w / 2, l.area.y + l.area.h / 2]; // x,y is the middle of the area: that is how a label is found and moved
+    }
+  }
+}
+
+// ------------------------------------ lettering ---------------------------------------
+
+let labelCtx: LabelCtx = { measure: estimateWidth };
+/** The server and the browser tell the engine how to measure text in the real fonts (and where the generated materials are). */
+export function setLabelContext(ctx: LabelCtx) { labelCtx = ctx; }
+export function getLabelContext(): LabelCtx { return labelCtx; }
+
+/** Where every name of the map stands, in the pixels of the editor's picture (or of `geo`, e.g. an existing render). */
+export function placedLabels(m: MapDoc, ctx: LabelCtx = labelCtx, maxSide = 1344): Placed[] {
+  const { w: W, h: H, cell } = imageSize(m, maxSide);
+  return placeLabels(m, { W, H, cell }, ctx);
+}
 
 // ------------------------------- cells & edges ---------------------------------------
 
@@ -165,9 +208,12 @@ export function applyOps(m: MapDoc, ops: MapOp[]): { ok: number; notes: string[]
       case 'remove_prop':
         m.props = m.props.filter((p) => p.id !== o.id);
         break;
-      case 'label':
-        m.labels.push({ x: o.x, y: o.y, text: o.text });
+      case 'label': {
+        const l: MapDoc['labels'][number] = { x: o.x, y: o.y, text: o.text };
+        applyLabelProps(l, o);
+        m.labels.push(l);
         break;
+      }
       case 'remove_label':
         m.labels = m.labels.filter((l) => Math.hypot(l.x - o.x, l.y - o.y) > 0.75);
         break;
@@ -208,7 +254,7 @@ export function applyOps(m: MapDoc, ops: MapOp[]): { ok: number; notes: string[]
         m.open.push(...opens.map(shift));
         m.props.push(...props.map((p) => ({ ...shift(p), id: o.copy ? `${p.kind}-${Math.random().toString(36).slice(2, 6)}` : p.id })));
         m.tokens.push(...tokens.map(shift));
-        m.labels.push(...labels.map(shift));
+        m.labels.push(...labels.map((l) => ({ ...shift(l), ...(l.area ? { area: { ...l.area, x: l.area.x + dx, y: l.area.y + dy } } : {}) })));
         notes.push(`${o.copy ? 'copied' : 'moved'} ${cells.length} cells, ${props.length} props, ${tokens.length} tokens, ${doors.length} doors by ${dx},${dy}`);
         break;
       }
@@ -244,8 +290,18 @@ export function applyOps(m: MapDoc, ops: MapOp[]): { ok: number; notes: string[]
       case 'edit_label': {
         const l = m.labels.find((q) => Math.hypot(q.x - o.x, q.y - o.y) <= 0.75);
         if (!l) throw new Error(`No label near ${o.x},${o.y}`);
-        if (o.to) [l.x, l.y] = o.to;
+        if (o.to) {
+          const [dx, dy] = [o.to[0] - l.x, o.to[1] - l.y];
+          [l.x, l.y] = o.to;
+          if (l.area) { l.area.x += dx; l.area.y += dy; }
+        }
         if (o.text !== undefined && o.text.trim()) l.text = o.text.trim();
+        applyLabelProps(l, o);
+        break;
+      }
+      case 'lettering': {
+        if (!isLabelStyle(o.style)) throw new Error(`Unknown lettering style "${o.style}". Use: ${LABEL_STYLES.map((x) => x.id).join(', ')}`);
+        m.lettering = { style: o.style };
         break;
       }
       case 'resize': {
@@ -259,11 +315,24 @@ export function applyOps(m: MapDoc, ops: MapOp[]): { ok: number; notes: string[]
       case 'shape': {
         if (!isKnownKind(o.kind, m.kinds)) throw new Error(`Unknown kind "${o.kind}". Use: ${[...REGION_KINDS.map((k) => k.id), ...(m.kinds ?? []).map((k) => k.id)].join(', ')} (define your own with define_kind).`);
         const id = o.id ?? `${o.kind}-${Math.random().toString(36).slice(2, 6)}`;
+        const old = m.shapes.find((s) => s.id === id);
         m.shapes = m.shapes.filter((s) => s.id !== id);
         const prompt = o.prompt?.replace(/\s+/g, ' ').trim();
         // no dots: a place is an AREA (a round one is an ellipse). A pin from an old caller becomes a round area.
         const sh = o.type === 'pin' ? pinToEllipse({ id, type: 'pin', kind: o.kind, points: o.points, r: o.r }, m.kinds) : { type: o.type, points: o.points, r: o.r };
-        m.shapes.push({ id, type: sh.type, kind: o.kind, points: sh.points, ...(sh.r !== undefined ? { r: sh.r } : {}), width: o.width, label: o.label, ...(prompt ? { prompt } : {}) });
+        const ns: MapDoc['shapes'][number] = { id, type: sh.type, kind: o.kind, points: sh.points, ...(sh.r !== undefined ? { r: sh.r } : {}), width: o.width, label: o.label, ...(prompt ? { prompt } : {}) };
+        // how the name is printed stays with the shape when it is redrawn (moved, reshaped) without saying anything about it
+        const keep = <K extends 'labelPlace' | 'labelStyle' | 'labelSize' | 'labelShow'>(k: K, v: unknown) => {
+          const val = v === undefined ? old?.[k] : v;
+          if (val !== undefined && val !== null && val !== '') (ns as Record<string, unknown>)[k] = val;
+        };
+        if (o.labelPlace !== undefined && !LABEL_PLACES.includes(o.labelPlace)) throw new Error(`labelPlace must be one of: ${LABEL_PLACES.join(', ')}`);
+        if (o.labelSize != null && !LABEL_SIZES.includes(o.labelSize)) throw new Error(`labelSize must be one of: ${LABEL_SIZES.join(', ')}`);
+        if (o.labelStyle != null && !isLabelStyle(o.labelStyle)) throw new Error(`Unknown lettering style "${o.labelStyle}". Use: ${LABEL_STYLES.map((x) => x.id).join(', ')}`);
+        keep('labelPlace', o.labelPlace); keep('labelStyle', o.labelStyle); keep('labelSize', o.labelSize);
+        keep('labelShow', o.labelShow === true ? undefined : o.labelShow); // true is the default: nothing to store
+        if (o.labelShow === true) delete ns.labelShow;
+        m.shapes.push(ns);
         break;
       }
       case 'define_kind': {
@@ -436,8 +505,7 @@ function renderBattle(m: MapDoc, style: MapStyle, maxSide: number): string {
     o.push(`<g transform="translate(${cx} ${cy}) rotate(${p.rot ?? 0})">${shape}${!ctrl ? `<text y="${c * 0.14}" text-anchor="middle" font-size="${Math.min(pw, ph) * 0.5}" font-family="sans-serif" fill="#10131a" font-weight="700">${esc(p.kind.slice(0, 1).toUpperCase())}</text>` : ''}</g>`);
   }
   if (!ctrl) {
-    for (const l of m.labels)
-      o.push(`<text x="${l.x * c}" y="${l.y * c}" text-anchor="middle" font-size="${Math.max(11, c * 0.34)}" font-family="sans-serif" fill="#fff" stroke="#000" stroke-width="3" paint-order="stroke" font-weight="600">${esc(l.text)}</text>`);
+    o.push(lettersSvg(placedLabels(m, labelCtx, maxSide), { all: true }));
     const tc = { pc: '#4fd1ff', npc: '#7fe08a', enemy: '#ff6a6a' };
     for (const t of m.tokens) {
       o.push(`<circle cx="${(t.x + 0.5) * c}" cy="${(t.y + 0.5) * c}" r="${c * 0.4}" fill="${tc[t.kind]}" stroke="#0b0c10" stroke-width="2"/>`);
@@ -475,21 +543,11 @@ function renderRegion(m: MapDoc, style: MapStyle): string {
       const [x, y] = s.points[0] ?? [0, 0];
       o.push(`<circle cx="${x}" cy="${y}" r="${s.r ?? 14}" fill="${col}" stroke="#0b0c10" stroke-width="3"/>`);
     }
-    if (!ctrl && s.label) {
-      const [lx, ly] = labelPoint(s.points);
-      o.push(`<text x="${lx}" y="${ly}" text-anchor="middle" font-size="16" font-family="sans-serif" fill="#fff" stroke="#000" stroke-width="3" paint-order="stroke" font-weight="600">${esc(s.label)}</text>`);
-    }
   }
+  if (!ctrl) o.push(lettersSvg(placedLabels(m), { all: true }));
   o.push('</svg>');
   return o.join('');
 }
-
-function labelPoint(p: [number, number][]): [number, number] {
-  if (!p.length) return [0, 0];
-  return [p.reduce((s, q) => s + q[0], 0) / p.length, p.reduce((s, q) => s + q[1], 0) / p.length];
-}
-
-
 
 const FLOOR_WORDS: Record<string, string> = {
   s: 'grey = stone floor', w: 'brown = wooden floor', d: 'dark brown = packed earth', g: 'green = grass', c: 'red = carpet', a: 'blue = water',

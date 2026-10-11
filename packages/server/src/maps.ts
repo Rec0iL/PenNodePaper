@@ -2,14 +2,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Resvg } from '@resvg/resvg-js';
 import { FLOORS, REGION_KINDS, migratePins, regionKind, slugify, type MapDoc } from '@pnp/shared';
+import { installLabelContext, labelFontFiles } from './labels.js';
 import { newMap } from '@pnp/shared';
 
 export * from '@pnp/shared';
 
 export function toPng(svg: string, width?: number): Buffer {
-  // No system-font scan (it costs ~15 s per render here): the control image has no text,
-  // and the UI shows the preview SVG directly in the browser.
-  const r = new Resvg(svg, { font: { loadSystemFonts: false }, ...(width ? { fitTo: { mode: 'width' as const, value: width } } : {}) });
+  // No system-font scan (it costs ~15 s per render here): the control image has no text; the plan picture has names,
+  // set in the bundled label fonts.
+  installLabelContext();
+  const r = new Resvg(svg, { font: { loadSystemFonts: false, fontFiles: labelFontFiles(), defaultFontFamily: 'PNP barlow' }, ...(width ? { fitTo: { mode: 'width' as const, value: width } } : {}) });
   return Buffer.from(r.render().asPng());
 }
 
@@ -73,7 +75,7 @@ export class Maps {
       const shape = (s: MapDoc['shapes'][number]) => {
         const k = regionKind(s.kind, m.kinds);
         const where = s.type === 'ellipse' ? `ellipse c=${s.points[0]?.join(',')} rx,ry=${s.points[1]?.join(',')}` : `${s.type} ${s.points.map((p) => p.join(',')).join(' ')}${s.type === 'path' ? ` width=${s.width ?? k.width ?? 14}` : ''}`;
-        return `${s.id} [${k.layer}] ${s.kind}${s.label ? ` "${s.label}"` : ''}${s.prompt ? ` prompt="${s.prompt}"` : ''}: ${where}`;
+        return `${s.id} [${k.layer}] ${s.kind}${s.label ? ` "${s.label}"${s.labelPlace ? ` ${s.labelPlace}` : ''}${s.labelStyle ? ` style=${s.labelStyle}` : ''}${s.labelShow === false ? ' (not printed)' : ''}` : ''}${s.prompt ? ` prompt="${s.prompt}"` : ''}: ${where}`;
       };
       const ids = (layer: 'terrain' | 'structure') => [...REGION_KINDS.filter((k) => k.layer === layer).map((k) => k.id), ...(m.kinds ?? []).filter((k) => k.layer === layer).map((k) => `${k.id}*`)].join(' ');
       return [
@@ -89,7 +91,7 @@ export class Maps {
       ...m.rows.map((r, y) => `${String(y).padStart(2)} ${r}`),
       `doors: ${m.doors.map((d) => `${d.x},${d.y}/${d.side}:${d.kind}`).join(' ') || 'none'}`,
       `props: ${m.props.map((p) => `${p.id}@${p.x},${p.y}`).join(' ') || 'none'}`,
-      `labels: ${m.labels.map((l) => `"${l.text}"@${l.x},${l.y}`).join(' ') || 'none'}`,
+      `labels: ${m.labels.map((l) => `"${l.text}"@${l.x},${l.y}${l.area ? ` area ${l.area.x},${l.area.y} ${l.area.w}x${l.area.h}` : ''}${l.place ? ` ${l.place}` : ''}${l.style ? ` style=${l.style}` : ''}${l.show === false ? ' (not printed)' : ''}`).join(' ') || 'none'}`,
       `tokens: ${m.tokens.map((t) => `${t.kind}${t.label ? `:${t.label}` : ''}${t.node ? `→node ${t.node}` : ''}@${t.x},${t.y}`).join(' ') || 'none'}`,
     ].join('\n');
   }

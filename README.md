@@ -253,6 +253,17 @@ The editor autosaves and edits through the same ops as the AI's `edit_map`, so y
 
 The AI (`render_map`, `paint_map_props`, `set_map_terrain`, `accept_map_terrain`) works the same two steps and waits for your choice between them.
 
+### 🔤 Names on the map
+
+Places, rooms and secret entrances get **names printed on top of the picture** — never painted by the image model (it would misspell them), but set as lettering in a library of styles:
+
+* **Name tool** (battle and region maps): click to name a spot, or **drag a rectangle** to name an area (a room, a courtyard). A name can stand **above**, **in the middle of** or **below** its area, has its own **style** and **size**, and can be switched off (*print it on the picture*) without deleting it. On region maps every shape's *Name* field (Draw tab) has the same options — structures default to below, land and water to the middle.
+* **Styles** (Map tab → *Names on the picture*): *Plain* (light or dark text with an outline — fits any picture), the ten looks of the KINETIK VTT (Neo-Noir, Terminal, Cyberdeck, Film Noir, Wushu, 8-Bit, Manga, Western, Ukiyo-e, Case file) and setting styles: *Pips & Paws* (cozy, squiggly hand-inked cards in the pastels of the Pips & Paws sheet, with a paw print), *Cartographer’s ink* (artsy hand lettering in Cherish, with a pen flourish), *Grimoire* (gothic horror), *Sea chart*, *Blueprint*, *Wasteland*, *Runestone* and *Banner*. The map has one style; any single name can use another. The plates of the setting styles use materials made with the image model (leather, rust, stone, cloth) — the lettering itself is always crisp vector text.
+* **Print the names on the picture** adds a *new* picture (`…-names-<hash>.png`) next to the painted one, which stays untouched. That new picture is the map's latest render, so the VTT push, the handouts and the binder use it. Change a name or a style and print again — the earlier print is replaced in the lists. Over a painted picture the editor also shows the names live.
+* The AI does the same with `edit_map` (`label` with `area` / `place` / `style` / `show`, `edit_label`, `lettering`, on region maps the shape fields `labelPlace` / `labelStyle` / `labelShow`) and `print_map_names`.
+
+Fonts (all SIL Open Font License) are in `packages/server/assets/fonts/` — see the README there; the materials in `packages/server/assets/labels/`.
+
 ## 🔌 VTT link
 
 Connect a tabletop app (KINETIK VTT, or any VTT that implements the small bridge protocol — see `docs/vtt-bridge-spec.md`; vanilla-JS VTTs can drop in `docs/pnp-bridge-client.js`) and push **handouts, scenes (map + grid + token starts), enemies/NPCs** and **music cues** from the Inspector or via the AI (`push_handout`, `push_scene`, `push_character`, `play_track`, `list_vtt_tracks`).

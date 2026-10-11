@@ -291,7 +291,7 @@ export class ImageService {
       return {};
     }
   }
-  private record(file: string, m: Meta) {
+  record(file: string, m: Meta) {
     const all = this.meta();
     all[file] = m;
     fs.writeFileSync(this.metaFile, JSON.stringify(all, null, 1));

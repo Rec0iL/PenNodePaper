@@ -14,6 +14,7 @@ import { ImageService } from './images.js';
 import { listCommands, runCommand } from './commands.js';
 import { CONFIG_PATH, REPO_ROOT, loadConfig, loadMapPaintMode, loadSaved, saveConfig } from './config.js';
 import { estimatePaint } from './mappaint.js';
+import { FONT_DIR, LABEL_ASSET_DIR, installLabelContext } from './labels.js';
 import { importArchive } from './backup.js';
 import { thumbnail } from './thumbs.js';
 import { extractText } from './imports.js';
@@ -117,6 +118,7 @@ function originOk(req: http.IncomingMessage): boolean {
 }
 
 // --- REST (for the UI) -------------------------------------------------------
+installLabelContext();
 const app = new Hono();
 
 app.use('/api/*', async (c, next) => {
@@ -576,6 +578,19 @@ app.get('/api/images/:file', async (c) => {
   return new Response(await fs.promises.readFile(p), { headers: { 'content-type': type, 'cache-control': 'public, max-age=31536000, immutable' } });
 });
 
+// fonts and generated materials of the label styles (the editor draws the same lettering as the server prints)
+app.get('/api/label-fonts/:file', (c) => {
+  const p = path.join(FONT_DIR, path.basename(c.req.param('file')));
+  if (!p.endsWith('.ttf') || !fs.existsSync(p)) return c.notFound();
+  return new Response(fs.readFileSync(p), { headers: { 'content-type': 'font/ttf', 'cache-control': 'public, max-age=31536000, immutable' } });
+});
+app.get('/api/label-textures', (c) => c.json(fs.existsSync(LABEL_ASSET_DIR) ? fs.readdirSync(LABEL_ASSET_DIR).filter((f) => f.endsWith('.jpg')).map((f) => f.slice(0, -4)) : []));
+app.get('/api/label-textures/:file', (c) => {
+  const p = path.join(LABEL_ASSET_DIR, path.basename(c.req.param('file')));
+  if (!p.endsWith('.jpg') || !fs.existsSync(p)) return c.notFound();
+  return new Response(fs.readFileSync(p), { headers: { 'content-type': 'image/jpeg', 'cache-control': 'public, max-age=3600' } });
+});
+
 // --- maps ---------------------------------------------------------------------------
 const mapNode = (id: string) => Object.values(store.state.nodes).find((n) => !n.trashed && n.fields.mapId === id)?.id ?? null;
 app.get('/api/maps', (c) => c.json(store.maps.list().map((m) => ({ id: m.id, name: m.name, kind: m.kind, nodeId: mapNode(m.id) }))));
@@ -612,6 +627,7 @@ app.put('/api/maps/:id', async (c) => {
   // painting results belong to the server (jobs finish while the editor is open): an autosave of a stale copy must not wipe them
   const cur = store.maps.get(id);
   doc.renders = cur.renders;
+  doc.lettered = cur.lettered;
   doc.terrains = cur.terrains;
   doc.terrainPick = cur.terrainPick;
   // the description of the place is typed in the editor and saved with the map; without one the stored one stays

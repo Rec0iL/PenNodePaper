@@ -392,6 +392,8 @@ export function slugify(input: string): string {
 
 export * from './mapdata.js';
 export * from './maps.js';
+export * from './labelstyles.js';
+export * from './letters.js';
 export * from './mapgroups.js';
 export * from './regionkinds.js';
 export * from './regiongroups.js';
