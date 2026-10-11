@@ -1,7 +1,7 @@
 import { z, type ZodRawShape } from 'zod';
 import { DEFAULT_GROUP, charactersOfPlace, isCharacterNode, tokenKindOf, dieLabel, soundsOf, entryLine, fragmentName, parseEntry, rollLog, rollTable, seeded, tableEntries, tableFaces, clockOf, lintStory, nextPlayedSeq, playedPath, playerWiki, wikiMarkdown, slugify, storyStatus, validateSheet, visitsOf, type Visit } from '@pnp/shared';
 import type { Actor, Backend, DoorKind, EdgeKind, EdgeSide, ImageKind, MapDoc, NodeStatus, NodeType, PropKind, StoryEdge, StoryNode } from '@pnp/shared';
-import { DOOR_KINDS, EDGE_KINDS, FRAME_PALETTE, EDGE_SIDES, IMAGE_KINDS, NODE_STATUSES, NODE_TYPES, PROP_KINDS, REGION_KINDS } from '@pnp/shared';
+import { DOOR_KINDS, EDGE_KINDS, FRAME_PALETTE, EDGE_SIDES, IMAGE_KINDS, NODE_STATUSES, NODE_TYPES, PROP_KINDS, REGION_KINDS, cleanKind, isKnownKind } from '@pnp/shared';
 import fs from 'node:fs';
 import path from 'node:path';
 import { BINDER_SECTIONS, MAX_COPIES, binderParts, renderPdf } from './binder.js';
@@ -604,6 +604,47 @@ def({
 });
 
 def({
+  name: 'set_region_kind',
+  description:
+    'Define (or change) a kind of the CAMPAIGN\'s region-map library: a terrain (an area painted first: "radioactive crater"), a line (a river-like or road-like path with a width: "ley line") or a structure (an area inpainted afterwards: "wizard tower"). Every region map of the campaign can use it; a map copies the kinds it uses. id is made from the name. color = hex like #7cff3a (distinct from the other kinds); prompt = what it looks like from above in a few words (the campaign style decides the art look); width = default line width px (lines), size = default radius px (spots).',
+  shape: {
+    name: z.string().min(1),
+    id: z.string().optional(),
+    layer: z.enum(['terrain', 'structure']),
+    geometry: z.enum(['area', 'line', 'spot']).optional(),
+    color: z.string(),
+    prompt: z.string(),
+    width: z.number().optional(),
+    size: z.number().optional(),
+    lineGroup: z.enum(['water', 'land']).optional().describe('lines only: water pass (rivers, canals) or land pass (roads, rails, paths, bridges); default derived from the name'),
+  },
+  run(tx, a) {
+    const k = cleanKind(a);
+    if (REGION_KINDS.some((b) => b.id === k.id)) throw new Error(`"${k.id}" is a built-in kind; pick another name.`);
+    const m = tx.state.meta;
+    m.regionKinds = [...(m.regionKinds ?? []).filter((x) => x.id !== k.id), k];
+    tx.store.persistence.writeMeta(m);
+    tx.store.emitMeta();
+    return { kind: k };
+  },
+});
+
+def({
+  name: 'remove_region_kind',
+  description: 'Remove a kind from the campaign\'s region-map library (maps that already use it keep their copy).',
+  shape: { id: z.string() },
+  run(tx, a) {
+    const m = tx.state.meta;
+    if (!(m.regionKinds ?? []).some((k) => k.id === a.id)) throw new Error(`No library kind "${a.id}". Known: ${(m.regionKinds ?? []).map((k) => k.id).join(', ') || '(none)'}`);
+    m.regionKinds = (m.regionKinds ?? []).filter((k) => k.id !== a.id);
+    if (!m.regionKinds.length) delete m.regionKinds;
+    tx.store.persistence.writeMeta(m);
+    tx.store.emitMeta();
+    return { ok: true };
+  },
+});
+
+def({
   name: 'set_cover_image',
   description: 'Choose which of a node’s images is the cover (shown on the card).',
   shape: { nodeId: z.string(), file: z.string() },
@@ -737,6 +778,7 @@ def({
       paintMode: tx.store.images?.mapMode() ?? 'quick', terrains: m.terrains ?? [], terrainPick: m.terrainPick ?? null,
       ...(m.kind === 'battle' ? { propGroups: groupProps(m).length } : { structureGroups: regionGroupInfos(m), linePasses: lineStages(m).map((st) => `${st.group}: ${st.names.join(', ')}`), view: m.view ?? 'default' }),
       consolidate: m.consolidate !== false,
+      ...(m.kind === 'region' && (tx.state.meta.regionKinds ?? []).length ? { libraryKinds: (tx.state.meta.regionKinds ?? []).map((k) => ({ id: k.id, name: k.name, layer: k.layer, geometry: k.geometry, inThisMap: !!m.kinds?.some((x) => x.id === k.id) })) } : {}),
       propPrompts: Object.fromEntries(Object.entries(m.propPrompts ?? {}).filter(([, e]) => e.text.trim()).map(([id, e]) => [id, { kind: e.kind, text: e.text, by: e.ai ? 'ai' : 'gm' }])),
     };
   },
@@ -769,7 +811,17 @@ def({
       }
       return op;
     });
-    const r = applyOps(m, ops as unknown as MapOp[]);
+    // a shape of a library kind brings its definition along (the map keeps its own copy, so renders and exports stay self-contained)
+    const lib = tx.state.meta.regionKinds ?? [];
+    const withKinds: Record<string, unknown>[] = [];
+    for (const op of ops) {
+      if (op.op === 'shape' && typeof op.kind === 'string' && !isKnownKind(op.kind, m.kinds)) {
+        const k = lib.find((x) => x.id === op.kind);
+        if (k && !withKinds.some((w) => w.op === 'define_kind' && (w.kind as { id: string }).id === k.id)) withKinds.push({ op: 'define_kind', kind: k });
+      }
+      withKinds.push(op);
+    }
+    const r = applyOps(m, withKinds as unknown as MapOp[]);
     tx.store.maps.save(m);
     tx.store.emitMap(m, tx.actor);
     return { applied: r.ok, notes: r.notes };

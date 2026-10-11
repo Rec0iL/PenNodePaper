@@ -4,8 +4,8 @@
   // edit_map uses, so the GM and the AI can work on one map at the same time.
   import { onMount, untrack } from 'svelte';
   import {
-    DOOR_KINDS, FLOORS, NODE_TYPE_INFO, PROP_KINDS, TERRAINS, applyOps, canon, charactersOfPlace, derivedWalls, fallbackGroupPrompt, fallbackRegionPrompt, groupProps, groupRegion, imageSize, regionKind, renderSvg, tokenKindOf,
-    type DoorKind, type MapDoc, type MapOp, type PropKind, type TerrainKind,
+    DOOR_KINDS, FLOORS, NODE_TYPE_INFO, PROP_KINDS, REGION_KINDS, applyOps, canon, charactersOfPlace, cleanKind, derivedWalls, fallbackGroupPrompt, fallbackRegionPrompt, groupProps, groupRegion, imageSize, isLineKind, pointInShape, regionKind, renderSvg, strokeWidth, tokenKindOf,
+    type DoorKind, type MapDoc, type MapOp, type PropKind, type RegionKind,
   } from '@pnp/shared';
   import { app, cmd, say, selectNode, sendChat } from '../lib/app.svelte';
 
@@ -27,12 +27,15 @@
   let propFlip = $state(false);
   let doorKind = $state<DoorKind>('door');
   let tokenKind = $state<'pc' | 'npc' | 'enemy'>('enemy');
-  let terrain = $state<TerrainKind>('forest');
+  /** region maps: the kind the next shape is drawn as, and the optional width / stamp radius that overrides the kind's own */
+  let kind = $state('forest');
+  let lineWidth = $state<number | null>(null);
+  let stampR = $state<number | null>(null);
   let brush = $state(50);
   let autoWalls = $state(true);
   let view = $state<'plan' | 'control' | 'terrain' | 'painted'>('plan');
   let shownRender = $state<string | null>(null);
-  let panel = $state<'render' | 'map' | 'cast'>('render');
+  let panel = $state<'render' | 'map' | 'cast' | 'draw'>('render');
   /** the character (NPC / enemy node of this place) the Token tool puts on the plan; null = a plain marker */
   let tokenNode = $state<string | null>(null);
 
@@ -42,6 +45,19 @@
   let paint = $state<PaintInfo | null>(null);
   const staged = $derived(paint?.mode === 'staged');
   const dim = $derived(doc ? imageSize(doc) : { w: 1, h: 1, cell: 1 });
+  // region maps: the kinds you can draw — built-ins, the campaign's library, and the map's own copies (which win)
+  const allKinds = $derived.by((): RegionKind[] => {
+    const m = new Map<string, RegionKind>(REGION_KINDS.map((k) => [k.id, k]));
+    for (const k of (app.meta.regionKinds ?? []) as RegionKind[]) m.set(k.id, { ...k, custom: true });
+    for (const k of doc?.kinds ?? []) m.set(k.id, { ...k, custom: true });
+    return [...m.values()];
+  });
+  const kindOf = (id: string): RegionKind => allKinds.find((k) => k.id === id) ?? regionKind(id, doc?.kinds);
+  const palette = $derived({
+    terrain: allKinds.filter((k) => k.layer === 'terrain' && k.geometry !== 'line'),
+    lines: allKinds.filter((k) => k.geometry === 'line'),
+    structures: allKinds.filter((k) => k.layer === 'structure' && k.geometry !== 'line'),
+  });
   const svgStr = $derived(doc && view !== 'painted' && view !== 'terrain' ? renderSvg(doc, view === 'control' ? (staged ? 'terrain' : 'control') : 'preview') : '');
   const node = $derived(nodeId ? app.nodes[nodeId] : undefined);
   // the NPCs and enemies that belong to this place, and the tokens that stand for them
@@ -82,6 +98,7 @@
       doc = j.map;
       nodeId = j.nodeId;
       tool = doc!.kind === 'battle' ? 'rect' : 'polygon';
+      if (doc!.kind !== 'battle') panel = 'draw';
       queueMicrotask(fit);
       void loadPaint();
     })();
@@ -376,17 +393,101 @@
     return b && moving && (moving.dx || moving.dy) ? { ...b, x: b.x + moving.dx, y: b.y + moving.dy } : null;
   });
 
-  // region maps: move / restyle the selected shape
+  // region maps: move / restyle / reshape the selected shape (in place, so its place in the drawing order is kept)
+  type Shape = MapDoc['shapes'][number];
   function translateShape(s: NonNullable<typeof selShape>, dx: number, dy: number): Pt[] {
     if (s.type === 'ellipse') return [[s.points[0][0] + dx, s.points[0][1] + dy], ...s.points.slice(1)] as Pt[];
     return s.points.map(([x, y]) => [x + dx, y + dy] as Pt);
   }
-  function reshape(patch: Partial<{ kind: TerrainKind; label: string }>, copy = false) {
-    if (!selShape) return;
+  /** a custom kind the map does not carry yet is copied into it (renders, exports and the AI see the map on its own) */
+  function ensureKind(id: string) {
+    if (!doc) return;
+    const k = allKinds.find((x) => x.id === id);
+    if (k?.custom && !doc.kinds?.some((x) => x.id === id)) doc.kinds = [...(doc.kinds ?? []), { ...k }];
+  }
+  function updateShape(s: Shape, patch: Partial<Shape>, snapshot = true) {
+    if (!doc) return;
+    if (snapshot) pushUndo();
+    if (patch.kind) ensureKind(patch.kind);
+    const t = s as unknown as Record<string, unknown>;
+    for (const [key, v] of Object.entries(patch)) {
+      if (v === undefined || v === '' || v === null) delete t[key];
+      else t[key] = v;
+    }
+    touch();
+  }
+  const withKind = (id: string, op: Extract<MapOp, { op: 'shape' }>): MapOp[] => {
+    const k = allKinds.find((x) => x.id === id);
+    return k?.custom && !doc?.kinds?.some((x) => x.id === id) ? [{ op: 'define_kind', kind: k }, op] : [op];
+  };
+  function duplicateShape() {
+    if (!selShape || !doc) return;
     const s = selShape;
-    const id = copy ? rid(s.kind) : s.id;
-    const pts = copy ? translateShape(s, 24, 24) : s.points;
-    if (edit([{ op: 'shape', type: s.type, kind: patch.kind ?? s.kind, points: pts, r: s.r, width: s.width, label: patch.label ?? s.label, id }])) selected = id;
+    const id = rid(s.kind);
+    if (edit(withKind(s.kind, { op: 'shape', type: s.type, kind: s.kind, points: translateShape(s, 24, 24), r: s.r, width: s.width, label: s.label, prompt: s.prompt, id }))) selected = id;
+  }
+  function reorderShape(toFront: boolean) {
+    if (!selShape || !doc) return;
+    pushUndo();
+    const s = doc.shapes.find((x) => x.id === selected)!;
+    doc.shapes = toFront ? [...doc.shapes.filter((x) => x !== s), s] : [s, ...doc.shapes.filter((x) => x !== s)];
+    touch();
+  }
+  function removeVertex(i: number) {
+    if (!selShape || !doc) return;
+    const min = selShape.type === 'polygon' ? 3 : 2;
+    if (selShape.points.length <= min) return say('A shape needs at least ' + min + ' points');
+    pushUndo();
+    selShape.points = selShape.points.filter((_, n) => n !== i);
+    touch();
+  }
+  /** a click on the palette: draw the next shape as this kind, with the tool that suits it */
+  function pickKind(id: string) {
+    kind = id;
+    lineWidth = null;
+    stampR = null;
+    const k = kindOf(id);
+    pending = [];
+    // the tool that suits the kind: lines are drawn as lines, places are stamped (pick Area or Blob afterwards to draw one by hand), land as areas
+    if (isLineKind(k)) tool = 'path';
+    else if (k.layer === 'structure' && tool !== 'ellipse') tool = 'pin';
+    else if (k.layer === 'terrain' && (tool === 'path' || tool === 'pin' || tool === 'select')) tool = 'polygon';
+    selected = null;
+  }
+  // ---- custom types (the campaign's library) ----
+  let customOpen = $state(false);
+  let cf = $state({ id: '', name: '', cls: 'terrain' as 'terrain' | 'line' | 'structure', color: '#7cff3a', prompt: '', width: 10, size: 20, group: 'land' as 'water' | 'land' });
+  function newCustom() {
+    cf = { id: '', name: '', cls: 'terrain', color: '#7cff3a', prompt: '', width: 10, size: 20, group: 'land' };
+    customOpen = true;
+  }
+  function editCustom(k: RegionKind) {
+    cf = { id: k.id, name: k.name, cls: k.geometry === 'line' ? 'line' : k.layer === 'structure' ? 'structure' : 'terrain', color: k.color, prompt: k.prompt, width: k.width ?? 10, size: k.size ?? 20, group: k.lineGroup ?? 'land' };
+    customOpen = true;
+  }
+  async function saveCustom() {
+    const payload = {
+      name: cf.name, ...(cf.id ? { id: cf.id } : {}), layer: cf.cls === 'structure' ? ('structure' as const) : ('terrain' as const),
+      geometry: cf.cls === 'line' ? ('line' as const) : cf.cls === 'structure' ? ('spot' as const) : ('area' as const),
+      color: cf.color, prompt: cf.prompt, ...(cf.cls === 'line' ? { width: cf.width, lineGroup: cf.group } : {}), ...(cf.cls === 'structure' ? { size: cf.size } : {}),
+    };
+    let id: string;
+    try {
+      id = cleanKind(payload).id;
+    } catch (e) {
+      return say(e instanceof Error ? e.message : String(e));
+    }
+    const r = await cmd('set_region_kind', payload);
+    if (!r) return;
+    customOpen = false;
+    // maps that already use this kind keep their copy in sync with the edit
+    if (doc?.kinds?.some((x) => x.id === id)) doc.kinds = doc.kinds.map((x) => (x.id === id ? { ...cleanKind(payload) } : x));
+    pickKind(id);
+  }
+  async function removeCustom(id: string) {
+    if (!confirm('Remove this type from the campaign library? Maps that use it keep their copy.')) return;
+    await cmd('remove_region_kind', { id });
+    if (kind === id) kind = 'forest';
   }
   let pointerPos = $state<{ x: number; y: number } | null>(null);
 
@@ -482,20 +583,27 @@
       pushUndo();
       strokePts = [pt];
       painting = true;
-    } else if (tool === 'ellipse') drag = { a: p, b: p };
-    else if (tool === 'pin') {
-      const label = prompt('Name (optional)', '') ?? null;
-      if (label === null) return;
-      // a place is an area, not a dot: stamp a round one of the kind's usual size (the full region editor rework replaces this tool)
-      const r = regionKind(pinKind, doc?.kinds).size ?? 20;
-      edit([{ op: 'shape', type: 'ellipse', kind: pinKind, points: [pt, [r, r]], label: label.trim() || undefined }]);
-    } else if (tool === 'select') {
+    } else if (tool === 'ellipse' || tool === 'pin') drag = { a: p, b: p };
+    else if (tool === 'select') {
+      // a handle of the selected shape: drag it (Alt-click removes the point)
+      if (selShape && (selShape.type === 'polygon' || selShape.type === 'path')) {
+        const reach = 10 / k;
+        const i = selShape.points.findIndex(([x, y]) => Math.hypot(x - p.x, y - p.y) <= reach);
+        if (i >= 0) {
+          if (e.altKey) removeVertex(i);
+          else {
+            pushUndo();
+            vertex = i;
+          }
+          return;
+        }
+      }
       selected = hitShape(p);
       if (selected) shapeMove = { from: p, dx: 0, dy: 0 };
     }
   }
-
-  let pinKind = $state<TerrainKind>('city');
+  /** region maps: index of the corner of the selected shape being dragged */
+  let vertex = $state<number | null>(null);
 
   function onpointermove(e: PointerEvent) {
     if (panning) {
@@ -514,6 +622,11 @@
     if (moving && battle) {
       const c = cellOf(p);
       moving = { ...moving, dx: c.x - moving.from.x, dy: c.y - moving.from.y, copy: moving.copy || e.altKey };
+    }
+    if (vertex !== null && selShape) {
+      const pts = [...selShape.points];
+      pts[vertex] = [Math.round(p.x), Math.round(p.y)];
+      selShape.points = pts;
     }
     if (shapeMove) shapeMove = { ...shapeMove, dx: Math.round(p.x - shapeMove.from.x), dy: Math.round(p.y - shapeMove.from.y) };
     if (drag) drag = { ...drag, b: p };
@@ -535,19 +648,21 @@
       moving = null;
       if (mv.dx || mv.dy) shiftSel(mv.dx, mv.dy, mv.copy || e.altKey);
     }
+    if (vertex !== null) {
+      vertex = null;
+      touch();
+    }
     if (shapeMove) {
       const sm = shapeMove;
       shapeMove = null;
-      if ((sm.dx || sm.dy) && selShape) {
-        const s = selShape;
-        edit([{ op: 'shape', type: s.type, kind: s.kind, points: translateShape(s, sm.dx, sm.dy), r: s.r, width: s.width, label: s.label, id: s.id }]);
-      }
+      if ((sm.dx || sm.dy) && selShape) updateShape(selShape, { points: translateShape(selShape, sm.dx, sm.dy) });
     }
     if (painting) {
       painting = false;
       if (tool === 'brush' && strokePts.length >= 1) {
         const pts = strokePts.length === 1 ? [strokePts[0], [strokePts[0][0] + 1, strokePts[0][1]] as Pt] : strokePts;
-        edit([{ op: 'shape', type: 'path', kind: terrain, points: pts, width: brush }], false);
+        const id = rid(kind);
+        if (edit(withKind(kind, { op: 'shape', type: 'path', kind, points: pts, width: brush, id }), false)) selected = id;
       }
       strokePts = [];
     }
@@ -566,7 +681,14 @@
         if (x1 >= x0 && y1 >= y0) sel = { t: 'area', x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
       } else if (!battle && tool === 'ellipse') {
         const rx = Math.abs(d.b.x - d.a.x), ry = Math.abs(d.b.y - d.a.y);
-        if (rx > 4 && ry > 4) edit([{ op: 'shape', type: 'ellipse', kind: terrain, points: [[Math.round(d.a.x), Math.round(d.a.y)], [Math.round(rx), Math.round(ry)]] }]);
+        const id = rid(kind);
+        if (rx > 4 && ry > 4 && edit(withKind(kind, { op: 'shape', type: 'ellipse', kind, points: [[Math.round(d.a.x), Math.round(d.a.y)], [Math.round(rx), Math.round(ry)]], id }))) selected = id;
+      } else if (!battle && tool === 'pin') {
+        // Stamp: a click puts a round area of the kind's usual size, dragging outwards sizes it by hand. A place is an area, never a dot.
+        const dist = Math.hypot(d.b.x - d.a.x, d.b.y - d.a.y);
+        const r = dist > 8 ? Math.round(dist) : (stampR ?? kindOf(kind).size ?? 20);
+        const id = rid(kind);
+        if (edit(withKind(kind, { op: 'shape', type: 'ellipse', kind, points: [[Math.round(d.a.x), Math.round(d.a.y)], [r, r]], id }))) selected = id;
       }
     }
   }
@@ -574,7 +696,11 @@
   function finishPending() {
     if (!pending.length) return;
     const need = tool === 'polygon' ? 3 : 2;
-    if (pending.length >= need) edit([{ op: 'shape', type: tool === 'polygon' ? 'polygon' : 'path', kind: terrain, points: pending }]);
+    if (pending.length >= need) {
+      const id = rid(kind);
+      const line = tool === 'path';
+      if (edit(withKind(kind, { op: 'shape', type: line ? 'path' : 'polygon', kind, points: pending, id, ...(line && lineWidth ? { width: lineWidth } : {}) }))) selected = id;
+    }
     pending = [];
   }
 
@@ -588,27 +714,9 @@
   function hitShape(p: { x: number; y: number }): string | null {
     if (!doc) return null;
     for (const s of [...doc.shapes].reverse()) {
-      if (s.type === 'pin') {
-        if (Math.hypot(p.x - s.points[0][0], p.y - s.points[0][1]) < (s.r ?? 14) + 6) return s.id;
-      } else if (s.type === 'ellipse') {
-        const [cx, cy] = s.points[0], [rx, ry] = s.points[1] ?? [30, 30];
-        if (((p.x - cx) / rx) ** 2 + ((p.y - cy) / ry) ** 2 <= 1) return s.id;
-      } else if (s.type === 'polygon') {
-        let inside = false;
-        for (let i = 0, j = s.points.length - 1; i < s.points.length; j = i++) {
-          const [xi, yi] = s.points[i], [xj, yj] = s.points[j];
-          if (yi > p.y !== yj > p.y && p.x < ((xj - xi) * (p.y - yi)) / (yj - yi) + xi) inside = !inside;
-        }
-        if (inside) return s.id;
-      } else {
-        const w = Math.max((s.width ?? 12) / 2, 8);
-        for (let i = 1; i < s.points.length; i++) {
-          const [x1, y1] = s.points[i - 1], [x2, y2] = s.points[i];
-          const l2 = (x2 - x1) ** 2 + (y2 - y1) ** 2 || 1;
-          const t = Math.max(0, Math.min(1, ((p.x - x1) * (x2 - x1) + (p.y - y1) * (y2 - y1)) / l2));
-          if (Math.hypot(p.x - (x1 + t * (x2 - x1)), p.y - (y1 + t * (y2 - y1))) <= w) return s.id;
-        }
-      }
+      // thin lines are given a minimum reach so they can be grabbed
+      const probe = s.type === 'path' ? { ...s, width: Math.max(strokeWidth(s, doc.kinds), 16) } : s;
+      if (pointInShape(probe, p.x, p.y, doc.kinds)) return s.id;
     }
     return null;
   }
@@ -648,7 +756,7 @@
       shiftSel(e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0, e.key === 'ArrowUp' ? -1 : e.key === 'ArrowDown' ? 1 : 0);
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd' && (sel || selected)) {
       e.preventDefault();
-      if (selected) reshape({}, true); else duplicateSel();
+      if (selected) duplicateShape(); else duplicateSel();
     } else if (e.key.toLowerCase() === 'r' && tool === 'select' && selProp) rotateSel();
     else if (e.key.toLowerCase() === 'r' && tool === 'prop') propFlip = !propFlip;
   }
@@ -670,7 +778,7 @@
     touch();
     queueMicrotask(fit);
   }
-  function setBackground(bg: TerrainKind) {
+  function setBackground(bg: string) {
     if (!doc) return;
     pushUndo();
     doc.background = bg;
@@ -813,12 +921,12 @@
   const TERRAIN_HINT = { faithful: 'sticks closely to your walls and floors', balanced: 'creative, but keeps the rooms where they are', painterly: 'freest — rooms may shift a little' };
 
   const regionTools: { id: Tool; label: string; icon: string; tip: string }[] = [
+    { id: 'select', label: 'Select', icon: '⇱', tip: 'Click a shape to select it; drag to move it, drag a white corner to reshape, Alt-click a corner removes it, Delete removes the shape' },
     { id: 'polygon', label: 'Area', icon: '⬠', tip: 'Click points; Enter or double-click to finish' },
-    { id: 'path', label: 'Road/River', icon: '〰', tip: 'Click points; Enter or double-click to finish' },
+    { id: 'path', label: 'Line', icon: '〰', tip: 'River, road, rail… click points; Enter or double-click to finish; the width is set in the Draw tab' },
     { id: 'brush', label: 'Scribble', icon: '✎', tip: 'Freehand brush in the chosen terrain' },
     { id: 'ellipse', label: 'Blob', icon: '◯', tip: 'Drag from the centre outwards' },
-    { id: 'pin', label: 'Place', icon: '⚑', tip: 'Town, castle, ruins…' },
-    { id: 'select', label: 'Select', icon: '⇱', tip: 'Click a shape to select it; drag to move it, Delete removes it' },
+    { id: 'pin', label: 'Stamp', icon: '⚑', tip: 'Click to put a structure of its usual size; drag outwards to size it' },
   ];
   const battleTools: { id: Tool; label: string; icon: string; tip: string }[] = [
     { id: 'select', label: 'Select', icon: '⇱', tip: 'Click a prop, token, label or door — or drag a box over cells. Drag to move (Alt = copy), arrow keys nudge, Delete removes, R rotates, Ctrl+D duplicates' },
@@ -831,8 +939,6 @@
     { id: 'label', label: 'Label', icon: 'Aa', tip: 'Room names (preview only)' },
     { id: 'token', label: 'Token', icon: '●', tip: 'Start positions (for the VTT)' },
   ];
-  const pinKinds: TerrainKind[] = ['city', 'village', 'castle', 'ruins', 'port', 'cave'];
-  const areaKinds = (Object.keys(TERRAINS) as TerrainKind[]).filter((t) => !pinKinds.includes(t));
 </script>
 
 <svelte:window {onkeydown} {onkeyup} />
@@ -860,7 +966,7 @@
     <div class="body">
       <nav class="tools" data-tour="map-tools">
         {#each battle ? battleTools : regionTools as t}
-          <button class:on={tool === t.id} title={t.tip} onclick={() => { tool = t.id; pending = []; selected = null; sel = null; moving = null; if (t.id === 'token' && battle) panel = 'cast'; }}><i>{t.icon}</i><span>{t.label}</span></button>
+          <button class:on={tool === t.id} title={t.tip} onclick={() => { tool = t.id; pending = []; selected = null; sel = null; moving = null; if (t.id === 'token' && battle) panel = 'cast'; if (!battle && panel === 'cast') panel = 'draw'; }}><i>{t.icon}</i><span>{t.label}</span></button>
         {/each}
 
         <div class="pal">
@@ -916,15 +1022,8 @@
                 <label class="chk"><input type="checkbox" bind:checked={autoWalls} /> walls around it</label>
                 <div class="acts"><button class="btn sm" onclick={duplicateSel} title="Ctrl+D">⧉ Duplicate</button><button class="btn sm danger" onclick={deleteSel}>Delete</button></div>
               {/if}
-            {:else if !selShape}
-              <div class="dim">Click a shape to select it, then drag to move it. Delete removes, Ctrl+D duplicates.</div>
             {:else}
-              <div class="label">{selShape.type === 'pin' ? 'Place' : selShape.type === 'path' ? 'Road / river' : 'Area'}</div>
-              <div class="sw">{#each (selShape.type === 'pin' ? pinKinds : areaKinds) as t}<button class:on={selShape.kind === t} style="--c:{TERRAINS[t]}" title={t} onclick={() => reshape({ kind: t })}></button>{/each}</div>
-              <div class="dim">{selShape.kind}</div>
-              <div class="label">Name</div>
-              <input class="field" value={selShape.label ?? ''} placeholder="optional" onchange={(e) => reshape({ label: e.currentTarget.value })} />
-              <div class="acts"><button class="btn sm" onclick={() => reshape({}, true)} title="Ctrl+D">⧉ Duplicate</button><button class="btn sm danger" onclick={() => { edit([{ op: 'remove_shape', id: selShape!.id }]); selected = null; }}>Delete</button></div>
+              <div class="dim">Click a shape, drag to move it. Its properties are in the <button class="lnk" onclick={() => (panel = 'draw')}>Draw</button> tab →</div>
             {/if}
           {:else if battle}
             {#if tool === 'paint' || tool === 'rect'}
@@ -951,17 +1050,8 @@
                 <div class="dim">A plain marker. Pick a character in the <button class="lnk" onclick={() => (panel = 'cast')}>Characters</button> tab to put a real one.</div>
               {/if}
             {/if}
-          {:else if tool === 'pin'}
-            <div class="label">Place</div>
-            <div class="sw">{#each pinKinds as t}<button class:on={pinKind === t} style="--c:{TERRAINS[t]}" title={t} onclick={() => (pinKind = t)}></button>{/each}</div>
           {:else}
-            <div class="label">Terrain</div>
-            <div class="sw">{#each areaKinds as t}<button class:on={terrain === t} style="--c:{TERRAINS[t]}" title={t} onclick={() => (terrain = t)}></button>{/each}</div>
-            <div class="dim">{terrain}</div>
-            {#if tool === 'brush'}
-              <div class="label">Brush {brush}px</div>
-              <input type="range" min="8" max="140" bind:value={brush} />
-            {/if}
+            <div class="dim">Kinds, line width and the properties of the selected shape are in the <button class="lnk" onclick={() => (panel = 'draw')}>Draw</button> tab →</div>
           {/if}
         </div>
       </nav>
@@ -1012,11 +1102,12 @@
               {:else if !battle && view === 'plan'}
                 {#each fresh.rects as r}<rect class="fresh" x={r.x} y={r.y} width={r.w} height={r.h} />{/each}
                 {#if pending.length}
-                  <polyline class="pend" points={[...pending, ...(pointerPos ? [[pointerPos.x, pointerPos.y]] : [])].map((q) => q.join(',')).join(' ')} />
+                  <polyline class="pend" style={tool === 'path' ? `stroke:${kindOf(kind).color};stroke-width:${lineWidth ?? kindOf(kind).width ?? 14};opacity:.75;fill:none` : `stroke:${kindOf(kind).color}`} points={[...pending, ...(pointerPos ? [[pointerPos.x, pointerPos.y]] : [])].map((q) => q.join(',')).join(' ')} />
                   {#each pending as q}<circle cx={q[0]} cy={q[1]} r="4" class="dot" />{/each}
                 {/if}
-                {#if strokePts.length}<polyline class="pend" style="stroke:{TERRAINS[terrain]};stroke-width:{brush};opacity:.7" points={strokePts.map((q) => q.join(',')).join(' ')} />{/if}
+                {#if strokePts.length}<polyline class="pend" style="stroke:{kindOf(kind).color};stroke-width:{brush};opacity:.7;fill:none" points={strokePts.map((q) => q.join(',')).join(' ')} />{/if}
                 {#if drag && tool === 'ellipse'}<ellipse class="sel" cx={drag.a.x} cy={drag.a.y} rx={Math.abs(drag.b.x - drag.a.x)} ry={Math.abs(drag.b.y - drag.a.y)} />{/if}
+                {#if drag && tool === 'pin'}<circle class="sel" cx={drag.a.x} cy={drag.a.y} r={Math.hypot(drag.b.x - drag.a.x, drag.b.y - drag.a.y) > 8 ? Math.hypot(drag.b.x - drag.a.x, drag.b.y - drag.a.y) : (stampR ?? kindOf(kind).size ?? 20)} style="fill:{kindOf(kind).color};fill-opacity:.35" />{:else if pointerPos && tool === 'pin' && !painting}<circle class="sel" cx={pointerPos.x} cy={pointerPos.y} r={stampR ?? kindOf(kind).size ?? 20} style="fill:{kindOf(kind).color};fill-opacity:.25" />{/if}
                 {#if selected}
                   {@const s = doc.shapes.find((x) => x.id === selected)}
                   {#if s}
@@ -1026,6 +1117,9 @@
                     {:else if s.type === 'ellipse'}<ellipse class="sel" cx={s.points[0][0]} cy={s.points[0][1]} rx={s.points[1]?.[0] ?? 30} ry={s.points[1]?.[1] ?? 30} />
                     {:else}<circle class="sel" cx={s.points[0][0]} cy={s.points[0][1]} r={(s.r ?? 14) + 6} />{/if}
                     </g>
+                    {#if tool === 'select' && (s.type === 'polygon' || s.type === 'path')}
+                      {#each s.points as q, qi}<circle class="vh" cx={q[0]} cy={q[1]} r={5 / k} />{/each}
+                    {/if}
                   {/if}
                 {/if}
               {/if}
@@ -1039,6 +1133,7 @@
 
       <aside class="side">
         <div class="tabs" data-tour="map-tabs">
+          {#if !battle}<button data-tour="map-tab-draw" class:on={panel === 'draw'} onclick={() => (panel = 'draw')} title="Kinds, line width, the properties of the selected shape">Draw</button>{/if}
           <button data-tour="map-tab-paint" class:on={panel === 'render'} onclick={() => (panel = 'render')}>Paint</button>
           {#if battle}<button data-tour="map-tab-cast" class:on={panel === 'cast'} onclick={() => (panel = 'cast')} title="The NPCs and enemies of this place, and their tokens">Characters{#if cast.length} <span class="dim">{placedTotal}/{cast.length}</span>{/if}</button>{/if}
           <button class:on={panel === 'map'} onclick={() => (panel = 'map')}>Map</button>
@@ -1163,6 +1258,96 @@
             {@render jobsView()}
             {@render rendersView()}
           {/if}
+        {:else if panel === 'draw' && doc && !battle}
+          {#snippet kindGroup(title: string, list: RegionKind[])}
+            <div class="label">{title}</div>
+            <div class="kg">
+              {#each list as kk (kk.id)}
+                <button class="kb" class:on={kind === kk.id} onclick={() => pickKind(kk.id)} title={kk.prompt}><i style="background:{kk.color}"></i><span>{kk.name}</span>{#if kk.custom}<b title="your own type">★</b>{/if}</button>
+              {/each}
+            </div>
+          {/snippet}
+          {@const kk = kindOf(kind)}
+          {#if tool === 'select'}
+            <div class="dim">Select mode — pick a shape on the map to change it. Choose a kind below to draw again.</div>
+          {:else}
+            <div class="label">Drawing <b class="kn">{kk.name}</b> <span class="dim">· {kk.layer === 'structure' ? 'structure (painted into its area)' : kk.geometry === 'line' ? 'line (painted along its path)' : 'terrain'}</span></div>
+          {/if}
+          {#if tool === 'path'}
+            <div class="label">Line width <span class="dim">{lineWidth ?? kk.width ?? 14}px{lineWidth === null ? ' · the kind’s own' : ''}</span></div>
+            <input type="range" min="2" max="120" value={lineWidth ?? kk.width ?? 14} oninput={(e) => (lineWidth = +e.currentTarget.value)} />
+            {#if lineWidth !== null}<button class="lnk" onclick={() => (lineWidth = null)}>use the kind’s width</button>{/if}
+          {:else if tool === 'brush'}
+            <div class="label">Brush {brush}px</div>
+            <input type="range" min="8" max="140" bind:value={brush} />
+          {:else if tool === 'pin'}
+            <div class="label">Stamp radius <span class="dim">{stampR ?? kk.size ?? 20}px{stampR === null ? ' · the kind’s own' : ''} · or drag outwards on the map</span></div>
+            <input type="range" min="4" max="120" value={stampR ?? kk.size ?? 20} oninput={(e) => (stampR = +e.currentTarget.value)} />
+            {#if stampR !== null}<button class="lnk" onclick={() => (stampR = null)}>use the kind’s size</button>{/if}
+          {/if}
+
+          {@render kindGroup('Terrain — painted first', palette.terrain)}
+          {@render kindGroup('Lines — rivers, roads, rails, bridges', palette.lines)}
+          {@render kindGroup('Structures — painted into their area', palette.structures)}
+
+          <div class="row" style="margin-top:8px">
+            <button class="btn sm" onclick={newCustom}>＋ Your own type…</button>
+            {#if kk.custom}<button class="btn sm" onclick={() => editCustom(kk)}>✎ Edit “{kk.name}”</button><button class="btn sm danger" onclick={() => removeCustom(kk.id)}>✕</button>{/if}
+          </div>
+          {#if customOpen}
+            <div class="cfm">
+              <div class="label">{cf.id ? 'Change your type' : 'A new type for this campaign'}</div>
+              <input class="field" placeholder="Name (Radioactive crater, Ley line, Wizard tower…)" bind:value={cf.name} />
+              <div class="seg w">
+                {#each [['terrain', 'Terrain'], ['line', 'Line'], ['structure', 'Structure']] as [v, n]}<button class:on={cf.cls === v} onclick={() => (cf.cls = v as typeof cf.cls)}>{n}</button>{/each}
+              </div>
+              <div class="dim">{cf.cls === 'terrain' ? 'An area painted first, as part of the land.' : cf.cls === 'line' ? 'A multi-point path with a width, painted along its line after the land.' : 'An area painted into its exact shape after the land (a place is never a dot).'}</div>
+              <label class="num">Colour on the sketch <input type="color" bind:value={cf.color} /></label>
+              <textarea class="field" rows="3" placeholder="What does it look like from above? (a few words — the campaign style decides the look)" bind:value={cf.prompt}></textarea>
+              {#if cf.cls === 'line'}
+                <div class="row">
+                  <label class="num">usual width px <input class="field" type="number" min="1" max="120" bind:value={cf.width} /></label>
+                  <label class="num">painted with <select class="field" bind:value={cf.group}><option value="water">the rivers (water)</option><option value="land">roads &amp; rails (land)</option></select></label>
+                </div>
+              {:else if cf.cls === 'structure'}
+                <label class="num">usual radius px <input class="field" type="number" min="3" max="200" bind:value={cf.size} /></label>
+              {/if}
+              <div class="row"><button class="btn primary grow" onclick={saveCustom} disabled={!cf.name.trim() || cf.prompt.trim().split(/\s+/).length < 2}>Save to the campaign</button><button class="btn ghost" onclick={() => (customOpen = false)}>Cancel</button></div>
+            </div>
+          {/if}
+
+          {#if selShape}
+            {@const sk = kindOf(selShape.kind)}
+            <div class="step"><b>▣</b> Selected: {sk.name}{selShape.label ? ` · “${selShape.label}”` : ''}</div>
+            <div class="label">Kind</div>
+            <select class="field" value={selShape.kind} onchange={(e) => updateShape(selShape!, { kind: e.currentTarget.value })}>
+              <optgroup label="Terrain">{#each palette.terrain as o}<option value={o.id}>{o.name}</option>{/each}</optgroup>
+              <optgroup label="Lines">{#each palette.lines as o}<option value={o.id}>{o.name}</option>{/each}</optgroup>
+              <optgroup label="Structures">{#each palette.structures as o}<option value={o.id}>{o.name}</option>{/each}</optgroup>
+            </select>
+            <div class="label">Name <span class="dim">(only in the editor)</span></div>
+            <input class="field" value={selShape.label ?? ''} placeholder="Eldoria, the Greywater…" onchange={(e) => updateShape(selShape!, { label: e.currentTarget.value.trim() })} />
+            {#if sk.layer === 'structure'}
+              <div class="label">What should be painted here? <span class="dim">(optional)</span></div>
+              <textarea class="field" rows="3" placeholder={`${sk.prompt} — leave empty and the AI writes it from the world's style`} value={selShape.prompt ?? ''} onchange={(e) => updateShape(selShape!, { prompt: e.currentTarget.value.trim() })}></textarea>
+            {/if}
+            {#if selShape.type === 'path'}
+              <div class="label">Width <span class="dim">{selShape.width ?? sk.width ?? 14}px</span></div>
+              <input type="range" min="2" max="120" value={selShape.width ?? sk.width ?? 14} onchange={(e) => updateShape(selShape!, { width: +e.currentTarget.value })} />
+            {:else if selShape.type === 'ellipse'}
+              <div class="row">
+                <label class="num">width px <input class="field" type="number" min="4" max="1500" value={Math.round((selShape.points[1]?.[0] ?? 30) * 2)} onchange={(e) => updateShape(selShape!, { points: [selShape!.points[0], [Math.max(2, +e.currentTarget.value / 2), selShape!.points[1]?.[1] ?? 30]] })} /></label>
+                <label class="num">height px <input class="field" type="number" min="4" max="1500" value={Math.round((selShape.points[1]?.[1] ?? 30) * 2)} onchange={(e) => updateShape(selShape!, { points: [selShape!.points[0], [selShape!.points[1]?.[0] ?? 30, Math.max(2, +e.currentTarget.value / 2)]] })} /></label>
+              </div>
+            {/if}
+            {#if selShape.type !== 'ellipse'}<div class="dim">Drag the white corners to reshape · Alt-click a corner removes it.</div>{/if}
+            <div class="acts">
+              <button class="btn sm" onclick={duplicateShape} title="Ctrl+D">⧉ Duplicate</button>
+              <button class="btn sm" onclick={() => reorderShape(true)} title="Draw on top of the others">▲ front</button>
+              <button class="btn sm" onclick={() => reorderShape(false)} title="Draw below the others">▼ back</button>
+              <button class="btn sm danger" onclick={() => { edit([{ op: 'remove_shape', id: selShape!.id }]); selected = null; }}>Delete</button>
+            </div>
+          {/if}
         {:else if panel === 'cast' && doc && battle}
           <div data-tour="map-cast">
             <div class="label">Characters of this place <span class="dim">({cast.length})</span></div>
@@ -1207,8 +1392,8 @@
               {/each}
             </div>
             <div class="label">Background</div>
-            <div class="sw">{#each ['land', 'sea', 'desert', 'snow', 'swamp'] as t}<button class:on={doc.background === t} style="--c:{TERRAINS[t as TerrainKind]}" title={t} onclick={() => setBackground(t as TerrainKind)}></button>{/each}</div>
-            <p class="dim">Draw areas, roads and places; the image model turns the colour-coded sketch into a painted map. “Scribble” is a freehand brush.</p>
+            <div class="sw">{#each palette.terrain as t}<button class:on={(doc.background ?? 'land') === t.id} style="--c:{t.color}" title={t.name} onclick={() => setBackground(t.id)}></button>{/each}</div>
+            <p class="dim">Draw areas, rivers, roads and places in the <b>Draw</b> tab; the image model turns the sketch into a painted map. Rivers and roads are painted exactly along your lines.</p>
           {/if}
         {/if}
       </aside>
@@ -1230,6 +1415,16 @@
   .tools > button i { font-style: normal; width: 18px; text-align: center; }
   .tools > button:hover { background: var(--bg-3); color: var(--text); }
   .tools > button.on { background: var(--accent-soft); border-color: var(--accent); color: var(--text); }
+  .kg { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+  .kb { display: flex; align-items: center; gap: 6px; background: var(--bg-3); border: 1px solid var(--line-2); border-radius: 7px; padding: 3px 6px; font-size: 12px; color: var(--text-dim); text-align: left; min-width: 0; }
+  .kb i { width: 14px; height: 14px; border-radius: 4px; flex: none; border: 1px solid #0006; }
+  .kb span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .kb b { color: #f5c542; font-size: 11px; }
+  .kb:hover { color: var(--text); }
+  .kb.on { border-color: var(--accent); color: var(--text); background: var(--accent-soft); }
+  .kn { color: var(--accent); }
+  .cfm { margin: 8px 0; padding: 8px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--bg-3); display: grid; gap: 6px; }
+  :global(.ov .vh) { fill: #fff; stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; }
   .pal { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
   .pal .field { padding: 3px 6px; font-size: 12px; }
   .sw { display: flex; flex-wrap: wrap; gap: 4px; }

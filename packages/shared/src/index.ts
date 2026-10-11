@@ -1,4 +1,5 @@
 import type { MapDoc } from './mapdata.js';
+import type { RegionKind } from './regionkinds.js';
 
 // Shared domain types for PenNodePaper (server, web, MCP all speak this).
 
@@ -177,6 +178,8 @@ export interface CampaignMeta {
   createdAt: string;
   comfy?: Partial<ComfyConfig>;
   style?: Partial<StyleConfig>;
+  /** the campaign's own region-map kinds (terrain / line / structure types the GM defined); a map copies the ones it uses */
+  regionKinds?: RegionKind[];
   backup?: Partial<BackupSettings>;
   /** live = AI edits stand until you undo them; review = they wait for your Accept / Reject after the AI is done */
   aiMode?: 'live' | 'review';

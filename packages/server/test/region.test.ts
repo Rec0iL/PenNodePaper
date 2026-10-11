@@ -606,3 +606,38 @@ describe('precise painting of a region map', () => {
     expect(r.consolidate).toBe(true);
   });
 });
+
+describe('the campaign library of region kinds', () => {
+  it('a kind defined once is usable on every region map; the map keeps its own copy', () => {
+    const mapId = setup();
+    run('set_region_kind', { name: 'Radioactive crater', layer: 'terrain', color: '#7cff3a', prompt: 'a glowing crater of molten green glass' });
+    expect(store.state.meta.regionKinds).toHaveLength(1);
+    expect(run('get_map', { mapId }).libraryKinds).toEqual([{ id: 'radioactive_crater', name: 'Radioactive crater', layer: 'terrain', geometry: 'area', inThisMap: false }]);
+    // the shape op alone is enough: the definition travels with it
+    run('edit_map', { mapId, ops: [{ op: 'shape', type: 'polygon', kind: 'radioactive_crater', points: [[100, 600], [200, 600], [150, 700]], id: 'c1' }] });
+    const m = store.maps.get(mapId);
+    expect(m.kinds?.map((k) => k.id)).toEqual(['radioactive_crater']);
+    expect(m.shapes.some((s) => s.id === 'c1')).toBe(true);
+    expect(run('get_map', { mapId }).libraryKinds[0].inThisMap).toBe(true);
+    // the library entry may change or go; the map's copy stays
+    run('remove_region_kind', { id: 'radioactive_crater' });
+    expect(store.state.meta.regionKinds).toBeUndefined();
+    expect(store.maps.get(mapId).kinds).toHaveLength(1);
+  });
+
+  it('refuses built-in ids and unusable definitions with a message for the AI', () => {
+    expect(() => run('set_region_kind', { name: 'City', id: 'city', layer: 'structure', color: '#aa0000', prompt: 'a big city' })).toThrow(/built-in/);
+    expect(() => run('set_region_kind', { name: 'Odd', layer: 'terrain', color: 'green', prompt: 'a green thing' })).toThrow(/hex colour/);
+    expect(() => run('remove_region_kind', { id: 'nope' })).toThrow(/No library kind/);
+  });
+
+  it('a library line kind lands in the line passes', async () => {
+    const mapId = setup();
+    run('set_region_kind', { name: 'Ley line', layer: 'terrain', geometry: 'line', color: '#ff00ff', prompt: 'a glowing ley line', width: 7 });
+    run('edit_map', { mapId, ops: [{ op: 'shape', type: 'path', kind: 'ley_line', points: [[10, 700], [300, 740]], id: 'ley' }] });
+    run('render_map', { mapId, prompt: PLACE });
+    await idle();
+    expect(wfs).toHaveLength(3); // terrain, rivers, then roads + the ley line in the land pass
+    expect(wfs[2]['10'].inputs.text).toMatch(/glowing ley line/);
+  });
+});
