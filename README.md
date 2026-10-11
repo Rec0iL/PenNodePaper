@@ -97,15 +97,39 @@ The AI is a shortcut for the same actions, never the only way to them.
 
 ## 🚀 Install & run
 
+PenNodePaper runs from its own folder; nothing is installed system-wide. The only thing you need up front is [**Node.js 20+**](https://nodejs.org/en/download) (check with `node -v`).
+
+**1. Get the code** — either way works:
+
+* **Download:** on the GitHub page click the green **Code** button → **Download ZIP**, then unpack it somewhere (your home folder is fine). The folder is called `PenNodePaper-main` or similar.
+* **or clone it with git:** `git clone https://github.com/Rec0iL/PenNodePaper.git` — this creates the folder `PenNodePaper`.
+
+**2. Open a terminal inside that folder** — the one that contains `package.json`:
+
 ```bash
-npm install
-npm run dev          # server :4317 + web UI :5273  -> open http://localhost:5273
-npm run build && npm start   # production: server serves the built UI on :4317
+cd PenNodePaper          # or the name of the folder you unpacked, e.g. cd PenNodePaper-main
+```
+
+> ⚠️ Every command below has to be run **in that folder**. `npm install` somewhere else (your home folder, the folder *containing* the project…) does nothing useful.
+
+**3. Install what it needs** (Linux, macOS, or Windows via [WSL2](docs/INSTALL.md#-windows)):
+
+```bash
+./scripts/install.sh          # or: bash scripts/install.sh   (if your unzip dropped the executable bit)
+```
+
+The script checks your Node version, runs `npm install` for you, builds the web UI, and then offers to install the optional helper tools with your system's package manager (it shows the exact command and asks first): **WeasyPrint** (the GM binder PDF), **ImageMagick** (thumbnails), **poppler + unzip** (importing `.pdf` / `.docx` notes), **git**. It does **not** install the AI assistants or ComfyUI — those are yours to pick and log in to (see [The AI](#-the-ai-optional)); it only tells you whether it can see them. `./scripts/install.sh --check` just reports and changes nothing; `--yes` says yes to everything. The core app needs nothing but Node: `npm install` alone is enough to write and run a whole campaign by hand.
+
+**4. Start it**
+
+```bash
+npm run dev                  # development: server :4317 + web UI :5273 -> open http://localhost:5273
+npm run build && npm start   # or production: one port, the server serves the built UI -> http://localhost:4317
 ```
 
 First launch seeds the practice campaign *Greywater* in `campaigns/demo/` and starts the [welcome tour](#-welcome-tour). The server starts with the campaign you used last; switch, create or branch campaigns from the campaign menu in the top bar (or force one with `PNP_CAMPAIGN=<folder>`).
 
-**What you need:** Node 20+ — that is enough to write and run a whole campaign by hand. Optional, each unlocks one feature: the `claude` and/or `agy` CLI (the AI chat; without them the AI tab simply stays unused), a local **ComfyUI** with Krea 2 (images, painted maps), **WeasyPrint** (`pip install weasyprint`, GM binder PDF), **ImageMagick** (image thumbnails), `unzip` + `pdftotext` (importing .docx / .pdf notes), `git` (optional local git commits).
+**What you need:** Node 20+ — that is enough to write and run a whole campaign by hand (`./scripts/install.sh` installs the rest on request). Optional, each unlocks one feature: the `claude` and/or `agy` CLI (the AI chat; without them the AI tab simply stays unused), a local **ComfyUI** with Krea 2 (images, painted maps), **WeasyPrint** (`pip install weasyprint`, GM binder PDF), **ImageMagick** (image thumbnails), `unzip` + `pdftotext` (importing .docx / .pdf notes), `git` (optional local git commits).
 
 **Start-menu launcher (Linux):** `scripts/install-launcher.sh` adds a *PenNodePaper* entry to your application menu — it starts the server in the background (building the UI when needed), opens the browser and shows a **tray icon**. Right-click the menu entry for *Start in LAN mode*, *Show LAN address and access code*, *Open in browser*, *Stop* and *Show tray icon*. Or run `scripts/pennodepaper.sh start|start-lan|stop|open|status|lan-info|tray` yourself. The log is in `~/.local/state/pennodepaper/server.log`.
 
