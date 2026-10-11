@@ -96,7 +96,7 @@ const maps: TourStep[] = [
     id: 'map-props', target: ['[data-tour="map-groups"]', '[data-tour="map-props-btn"]'], side: 'left', watch: true,
     enter: async () => { calm({ map: true }); if (!mapOpen()) openMap(); await editorReady(); click('[data-tour="map-tab-paint"]'); await refreshMap(true); },
     title: 'Step ②: the props, spot by spot',
-    body: 'Every prop **group** is now painted into exactly its place, one after the other, each with its own prompt. **Touching props of the same kind are one object**: a row of tables becomes one long table, five barrels in a row stay five barrels. Tick *show the groups on the plan* to see them.\n\nPress **Paint the props**. A map with many groups takes a while for real — here it is sped up.',
+    body: 'Every prop **group** is now painted into exactly its place, one after the other, each with its own prompt. **Touching props of the same kind are one object**: a row of tables becomes one long table, five barrels in a row stay five barrels. Tick *show the groups on the plan* to see them. When the last prop is in, one more pass **blends them into the floor**: shadows appear and edges settle, while the objects themselves stay exactly as painted (a tick box under the button switches it off).\n\nPress **Paint the props**. A map with many groups takes a while for real — here it is sped up.',
     action: () => {
       const n = mapState.renders.length;
       return {
@@ -114,19 +114,31 @@ const maps: TourStep[] = [
     },
     need: ['maps-props'],
     title: 'The painted map',
-    body: 'There it is — the plan, painted, with every prop where you put it. Use **Plan / Terrain / Painted** to flip between them. Not happy? Paint the props again for a new variation, or pick another terrain; every result stays in **Painted versions**.\n\nThe picture also became the **cover of the place’s card**, and it is what you send your players as the map.',
+    body: 'There it is — the plan, painted, with every prop where you put it. Use **Plan / Terrain / Painted** to flip between them. Not happy? Paint the props again for a new variation, or pick another terrain; every result stays in **Painted versions**.\n\n**Just one object came out wrong** — a fused chair, a melted barrel? Open *Painting prompts of the groups* in the Paint tab and press **↻ paint this one again** on that group: only it is painted again, on the finished picture, and the new version is added next to the old one.\n\nThe picture also became the **cover of the place’s card**, and it is what you send your players as the map.',
   }),
   s('maps', {
     id: 'map-settings', target: ['[data-tour="settings-map-modes"]'], side: 'left',
     enter: async () => { calm({ settings: true }); app.mapEditor = null; app.settingsOpen = true; await waitFor(() => !!el('[data-tour="settings-map-modes"]')); },
     title: 'Quick or precise',
-    body: 'Here is the choice, in **⚙ Settings → Map painting** — a setting of *this computer*, because it depends on how fast your graphics card is.\n\n**Quick** is one pass: fine for a rough scene or a weak card. **Precise** costs about 1½ minutes for the terrain plus ~40 s per prop group on a 16 GB card — for the maps you will print or put on the table.\n\nChange it here to compare: the tour’s next “Paint it” will use the other way. (Region maps work in steps too: the land with its rivers and roads first, then every structure.)',
+    body: 'Here is the choice, in **⚙ Settings → Map painting** — a setting of *this computer*, because it depends on how fast your graphics card is.\n\n**Quick** is one pass: fine for a rough scene or a weak card. **Precise** costs about 1½ minutes for the terrain plus ~40 s per prop group on a 16 GB card — for the maps you will print or put on the table. Region maps work in steps too.\n\nChange it here to compare: the tour’s next “Paint it” will use the other way. (Region maps work in steps too: the land with its rivers and roads first, then every structure.)',
   }),
   s('maps', {
-    id: 'map-region', target: ['[data-tour="map-view"]'], side: 'left', pad: 0,
-    enter: async () => { calm({ map: true }); openMap(COAST); await editorReady(); },
-    title: 'Region maps',
-    body: 'The other kind: **region maps** — a vector sketch for a coast, a country or a town: areas (sea, forest, hills), roads and rivers as lines, and places for towns and ruins. *Scribble* is a freehand brush. The image model paints your sketch — this one is the coast around Greywater.',
+    id: 'map-region', target: ['[data-tour="map-view"]', '[data-tour="map-tab-draw"]'], side: 'left', pad: 0,
+    enter: async () => { calm({ map: true }); openMap(COAST); await editorReady(); click('[data-tour="map-tab-draw"]'); },
+    title: 'Region maps: land, lines, places',
+    body: 'The other kind: **region maps** — a sketch for a coast, a country or a town, in three layers:\n\n**Terrain** areas (sea, forest, hills, desert, snow…), **lines** (rivers, roads, railways, paths, bridges) and **structures** — a city, a camp, a hospital. A place is always an **area**, never a dot: draw or stamp it as big as it should be.\n\nThe **Draw** tab on the right holds the palette. This one is the coast around Greywater.',
+  }),
+  s('maps', {
+    id: 'map-region-draw', target: ['[data-tour="map-tools"]', '[data-tour="map-tab-draw"]'], side: 'right',
+    enter: async () => { calm({ map: true }); if (!mapOpen(COAST)) openMap(COAST); await editorReady(); click('[data-tour="map-tab-draw"]'); },
+    title: 'Lines with a width, places that fit',
+    body: '**Line** draws a multi-point path — click points, double-click to finish — and its **width is yours**: set it in the Draw tab before you draw or change it afterwards. **Stamp** puts a structure of its usual size with one click, or drag outwards to size it.\n\n**Select** a shape to rename it, tell the painter what you want there (“a burnt-out camp”), change its kind or width, or drag its white corners to reshape it.\n\n**＋ Your own type…** adds terrain, lines or structures of your own — a *radioactive crater*, a *ley line*, a *wizard tower* — to the campaign; every region map can use them, and so can the AI.',
+  }),
+  s('maps', {
+    id: 'map-region-paint', target: ['[data-tour="map-tab-paint"]', '[data-tour="map-view"]'], side: 'left', pad: 0,
+    enter: async () => { calm({ map: true }); if (!mapOpen(COAST)) openMap(COAST); await editorReady(); click('[data-tour="map-tab-paint"]'); },
+    title: 'Painting a region map',
+    body: 'The same precise steps, tuned for land: **①** the land is painted first, **without** the rivers and roads, so the model cannot invent or lose them — then each **river** and **road** is painted exactly along the path you drew, one kind after the other. **②** every structure is painted into its own area, in the style of your world (a camp is tipis, yurts or canvas tents, depending on the world). **③** a last pass blends them in.\n\n**Camera** decides how flat the land looks: natural painted-map look, straight top-down, or a hillshaded survey map. Each pass is about a minute on a 16 GB card, so a map with ten structures takes around a quarter of an hour; you accept or repaint after every step.',
   }),
   s('maps', {
     id: 'map-close', target: [card('rusty-anchor'), '[data-tour="insp-map"]'], side: 'right',

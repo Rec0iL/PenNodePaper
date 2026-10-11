@@ -20,7 +20,7 @@ export const CHAPTERS: Chapter[] = [
   { id: 'connect', title: 'Pool & connections', blurb: 'Bring things into the story and wire them up', mins: 2 },
   { id: 'ai', title: 'The AI co-GM', blurb: 'Ask, watch, undo, review', mins: 4 },
   { id: 'images', title: 'Pictures', blurb: 'Portraits and scenes with ComfyUI', mins: 2 },
-  { id: 'maps', title: 'Maps', blurb: 'Battle maps in one or two steps, region maps', mins: 4 },
+  { id: 'maps', title: 'Maps', blurb: 'Battle maps and region maps painted in steps, rivers and roads along your lines', mins: 5 },
   { id: 'structure', title: 'Frames & canvases', blurb: 'Structure a big story', mins: 3 },
   { id: 'session', title: 'Running a session', blurb: 'Players, the Story tab, getting back on track, tables, clocks', mins: 5 },
   { id: 'library', title: 'Library', blurb: 'Rulebooks and world books', mins: 1 },
