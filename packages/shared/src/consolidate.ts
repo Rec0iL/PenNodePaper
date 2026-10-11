@@ -14,19 +14,20 @@ import { imageSize } from './maps.js';
 /** Denoise of the ring pass per map kind (user ratings: region 0.80 = 5 stars everywhere, battle tavern degrades above 0.75). */
 export const CONSOLIDATE_DENOISE = { battle: 0.7, region: 0.8 } as const;
 
-/** The ring mask of a map as SVG at the size of its picture (white = repaint). Null when nothing was painted in step 2. */
-export function ringMaskSvg(m: MapDoc): { svg: string; w: number; h: number } | null {
+/** The ring mask of a map as SVG at the size of its picture (white = repaint). `onlyGroups` = the ring of just these groups (repainting one). Null when nothing was painted in step 2. */
+export function ringMaskSvg(m: MapDoc, onlyGroups?: string[]): { svg: string; w: number; h: number } | null {
   const { w, h, cell } = imageSize(m);
   let halo = '', core = '', haloBlur = 0;
+  const pick = <T extends { id: string }>(gs: T[]) => (onlyGroups ? gs.filter((g) => onlyGroups.includes(g.id)) : gs);
   if (m.kind === 'battle') {
-    const groups = groupProps(m);
+    const groups = pick(groupProps(m));
     if (!groups.length) return null;
     const grow = 0.32 * cell, hair = 0.02 * cell;
     halo = groups.flatMap((g) => g.rects.map((r) => propShapeSvg(r, g.round, cell, grow))).join('');
     core = groups.flatMap((g) => g.rects.map((r) => propShapeSvg(r, g.round, cell, hair, '#000'))).join('');
     haloBlur = 0.1 * cell;
   } else {
-    const groups = groupRegion(m);
+    const groups = pick(groupRegion(m));
     if (!groups.length) return null;
     const shapes = groups.flatMap((g) => g.shapes);
     halo = shapes.map((s) => shapeMarkup(s, 26, m.kinds)).join('');

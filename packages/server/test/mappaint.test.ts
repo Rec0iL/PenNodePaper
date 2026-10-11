@@ -435,6 +435,32 @@ describe('precise painting (two steps)', () => {
   });
 });
 
+describe('repainting one prop group', () => {
+  it('paints just that group again on the finished picture (a new roll of the same object) and blends its ring', async () => {
+    const mapId = setup();
+    run('render_map', { mapId, prompt: PLACE });
+    await idle();
+    run('set_map_terrain', { mapId, file: store.maps.get(mapId).terrains![0] });
+    run('paint_map_props', { mapId, seed: 100 });
+    await idle();
+    wfs.length = 0;
+    const before = store.maps.get(mapId);
+    expect(before.renders).toHaveLength(1);
+    const chair = before.propPrompts!.g2; // the barrels of the plan
+    const r = run('repaint_map_group', { mapId, group: 'g2', seed: 500 });
+    expect(r.kind).toBe(chair.kind);
+    await idle();
+    expect(wfs).toHaveLength(2);
+    expect(wfs[0]['13'].inputs.seed).toBe(501);
+    expect(wfs[0]['13'].inputs.denoise).toBe(1);
+    expect(wfs[0]['10'].inputs.text).toContain(chair.text.replace(/[.\s]+$/, ''));
+    expect(wfs[0]['21'].inputs.width % 16).toBe(0);
+    expect(wfs[1]['13'].inputs.denoise).toBe(0.7);
+    expect(wfs[1]['25'].class_type).toBe('SetLatentNoiseMask');
+    expect(store.maps.get(mapId).renders).toHaveLength(2);
+  });
+});
+
 describe('quick painting is unchanged', () => {
   it('one img2img pass from the control picture with props, attached like before; no terrain steps', async () => {
     mode = 'quick';

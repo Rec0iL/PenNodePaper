@@ -360,8 +360,8 @@ export function regionTerrainRunner(images: ImageApi, m: MapDoc, place: string, 
 }
 
 /** The last, optional step: blend everything painted in step 2 into the picture (ring around the objects, objects untouched). */
-async function consolidate(images: ImageApi, ctx: RunCtx, m: MapDoc, current: Buffer, place: string, look: string, span: [number, number]): Promise<Buffer> {
-  const masks = ringMaskSvg(m);
+async function consolidate(images: ImageApi, ctx: RunCtx, m: MapDoc, current: Buffer, place: string, look: string, span: [number, number], onlyGroups?: string[]): Promise<Buffer> {
+  const masks = ringMaskSvg(m, onlyGroups);
   if (!masks) return current;
   ctx.phase('Blending the objects into the picture…');
   const style = images.style();
@@ -436,6 +436,65 @@ export function regionGroupInfos(m: MapDoc): RegionGroupInfo[] {
 }
 
 export { usedKinds };
+
+// ------------------------------- repainting one group -----------------------------------------
+
+/**
+ * Paint ONE prop / structure group again, on a finished picture, with a new seed — the rest of the picture is not touched.
+ * The GM's wording is used as written, else what was written for the group before (the same object, a new roll), else the AI
+ * writes it for this one group. With the blend on, only the ring around this group is blended again.
+ */
+export function repaintGroupRunner(
+  images: ImageApi, m: MapDoc, baseFile: Buffer, groupId: string, place: string, ai: PaintAi,
+  text?: string, onWritten?: (written: string) => void,
+) {
+  const { w: W, h: H, cell } = imageSize(m);
+  const region = m.kind === 'region';
+  const group: PropGroup | RegionGroup | undefined = region ? groupRegion(m).find((g) => g.id === groupId) : groupProps(m).find((g) => g.id === groupId);
+  if (!group) throw new Error(`This map has no group "${groupId}" (groups: ${(region ? groupRegion(m) : groupProps(m)).map((g) => g.id).join(', ') || 'none'}).`);
+  const crops = region ? regionCrops(group as RegionGroup, W, H, { kinds: m.kinds }) : [cropFor(group as PropGroup, cell, W, H)];
+  return async (ctx: RunCtx): Promise<Buffer> => {
+    const style = images.style();
+    let prompt = (text ?? '').trim().replace(/\s+/g, ' ').slice(0, 500);
+    if (!prompt) {
+      ctx.phase('Writing the painting prompt…');
+      try {
+        if (region) {
+          const infos = describeRegionGroups(m, [group as RegionGroup]);
+          prompt = parseRegionPrompts(await images.ai(ai.backend, regionGroupRequest(place, style, infos), ai.model), infos).prompts[groupId];
+        } else {
+          const infos = describeGroups(m, [group as PropGroup]);
+          prompt = parseGroupPrompts(await images.ai(ai.backend, groupPromptRequest(place, infos), ai.model), infos).prompts[groupId];
+        }
+      } catch (e) {
+        console.error('[mappaint] prompt writing failed, using the plain prompt', e);
+        prompt = region
+          ? fallbackRegionPrompt(describeRegionGroups(m, [group as RegionGroup])[0])
+          : fallbackGroupPrompt(describeGroups(m, [group as PropGroup])[0]);
+      }
+      onWritten?.(prompt);
+    }
+    const withRing = m.consolidate !== false && !!ringMaskSvg(m, [groupId]);
+    const total = crops.length + (withRing ? 1 : 0);
+    let current = baseFile;
+    const kindName = region ? regionKind((group as RegionGroup).kind, m.kinds).name.toLowerCase() : (group as PropGroup).kind.replace(/_/g, ' ');
+    for (let j = 0; j < crops.length; j++) {
+      if (ctx.signal.aborted) throw new ComfyError('Cancelled.');
+      const crop = crops[j];
+      ctx.phase(`Painting ${kindName} again${crops.length > 1 ? ` (part ${j + 1}/${crops.length})` : ''}`);
+      const masks = region ? regionMasks(group as RegionGroup, crop, m.kinds) : groupMasks(group as PropGroup, crop, cell);
+      const base = await images.comfy.uploadImage(current, `pnp-${m.id}-${ctx.seed}-base.png`);
+      const sample = await images.comfy.uploadImage(toPng(masks.sample), `pnp-${m.id}-${ctx.seed}-ms.png`);
+      const compose = await images.comfy.uploadImage(toPng(masks.compose), `pnp-${m.id}-${ctx.seed}-mc.png`);
+      const styleText = region ? REGION_PROP_STYLE : PROP_STYLE;
+      const neg = region ? REGION_PROP_NEGATIVE : PROP_NEGATIVE;
+      const wf = images.comfy.buildInpaint(`${styleText} ${prompt.replace(/[.\s]+$/, '')}.`, `${style.negative}, ${neg}`, { image: base, sampleMask: sample, composeMask: compose, crop }, ctx.seed + j + 1);
+      current = await ctx.generate(wf, (crop.tw * crop.th) / 1e6, [j / total, (j + 1) / total]);
+    }
+    if (withRing && !ctx.signal.aborted) current = await consolidate(images, ctx, m, current, place, region ? regionLook(style) : style.mapSuffix, [crops.length / total, 1], [groupId]);
+    return current;
+  };
+}
 
 // ------------------------------- estimates ----------------------------------------------------
 

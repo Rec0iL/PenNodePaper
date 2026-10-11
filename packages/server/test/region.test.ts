@@ -641,3 +641,86 @@ describe('the campaign library of region kinds', () => {
     expect(wfs[2]['10'].inputs.text).toMatch(/glowing ley line/);
   });
 });
+
+describe('repainting one group', () => {
+  async function painted() {
+    const mapId = setup();
+    run('render_map', { mapId, prompt: PLACE });
+    await idle();
+    run('set_map_terrain', { mapId, file: store.maps.get(mapId).terrains![0] });
+    run('paint_map_props', { mapId, seed: 40 });
+    await idle();
+    wfs.length = 0;
+    return mapId;
+  }
+
+  it('paints that one group again on the latest picture and blends only its ring; the rest is not touched', async () => {
+    const mapId = await painted();
+    const m0 = store.maps.get(mapId);
+    const city = groupRegion(m0).find((g) => g.kind === 'city')!.id;
+    const writtenBefore = m0.propPrompts![city].text;
+    const r = run('repaint_map_group', { mapId, group: city, seed: 900 });
+    expect(r.kind).toBe('city');
+    await idle();
+    expect(wfs).toHaveLength(2); // one window + the ring of THIS group
+    const [paint, ring] = wfs;
+    expect(paint['25'].class_type).toBe('SetLatentNoiseMask');
+    expect(paint['13'].inputs.denoise).toBe(1);
+    expect(paint['13'].inputs.seed).toBe(901); // a new roll, not the seed of the first painting
+    expect(paint['10'].inputs.text).toContain(writtenBefore.replace(/[.\s]+$/, '')); // the same object as before
+    expect(ring['13'].inputs.denoise).toBe(0.8);
+    expect(ring['25'].class_type).toBe('SetLatentNoiseMask');
+    expect(aiCalls.filter((c) => c.includes('GROUPS (JSON)'))).toHaveLength(1); // only the first full painting asked the AI
+    const m = store.maps.get(mapId);
+    expect(m.renders).toHaveLength(2); // the first picture stays for comparison
+    expect(store.state.nodes.realm.images).toEqual(m.renders);
+    expect(seen.some((j) => /Painting city again/.test(j.phase ?? ''))).toBe(true);
+  });
+
+  it('uses the GM wording, or a one-off prompt, or writes one for a group that never had one', async () => {
+    const mapId = await painted();
+    const m = store.maps.get(mapId);
+    const camp = groupRegion(m).find((g) => g.kind === 'camp')!.id;
+    run('repaint_map_group', { mapId, group: camp, prompt: 'a burnt-out camp, charred tents', seed: 5 });
+    await idle();
+    expect(wfs[0]['10'].inputs.text).toContain('a burnt-out camp, charred tents');
+    // the one-off prompt is not stored as the group's wording
+    expect(store.maps.get(mapId).propPrompts![camp].text).not.toContain('burnt-out');
+    wfs.length = 0;
+    const m2 = store.maps.get(mapId);
+    delete m2.propPrompts![camp];
+    store.maps.save(m2, { backup: 'none' });
+    run('repaint_map_group', { mapId, group: camp, seed: 6 });
+    await idle();
+    expect(wfs[0]['10'].inputs.text).toMatch(/AI says: a detailed structure for/);
+    expect(store.maps.get(mapId).propPrompts![camp]).toMatchObject({ ai: true });
+  });
+
+  it('with the blend switched off it is one pass; errors are clear', async () => {
+    const mapId = await painted();
+    const m = store.maps.get(mapId);
+    m.consolidate = false;
+    store.maps.save(m, { backup: 'none' });
+    run('repaint_map_group', { mapId, group: 'g1', seed: 1 });
+    await idle();
+    expect(wfs).toHaveLength(1);
+    expect(() => run('repaint_map_group', { mapId, group: 'g99' })).toThrow(/no group "g99"/);
+    expect(() => run('repaint_map_group', { mapId, group: 'g1', render: 'nope.png' })).toThrow(/not one of this map/);
+    const fresh = setup2();
+    expect(() => run('repaint_map_group', { mapId: fresh, group: 'g1' })).toThrow(/no finished picture/);
+  });
+
+  it('the ring of one group is only that group', () => {
+    const m = kingdom();
+    const all = ringMaskSvg(m)!.svg;
+    const one = ringMaskSvg(m, ['g1'])!.svg;
+    expect(one.length).toBeLessThan(all.length);
+    expect(ringMaskSvg(m, ['g99'])).toBeNull();
+  });
+});
+
+function setup2() {
+  run('create_node', { id: 'other', type: 'location', title: 'Other', summary: 'x' });
+  const { mapId } = run('create_map', { name: 'Other', nodeId: 'other', kind: 'region' });
+  return mapId as string;
+}

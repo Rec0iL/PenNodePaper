@@ -897,6 +897,15 @@
     const r = await cmd('paint_map_props', { mapId, prompt: prompt_, variants: 1, consolidate, ...aiArgs() });
     if (r) promptTouched = true;
   }
+  /** one object came out wrong: paint just this group again on the finished picture (a new roll; the rest is untouched) */
+  async function repaintGroup(g: Group) {
+    await save();
+    const r = await cmd('repaint_map_group', { mapId, group: g.id, ...aiArgs() });
+    if (r) {
+      view = 'painted';
+      say(`Painting “${g.kind.replace(/_/g, ' ')}” (group ${g.id.slice(1)}) again…`);
+    }
+  }
   async function acceptTerrain() {
     const r = await cmd('accept_map_terrain', { mapId });
     if (r) {
@@ -1217,6 +1226,7 @@
                     <div class="gb">
                       <button class="lnk" onclick={() => setPrompt(g, defaultPrompt(g))}>use the default as a start</button>
                       {#if e?.text}<button class="lnk" onclick={() => setPrompt(g, '')}>clear</button>{/if}
+                      {#if doc?.renders.length}<button class="lnk" disabled={busy} onclick={() => repaintGroup(g)} title="Paint only this group again on the finished picture, with a new seed — the rest of the picture is not touched">↻ paint this one again</button>{/if}
                     </div>
                   </div>
                 {/each}
@@ -1236,7 +1246,7 @@
             {/if}
             {@render jobsView()}
             {@render rendersView()}
-            {#if doc?.renders.length}<div class="dim">Not happy? Paint the {battle ? 'props' : 'structures'} again for a new variation, or choose another terrain.</div>{/if}
+            {#if doc?.renders.length}<div class="dim">Not happy? Paint the {battle ? 'props' : 'structures'} again for a new variation, choose another terrain — or, if just one object came out wrong, open <i>Painting prompts of the groups</i> and use <b>↻ paint this one again</b> on it.</div>{/if}
           {:else}
             <div class="label">What does the place look like?</div>
             <textarea class="field" rows="4" placeholder="Materials, mood, lighting, setting… (not the layout — that comes from your plan)" bind:value={prompt_} oninput={() => (promptTouched = true)}></textarea>

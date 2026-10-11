@@ -7,7 +7,7 @@ import path from 'node:path';
 import { BINDER_SECTIONS, MAX_COPIES, binderParts, renderPdf } from './binder.js';
 import { buildBundle, characterFromNode, mapCast, handoutFromNode, illustrationsOf, kinetikSession, roleFor, sceneFromImage, sceneFromMap, sheetOf, wantsPlayerStarts } from './vtt.js';
 import { CONTROL_LEGEND, applyOps, groupProps, groupRegion, imageSize, lineStages, regionLegend, renderSvg, toPng, type MapOp } from './maps.js';
-import { propsRunner, readTerrain, regionGroupInfos, regionLook, regionStructuresRunner, regionTerrainRunner, terrainRunner, estimatePaint, type Fidelity } from './mappaint.js';
+import { propsRunner, readTerrain, regionGroupInfos, regionLook, regionStructuresRunner, regionTerrainRunner, repaintGroupRunner, terrainRunner, estimatePaint, type Fidelity } from './mappaint.js';
 import type { Store, Tx } from './store.js';
 
 // ---------------------------------------------------------------------------
@@ -1011,6 +1011,61 @@ def({
       estimate: `about ${Math.max(1, Math.round((est.propsSeconds / 60) * jobs.length))} min${est.measured ? '' : ' (a guess until an image has been made on this computer)'}`,
       note: `Precise painting, step 2 of 2: painting the ${region ? 'structure' : 'prop'} groups one after the other. The result becomes the node cover; the GM judges it and can have it painted again.`,
     };
+  },
+});
+
+def({
+  name: 'repaint_map_group',
+  description:
+    'Paint ONE prop / structure group of a finished map again with a new seed (the rest of the picture is not touched; with the blend on, only the ring around this group is blended again). Use it when one object came out wrong (a broken chair, a melted barrel) instead of repainting everything. group = the id from get_map (g1, g2…; propGroups / structureGroups). It paints on the latest render of the map (or `render`, a file from get_map’s renders) and adds a new render, so the GM can compare. The wording the GM wrote for the group is used as written, else what was written for it before (the same object, a new roll); `prompt` overrides it for this run only. ~40–60 s.',
+  shape: {
+    mapId: z.string(),
+    group: z.string().describe('group id: g1, g2…'),
+    prompt: z.string().optional().describe('what to paint in this group, this run only'),
+    render: z.string().optional().describe('the picture to repaint on (default: the latest render of the map)'),
+    seed: z.number().int().optional(),
+    backend: z.enum(['claude', 'agy']).optional(),
+    model: z.string().optional(),
+  },
+  run(tx, a) {
+    const images = tx.store.images;
+    if (!images) throw new Error('Image generation is not available.');
+    const m = tx.store.maps.get(a.mapId);
+    const nodeId = mapNodeId(tx, m.id);
+    if (!nodeId) throw new Error(`Map "${m.id}" is not attached to any node.`);
+    const file = a.render ?? m.renders.at(-1);
+    if (!file) throw new Error('This map has no finished picture yet — paint the props (paint_map_props) first.');
+    if (!m.renders.includes(file)) throw new Error(`"${file}" is not one of this map’s renders (${m.renders.join(', ') || 'none'}).`);
+    const region = m.kind === 'region';
+    const groups = region ? groupRegion(m) : groupProps(m);
+    const g = groups.find((x) => x.id === a.group);
+    if (!g) throw new Error(`This map has no group "${a.group}". Groups: ${groups.map((x) => `${x.id} (${x.kind})`).join(', ') || 'none'}.`);
+    const place = (m.paintPrompt ?? '').trim() || m.name;
+    const picture = readTerrain(tx.store.imagesDir, file);
+    const { w, h } = imageSize(m);
+    const maps = tx.store.maps;
+    // the GM's wording, else what was written for this group before (the same object, a new roll)
+    const stored = m.propPrompts?.[a.group];
+    const text = a.prompt ?? (stored && stored.kind === g.kind && stored.text.trim() ? stored.text : undefined);
+    const jobs = images.enqueueCustom({
+      nodeId, kind: 'map', prompt: place, w, h, seed: a.seed, actor: tx.actor,
+      runner: repaintGroupRunner(images, m, picture, a.group, place, paintAi(a, tx.actor), text, (written) => {
+        const cur = maps.get(m.id);
+        const pp = { ...(cur.propPrompts ?? {}) };
+        if (!pp[a.group]?.text?.trim()) pp[a.group] = { kind: g.kind, text: written, ai: true };
+        cur.propPrompts = pp;
+        maps.save(cur, { backup: 'none' });
+        tx.store.emitMap(cur, tx.actor);
+      }),
+      after: (out) => {
+        const cur = maps.get(m.id);
+        cur.renders.push(out);
+        maps.save(cur, { backup: 'none' });
+        tx.store.emitMap(cur, tx.actor);
+      },
+    });
+    tx.label = `Repainted group ${a.group} of “${m.name}”`;
+    return { queued: jobs.map((j) => ({ jobId: j.id, seed: j.seed })), group: a.group, kind: g.kind, on: file, note: 'Painting this one group again on the latest picture; the result is added as a new render and becomes the node cover.' };
   },
 });
 
