@@ -1,7 +1,7 @@
 {
   "id": "pips-and-paws",
   "name": "Pips & Paws (Mausritter)",
-  "version": "0.4.0",
+  "version": "0.6.3",
   "protocol": 1,
   "push": {
     "handout": {
@@ -42,7 +42,7 @@
       {
         "id": "creature",
         "label": "Creature / opponent",
-        "description": "A creature or opponent of the Mausritter combat tracker (hit protection, armour, one attack die, WIL for morale). Mausritter has no full sheets for monsters: keep it to the stat block; special abilities go into \"special\". NPCs without combat relevance may keep the defaults.",
+        "description": "A creature or opponent of the Mausritter combat tracker (hit protection, armour, one attack die, STR for damage beyond HP, WIL for morale). Mausritter has no full sheets for monsters: keep it to the stat block; special abilities and critical-damage effects go into \"special\". NPCs without combat relevance may keep the defaults. On a battle map, every token that names this creature is its combat tracker entry (shared HP/STR; several tokens are numbered).",
         "for": [
           "enemy",
           "npc"
@@ -114,8 +114,9 @@
             "type": "number",
             "group": "Stats",
             "min": 1,
-            "max": 20,
-            "help": "Optional. Shown in the note only."
+            "max": 30,
+            "default": 10,
+            "help": "STR. Damage beyond HP goes to STR, followed by a STR save (fail = critical damage); 0 STR = dead. Mice 9, rats 12, a cat 15."
           },
           {
             "key": "dex",
@@ -125,6 +126,17 @@
             "min": 1,
             "max": 20,
             "help": "Optional. Shown in the note only."
+          },
+          {
+            "key": "size",
+            "label": "Token size",
+            "type": "number",
+            "group": "Stats",
+            "min": 0.5,
+            "max": 8,
+            "step": 0.5,
+            "default": 1,
+            "help": "Token size on the battle map in grid cells (a mouse or rat 1, a cat 3)."
           },
           {
             "key": "attack",
@@ -149,6 +161,7 @@
               "hp": 15,
               "armour": 1,
               "dmg": "8",
+              "str": 15,
               "wil": 10,
               "attack": "d6 swipe, d8 bite"
             },
@@ -167,6 +180,7 @@
               "hp": 8,
               "armour": 1,
               "dmg": "6",
+              "str": 10,
               "wil": 8,
               "attack": "d6 venomous bite (damages DEX)"
             },
@@ -185,6 +199,7 @@
               "hp": 12,
               "armour": 1,
               "dmg": "8",
+              "str": 12,
               "wil": 15,
               "attack": "d8 peck"
             },
@@ -203,6 +218,7 @@
               "hp": 6,
               "armour": 0,
               "dmg": "8",
+              "str": 10,
               "wil": 15,
               "attack": "d8 silver rapier"
             },
@@ -221,6 +237,7 @@
               "hp": 6,
               "armour": 1,
               "dmg": "10",
+              "str": 12,
               "wil": 9,
               "attack": "d10 spear or d6 tongue"
             },
@@ -239,6 +256,7 @@
               "hp": 9,
               "armour": 0,
               "dmg": "8",
+              "str": 5,
               "wil": 10,
               "attack": "d8 chilling touch (damages WIL)"
             },
@@ -257,6 +275,7 @@
               "hp": 3,
               "armour": 0,
               "dmg": "6",
+              "str": 9,
               "wil": 9,
               "attack": "d6 sword or d6 bow"
             },
@@ -275,6 +294,7 @@
               "hp": 15,
               "armour": 1,
               "dmg": "10",
+              "str": 15,
               "wil": 15,
               "attack": "d10 bite"
             },
@@ -293,6 +313,7 @@
               "hp": 3,
               "armour": 0,
               "dmg": "6",
+              "str": 12,
               "wil": 8,
               "attack": "d6 cleaver"
             },
@@ -311,6 +332,7 @@
               "hp": 12,
               "armour": 2,
               "dmg": "8",
+              "str": 12,
               "wil": 10,
               "attack": "d8 bite"
             },
@@ -329,6 +351,7 @@
               "hp": 6,
               "armour": 1,
               "dmg": "6",
+              "str": 8,
               "wil": 10,
               "attack": "d6 poison bite (damages DEX)"
             },
@@ -442,10 +465,41 @@
             "group": "Gear"
           },
           {
+            "key": "armour",
+            "label": "Defence",
+            "type": "number",
+            "group": "Stats",
+            "help": "Worn armour (paw/body slots), subtracted from damage."
+          },
+          {
+            "key": "xp",
+            "label": "XP",
+            "type": "number",
+            "group": "Stats"
+          },
+          {
+            "key": "grit",
+            "label": "Grit",
+            "type": "number",
+            "group": "Stats"
+          },
+          {
+            "key": "status",
+            "label": "Status",
+            "type": "tags",
+            "group": "Stats"
+          },
+          {
             "key": "conditions",
             "label": "Conditions",
             "type": "tags",
             "group": "Stats"
+          },
+          {
+            "key": "spells",
+            "label": "Spells",
+            "type": "tags",
+            "group": "Gear"
           },
           {
             "key": "items",
