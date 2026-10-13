@@ -1,6 +1,7 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import type { AiCreativity, Backend, ChatMsg, ChatStatus } from '@pnp/shared';
 import { partyDigest } from './party.js';
@@ -10,7 +11,7 @@ import { beatsFor, scriptFor } from './tutorial/script.js';
 import type { Store } from './store.js';
 
 // ---------------------------------------------------------------------------
-// Integrated chat: runs the Claude Code / agy CLI headless, attached to this
+// Integrated chat: runs the Claude Code / agy / Codex CLI headless, attached to this
 // app's own MCP server, and turns their stream-json output into chat messages
 // and tool-call cards. One long-lived AI session per backend per campaign;
 // per-node threads reuse it with the node pinned as context.
@@ -19,7 +20,7 @@ import type { Store } from './store.js';
 const MCP_NAME = 'pennodepaper';
 
 interface ChatFile {
-  sessions: { claude?: string; agy?: string };
+  sessions: { claude?: string; agy?: string; codex?: string };
   messages: ChatMsg[];
 }
 
@@ -174,6 +175,7 @@ export class Chat {
     try {
       if (demo) await this.runDemo(text, nodeId);
       else if (backend === 'claude') await this.runClaude(prompt, opts.model, nodeId);
+      else if (backend === 'codex') await this.runCodex(prompt, opts.model, nodeId);
       else await this.runAgy(prompt, opts.model, nodeId);
     } catch (err) {
       if (!this.cancelled) this.push({ role: 'system', backend, text: err instanceof Error ? err.message : String(err), nodeId });
@@ -366,16 +368,84 @@ export class Chat {
     });
   }
 
+  // ------------------------------- Codex -------------------------------------
+
+  /**
+   * `codex exec --json`: one JSON event per line (thread.started, item.started/updated/completed, turn.failed, …).
+   * This app's MCP server is passed per run with -c overrides (the token through an environment variable, so it is
+   * neither written into Codex's config nor visible in the process list). Shell stays read-only and never asks.
+   */
+  private runCodex(prompt: string, model: string | undefined, nodeId?: string): Promise<void> {
+    const { port, token, campaignDir, store } = this.deps;
+    const codexNote = [
+      `Tooling notes for Codex: the campaign tools are on the MCP server "${MCP_NAME}". Use them for everything about the campaign; do not run shell commands or edit files — you are only the co-GM, the campaign lives in those tools.`,
+      `Prefer targeted calls (search_nodes, get_node) over get_graph once you know what you need.`,
+    ].join('\n');
+    const toml = (v: string) => JSON.stringify(v); // a JSON string is a valid TOML basic string
+    const args = [
+      'exec', '--json', '--skip-git-repo-check', '--sandbox', 'read-only',
+      '-c', `mcp_servers.${MCP_NAME}.url=${toml(`http://127.0.0.1:${port}/mcp?actor=codex`)}`,
+      '-c', `mcp_servers.${MCP_NAME}.bearer_token_env_var=${toml('PNP_MCP_TOKEN')}`,
+      '-c', 'experimental_use_rmcp_client=true',
+      '-c', 'approval_policy="never"',
+    ];
+    if (model) args.push('-m', model);
+    if (this.data.sessions.codex) args.push('resume', this.data.sessions.codex);
+
+    const open = new Map<string, ChatMsg>(); // item id -> card
+    const told = new Set<string>();
+    const fail = (text: string) => {
+      if (!text || told.has(text) || this.cancelled) return;
+      told.add(text);
+      this.push({ role: 'system', backend: 'codex', text: `Codex: ${text.slice(0, 400)}`, nodeId });
+    };
+    return this.spawnLines('codex', args, campaignDir, (ev) => {
+      const e = ev as Record<string, any>;
+      if (e.type === 'thread.started' && e.thread_id) this.data.sessions.codex = String(e.thread_id);
+      else if (e.type === 'item.started' || e.type === 'item.updated' || e.type === 'item.completed') {
+        const it = (e.item ?? {}) as Record<string, any>;
+        const done = e.type === 'item.completed';
+        if (it.type === 'agent_message') {
+          if (done && String(it.text ?? '').trim()) this.push({ role: 'assistant', backend: 'codex', text: String(it.text).trim(), nodeId });
+        } else if (it.type === 'mcp_tool_call' || it.type === 'command_execution' || it.type === 'file_change') {
+          const mcp = it.type === 'mcp_tool_call';
+          let card = open.get(it.id);
+          if (!card) {
+            const name = mcp ? (it.server && it.server !== MCP_NAME ? `${it.server}/${it.tool}` : String(it.tool ?? 'tool')) : it.type === 'command_execution' ? 'shell' : 'file_change';
+            const summary = mcp ? summarizeArgs(it.arguments) : String(it.command ?? '').slice(0, 80);
+            card = this.push({ role: 'tool', backend: 'codex', text: '', nodeId, tool: { name: shortTool(name), summary, status: 'running' } });
+            open.set(it.id, card);
+          }
+          if (done || it.status === 'failed') {
+            const failed = it.status === 'failed' || !!it.error || (!mcp && typeof it.exit_code === 'number' && it.exit_code !== 0);
+            card.tool!.status = failed ? 'error' : 'ok';
+            if (failed) card.text = String(it.error?.message ?? it.error ?? it.aggregated_output ?? '').slice(0, 300);
+            this.update(card);
+          }
+        } else if (it.type === 'error' && done) fail(String(it.message ?? ''));
+      } else if (e.type === 'turn.failed') fail(String(e.error?.message ?? 'the turn failed'));
+      else if (e.type === 'error') fail(String(e.message ?? ''));
+    }, { input: `${systemPrompt(store)}\n${codexNote}\n\n---\n\n${prompt}`, env: { PNP_MCP_TOKEN: token } }).catch((err) => {
+      // a failed turn was already reported with Codex's own words; the exit code only repeats it
+      if (told.size) return;
+      throw err;
+    });
+  }
+
   // ------------------------------- plumbing ----------------------------------
 
-  private spawnLines(bin: string, args: string[], cwd: string, onEvent: (ev: unknown) => void): Promise<void> {
+  private spawnLines(bin: string, args: string[], cwd: string, onEvent: (ev: unknown) => void, opts: { input?: string; env?: Record<string, string> } = {}): Promise<void> {
     return new Promise((resolve, reject) => {
-      const child = spawn(bin, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: process.env });
+      const child = spawn(bin, args, { cwd, stdio: [opts.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], env: { ...process.env, ...opts.env } });
       this.child = child;
+      if (opts.input !== undefined) {
+        child.stdin!.on('error', () => { /* the process ended before reading it all: its exit says why */ });
+        child.stdin!.end(opts.input);
+      }
       let buf = '';
       let stderr = '';
       const timer = setTimeout(() => child.kill('SIGTERM'), 10 * 60_000);
-      child.stdout.on('data', (d: Buffer) => {
+      child.stdout!.on('data', (d: Buffer) => {
         buf += d.toString('utf8');
         let i: number;
         while ((i = buf.indexOf('\n')) >= 0) {
@@ -389,7 +459,7 @@ export class Chat {
           }
         }
       });
-      child.stderr.on('data', (d: Buffer) => (stderr += d.toString('utf8')));
+      child.stderr!.on('data', (d: Buffer) => (stderr += d.toString('utf8')));
       child.on('error', (err) => {
         clearTimeout(timer);
         reject(new Error(`Could not start "${bin}": ${err.message}`));
@@ -423,6 +493,17 @@ function summarizeArgs(a: unknown): string {
 export interface Models {
   claude: { id: string; label: string }[];
   agy: { id: string; label: string }[];
+  codex: { id: string; label: string }[];
+}
+
+/** The model Codex is configured with (~/.codex/config.toml `model = "…"`), to say what "default" means. */
+function codexConfiguredModel(): string {
+  try {
+    const home = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+    return /^\s*model\s*=\s*"([^"]+)"/m.exec(fs.readFileSync(path.join(home, 'config.toml'), 'utf8'))?.[1] ?? '';
+  } catch {
+    return '';
+  }
 }
 
 /** Model lists for the chat's model picker. */
@@ -443,5 +524,8 @@ export function listModels(): Models {
       .map((p) => ({ id: p[0], label: p[1].trim() }));
     if (rows.length) agy = [{ id: '', label: 'default' }, ...rows];
   } catch { /* agy not installed */ }
-  return { claude, agy };
+  // Codex has no model list command; "default" is whatever its own config says, and a model id can be typed into config.toml
+  const configured = codexConfiguredModel();
+  const codex = [{ id: '', label: configured ? `default (${configured})` : 'default' }];
+  return { claude, agy, codex };
 }

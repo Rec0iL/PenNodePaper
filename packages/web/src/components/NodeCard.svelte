@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Handle, Position, type NodeProps } from '@xyflow/svelte';
-  import { DEFAULT_GROUP, NODE_TYPE_INFO, clockOf, dieLabel, groupColor, isKnown, tableEntries, tableFaces, visitsOf, type StoryNode } from '@pnp/shared';
+  import { DEFAULT_GROUP, NODE_TYPE_INFO, actorColor, actorName, clockOf, dieLabel, groupColor, isKnown, tableEntries, tableFaces, visitsOf, type StoryNode } from '@pnp/shared';
   import { app, closeEnlarged, cmd, toggleEnlarge } from '../lib/app.svelte';
   import { md } from '../lib/md';
 
@@ -63,14 +63,14 @@
     </div>
   {/if}
   {#if proposal && !data.ghost}
-    <div class="propose" title="{proposal.actor === 'agy' ? 'agy' : 'Claude'} changed this — keep or reject it in the review bar">✦ {proposal.newNodes.includes(id) ? 'new' : 'changed'}</div>
+    <div class="propose" title="{actorName(proposal.actor)} changed this — keep or reject it in the review bar">✦ {proposal.newNodes.includes(id) ? 'new' : 'changed'}</div>
   {/if}
   {#if inPlay}
     <div class="heretags"><span class="heretag soft" style="background:{hereColor}">◉ in play</span></div>
   {/if}
   {#if present}
-    <div class="ring" style="--pc:var(--{present.actor === 'agy' ? 'agy' : 'claude'})">
-      <span class="who">{app.meta.tutorial?.on ? 'Tutorial AI' : present.actor === 'agy' ? 'agy' : 'Claude'}</span>
+    <div class="ring" style="--pc:{actorColor(present.actor)}">
+      <span class="who">{app.meta.tutorial?.on ? 'Tutorial AI' : actorName(present.actor)}</span>
     </div>
   {/if}
 

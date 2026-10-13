@@ -19,7 +19,7 @@ import { importArchive } from './backup.js';
 import { thumbnail } from './thumbs.js';
 import { extractText } from './imports.js';
 import { createCampaign, forgetCampaign, listCampaigns, looksLikeCampaign, rememberCampaign } from './campaigns.js';
-import { handleMcp } from './mcp.js';
+import { handleMcp, mcpIdentity } from './mcp.js';
 import { Persistence } from './persistence.js';
 import { seedDemo } from './seed.js';
 import { Store } from './store.js';
@@ -98,7 +98,7 @@ const explicit = process.env.PNP_CAMPAIGN ? path.join(cfg.campaignsDir, process.
 const saved = loadSaved().lastCampaign;
 openCampaign(explicit || (saved && fs.existsSync(saved) ? saved : path.join(cfg.campaignsDir, 'demo')));
 
-const ACTORS: Actor[] = ['user', 'claude', 'agy', 'system'];
+const ACTORS: Actor[] = ['user', 'claude', 'agy', 'codex', 'system'];
 const asActor = (v: unknown, d: Actor): Actor => (ACTORS.includes(v as Actor) ? (v as Actor) : d);
 
 // --- guard: localhost only, no foreign origins (DNS-rebinding / CSRF) -------
@@ -376,9 +376,12 @@ app.get('/api/info', (c) => {
     mcpUrl: url,
     configPath: CONFIG_PATH,
     commands: listCommands().map((x) => ({ name: x.name, description: x.description, readOnly: !!x.readOnly })),
+    // For clients you attach yourself the plain URL is right: they tell their name in the handshake and are shown under it.
+    // (The app registers `agy` / runs `claude` and `codex` with ?actor=… itself.)
     connect: {
       agy: `agy mcp add --header "Authorization: Bearer ${cfg.token}" pennodepaper ${url}?actor=agy`,
-      claude: `claude mcp add --transport http pennodepaper ${url}?actor=claude --header "Authorization: Bearer ${cfg.token}"`,
+      claude: `claude mcp add --transport http pennodepaper ${url} --header "Authorization: Bearer ${cfg.token}"`,
+      url,
     },
   });
 });
@@ -450,6 +453,24 @@ const agyStatus = (fresh = false) => {
   return value;
 };
 app.get('/api/agy/status', (c) => c.json(agyStatus()));
+
+// Codex needs no registration: the app hands it this server with every run (see Chat.runCodex), so only its presence
+// and login are of interest. `codex login status` exits 0 when logged in; an older Codex without it leaves `loggedIn` unknown.
+let codexCache: { at: number; value: { installed: boolean; loggedIn: boolean | null } } | null = null;
+const codexStatus = () => {
+  if (codexCache && Date.now() - codexCache.at < 30_000) return codexCache.value;
+  const v = spawnSync('codex', ['--version'], { encoding: 'utf8', timeout: 10000 });
+  const installed = !v.error && v.status === 0;
+  let loggedIn: boolean | null = null;
+  if (installed) {
+    const l = spawnSync('codex', ['login', 'status'], { encoding: 'utf8', timeout: 10000 });
+    if (!l.error) loggedIn = l.status === 0 ? true : /not logged in|log in|login/i.test(`${l.stdout}${l.stderr}`) ? false : null;
+  }
+  const value = { installed, loggedIn };
+  codexCache = { at: Date.now(), value };
+  return value;
+};
+app.get('/api/codex/status', (c) => c.json(codexStatus()));
 app.post('/api/agy/setup', (c) => {
   let output = '';
   if (!agyStatus(true).registered) {
@@ -717,7 +738,7 @@ app.put('/api/settings', async (c) => {
 app.post('/api/settings/generate-style', async (c) => {
   const b = (await c.req.json().catch(() => ({}))) as { backend?: Backend; model?: string };
   try {
-    const style = await generateStyle(store, images.style(), b.backend === 'agy' ? 'agy' : 'claude', b.model || undefined, store.state.meta.tutorial?.on ? tutorialAi : undefined);
+    const style = await generateStyle(store, images.style(), b.backend === 'agy' || b.backend === 'codex' ? b.backend : 'claude', b.model || undefined, store.state.meta.tutorial?.on ? tutorialAi : undefined);
     return c.json({ ok: true, style });
   } catch (err) {
     return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 422);
@@ -801,7 +822,7 @@ const server = http.createServer(async (req, res) => {
       }
     }
     try {
-      await handleMcp(store, req, res, asActor(url.searchParams.get('actor'), 'claude'), body);
+      await handleMcp(store, req, res, mcpIdentity(url.searchParams.get('actor'), body, req.headers['mcp-session-id'] as string | undefined), body);
     } catch (err) {
       console.error('[mcp]', err);
       if (!res.headersSent) res.writeHead(500).end('mcp error');

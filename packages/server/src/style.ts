@@ -81,22 +81,33 @@ export function parseStyle(text: string): StyleConfig {
 /** Run a CLI once, headless, no tools, and return its answer text. */
 export const runOnce: Runner = (backend, prompt, model) =>
   new Promise((resolve, reject) => {
+    // Codex has no JSON mode for a plain answer: the final message is what it prints to stdout (progress goes to stderr)
     const args =
       backend === 'claude'
         ? ['-p', prompt, '--output-format', 'json', '--tools', '', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', ...(model ? ['--model', model] : [])]
-        : ['-p', prompt, '--output-format', 'json', ...(model ? ['--model', model] : [])];
-    const child = spawn(backend, args, { stdio: ['ignore', 'pipe', 'pipe'], env: process.env });
+        : backend === 'codex'
+          ? ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '-c', 'approval_policy="never"', ...(model ? ['-m', model] : []), '-']
+          : ['-p', prompt, '--output-format', 'json', ...(model ? ['--model', model] : [])];
+    const child = spawn(backend, args, { stdio: [backend === 'codex' ? 'pipe' : 'ignore', 'pipe', 'pipe'], env: process.env });
+    if (backend === 'codex') {
+      child.stdin!.on('error', () => { /* its exit code tells */ });
+      child.stdin!.end(prompt);
+    }
     let out = '';
     let err = '';
     const timer = setTimeout(() => child.kill('SIGTERM'), 3 * 60_000);
-    child.stdout.on('data', (d: Buffer) => (out += d.toString('utf8')));
-    child.stderr.on('data', (d: Buffer) => (err += d.toString('utf8')));
+    child.stdout!.on('data', (d: Buffer) => (out += d.toString('utf8')));
+    child.stderr!.on('data', (d: Buffer) => (err += d.toString('utf8')));
     child.on('error', (e) => {
       clearTimeout(timer);
       reject(new Error(`Could not start "${backend}": ${e.message}`));
     });
     child.on('close', (code) => {
       clearTimeout(timer);
+      if (backend === 'codex') {
+        if (code === 0 && out.trim()) return resolve(out.trim());
+        return reject(new Error(`codex failed${err.trim() ? `: ${err.trim().slice(-300)}` : out.trim() ? `: ${out.trim().slice(-300)}` : ''}`));
+      }
       try {
         const j = JSON.parse(out) as { result?: string; response?: string; is_error?: boolean };
         const text = j.result ?? j.response ?? '';

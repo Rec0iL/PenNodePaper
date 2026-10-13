@@ -1,5 +1,6 @@
 <script lang="ts">
   // Review mode: what the AI changed is already on the canvas (marked "proposed"); keep it or take it back.
+  import { actorColor, actorName, type Actor } from '@pnp/shared';
   import { app, cmd, focusNode, say } from '../lib/app.svelte';
 
   const list = $derived(app.proposals);
@@ -15,7 +16,7 @@
     if (first) focusNode(first);
     else say('Those nodes are in the pool', 'ok');
   };
-  const who = (a: string) => (app.meta.tutorial?.on && a === 'claude' ? 'Tutorial AI' : a === 'agy' ? 'agy' : 'Claude');
+  const who = (a: Actor) => (app.meta.tutorial?.on && a === 'claude' ? 'Tutorial AI' : actorName(a));
   const sum = (p: (typeof list)[number]) => [p.newNodes.length ? `${p.newNodes.length} new node${p.newNodes.length > 1 ? 's' : ''}` : '', p.linked ? `${p.linked} link${p.linked > 1 ? 's' : ''}` : '', `${p.steps.length} step${p.steps.length > 1 ? 's' : ''}`].filter(Boolean).join(' · ');
 </script>
 
@@ -26,7 +27,7 @@
     </div>
     {#each list as p (p.id)}
       <div class="row">
-        <div class="tx"><span class="who" class:agy={p.actor === 'agy'}>{who(p.actor)}</span><span class="ti" title={p.steps.join('\n')}>{p.title}</span><span class="dim">{sum(p)}</span></div>
+        <div class="tx"><span class="who" style="color:{actorColor(p.actor)}">{who(p.actor)}</span><span class="ti" title={p.steps.join('\n')}>{p.title}</span><span class="dim">{sum(p)}</span></div>
         <button class="btn sm ghost" onclick={() => show(p.nodes)}>Show</button>
         <button class="btn sm primary" disabled={busy} onclick={() => act('accept_proposal', p.id)}>✓ Keep</button>
         <button class="btn sm danger" disabled={busy} onclick={() => act('reject_proposal', p.id)}>↶ Reject</button>
@@ -43,7 +44,6 @@
   .row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
   .tx { flex: 1 1 200px; min-width: 0; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
   .who { font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--claude, #ff9d6c); }
-  .who.agy { color: var(--agy, #b89cff); }
   .ti { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sm { padding: 1px 9px; font-size: 11.5px; }
 </style>

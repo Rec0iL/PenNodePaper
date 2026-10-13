@@ -2,6 +2,7 @@ import { tick } from 'svelte';
 import type {
   Actor, Backend, Batch, CampaignState, ChatMsg, ChatStatus, ImageJob, MapDoc, VttStatus, ChangeEvent, CommandResult, EdgeKind, GraphFile, Placement, Proposal, ServerMsg, StoryEdge, StoryNode,
 } from '@pnp/shared';
+import { isAiActor as isAi } from '@pnp/shared';
 
 // ---------------------------------------------------------------------------
 // Client-side campaign state + the animation director.
@@ -142,8 +143,8 @@ export const app = $state({
   /** Unsent chat input per thread ('' = main chat, else node id) — the Chat component unmounts on tab switches. */
   drafts: {} as Record<string, { text: string; pins: string[] }>,
   chatStatus: { busy: false } as ChatStatus,
-  backend: (ls('pnp.backend') === 'agy' ? 'agy' : 'claude') as Backend,
-  models: { claude: ls('pnp.model.claude') ?? '', agy: ls('pnp.model.agy') ?? '' } as Record<Backend, string>,
+  backend: (['agy', 'codex'].includes(ls('pnp.backend') ?? '') ? ls('pnp.backend') : 'claude') as Backend,
+  models: { claude: ls('pnp.model.claude') ?? '', agy: ls('pnp.model.agy') ?? '', codex: ls('pnp.model.codex') ?? '' } as Record<Backend, string>,
 
   // transient animation state
   fx: {} as Record<string, NodeFx>,
@@ -190,11 +191,11 @@ export const setStatusMany = (ids: string[], status: string) =>
   cmd('batch', { ops: ids.map((nodeId) => ({ command: 'set_status', args: { nodeId, status } })), label: `Set ${ids.length} nodes ${status}` });
 export const hereMany = (ids: string[], group?: string) => cmd('set_here', { nodeIds: ids, ...(group ? { group } : {}) });
 
-let chatMetaCache: Promise<{ models: { claude: { id: string; label: string }[]; agy: { id: string; label: string }[] }; agy: { installed: boolean; registered: boolean; permitted: boolean } }> | null = null;
-/** Models and agy status, fetched once (not on every node selection); pass refresh after changing agy's setup. */
+let chatMetaCache: Promise<{ models: Record<Backend, { id: string; label: string }[]>; agy: { installed: boolean; registered: boolean; permitted: boolean }; codex: { installed: boolean; loggedIn: boolean | null } }> | null = null;
+/** Models and agy / Codex status, fetched once (not on every node selection); pass refresh after changing agy's setup. */
 export function chatMeta(refresh = false) {
   if (!chatMetaCache || refresh) {
-    chatMetaCache = Promise.all([fetch('/api/models').then((r) => r.json()), fetch('/api/agy/status').then((r) => r.json())]).then(([models, agy]) => ({ models, agy }));
+    chatMetaCache = Promise.all([fetch('/api/models').then((r) => r.json()), fetch('/api/agy/status').then((r) => r.json()), fetch('/api/codex/status').then((r) => r.json())]).then(([models, agy, codex]) => ({ models, agy, codex }));
     chatMetaCache.catch(() => (chatMetaCache = null));
   }
   return chatMetaCache;
@@ -291,7 +292,6 @@ export function closeMenus() {
 export const screenToFlow = (p: { x: number; y: number }) => flowApi?.screenToFlow(p) ?? p;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-const isAi = (a: Actor) => a === 'claude' || a === 'agy';
 let flyerSeq = 0;
 
 // ------------------------------- helpers -----------------------------------

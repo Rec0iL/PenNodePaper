@@ -154,14 +154,17 @@ Everything above works without it. If you install the `claude` and/or `agy` CLI 
 <img src="docs/img/ai-demo.gif" alt="The AI builds on the canvas: place, link, create, edit, relink, delete, move to pool" width="100%">
 </div>
 
-* **In-app chat** (right dock → *AI*): switch Claude / agy per conversation, pick a model, `@`-mention nodes, selected node is sent as context. Per-node threads live in the inspector and leave a pointer card in the global chat.
+* **In-app chat** (right dock → *AI*): switch Claude / agy / Codex per conversation, pick a model, `@`-mention nodes, selected node is sent as context. Per-node threads live in the inspector and leave a pointer card in the global chat.
 * **Claude** works out of the box (the app spawns `claude -p` headless and hands it this app's MCP server; only the campaign tools are allowed).
 * **agy** needs a one-time *Connect agy* click in the chat (runs `agy mcp add …`, which registers the server in agy's own global config).
-* **External clients** (Claude Code in a terminal, etc.) can attach to `http://127.0.0.1:4317/mcp` with the bearer token from `~/.config/pennodepaper/config.json`:
+* **Codex** needs no setup in the app beyond having the Codex CLI installed and logged in (`codex login`): every message runs `codex exec --json` and hands it this app's MCP server for that run (the token goes through an environment variable, shell access stays read-only).
+* **External clients** (Claude Code in a terminal, opencode, Cursor, …) can attach to `http://127.0.0.1:4317/mcp` with the bearer token from `~/.config/pennodepaper/config.json`:
 
   ```bash
-  claude mcp add --transport http pennodepaper "http://127.0.0.1:4317/mcp?actor=claude" --header "Authorization: Bearer <token>"
+  claude mcp add --transport http pennodepaper "http://127.0.0.1:4317/mcp" --header "Authorization: Bearer <token>"
   ```
+
+  Such a client is recognised by the name it gives in the MCP handshake: its changes show in the activity log, on the cards and in the review bar under that name (*opencode*, …), with their own colour. An `?actor=<label>` on the URL sets the label by hand (`?actor=claude`, `agy` and `codex` are what the app itself uses for the assistants it starts).
 
 Every MCP call is one undo step (`Ctrl+Z` / `Ctrl+Shift+Z`). Deleting is a soft delete (Trash in the pool panel).
 

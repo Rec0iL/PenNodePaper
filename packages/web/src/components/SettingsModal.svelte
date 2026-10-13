@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
-  import type { ComfyConfig, MapPaintMode, StyleConfig } from '@pnp/shared';
+  import { actorName, type ComfyConfig, type MapPaintMode, type StyleConfig } from '@pnp/shared';
   import { app, cmd, say } from '../lib/app.svelte';
 
   let { onclose }: { onclose: () => void } = $props();
@@ -154,7 +154,7 @@
             </button>
             {#if before && !genBusy}<button class="btn ghost" onclick={revert} title="Restore the previous style">↶ revert</button>{/if}
           </div>
-          <div class="dim">{worlds ? `Uses ${worlds} world book${worlds > 1 ? 's' : ''} with ${app.backend === 'agy' ? 'agy' : 'Claude'} (change in the AI tab). You can edit the result.` : 'No world book yet — write one in the Library and this will derive the look from it.'}</div>
+          <div class="dim">{worlds ? `Uses ${worlds} world book${worlds > 1 ? 's' : ''} with ${actorName(app.backend)} (change in the AI tab). You can edit the result.` : 'No world book yet — write one in the Library and this will derive the look from it.'}</div>
           {#if genErr}<div class="err">⚠ {genErr}</div>{/if}
           <div class="label">Style</div>
           <textarea class="field" class:fresh={!!before} rows="4" bind:value={style.suffix}></textarea>

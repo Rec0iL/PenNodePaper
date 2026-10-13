@@ -1,5 +1,5 @@
 import { z, type ZodRawShape } from 'zod';
-import { DEFAULT_GROUP, charactersOfPlace, isCharacterNode, tokenKindOf, dieLabel, soundsOf, entryLine, fragmentName, parseEntry, rollLog, rollTable, seeded, tableEntries, tableFaces, clockOf, lintStory, newSessionMark, nextPlayedSeq, parseScope, playedPath, playerWiki, sessionLabel, sessionOverview, sessionsOf, wikiMarkdown, slugify, storyStatus, validateSheet, visitsOf, type Visit } from '@pnp/shared';
+import { DEFAULT_GROUP, isAiActor, charactersOfPlace, isCharacterNode, tokenKindOf, dieLabel, soundsOf, entryLine, fragmentName, parseEntry, rollLog, rollTable, seeded, tableEntries, tableFaces, clockOf, lintStory, newSessionMark, nextPlayedSeq, parseScope, playedPath, playerWiki, sessionLabel, sessionOverview, sessionsOf, wikiMarkdown, slugify, storyStatus, validateSheet, visitsOf, type Visit } from '@pnp/shared';
 import type { Actor, Backend, DoorKind, EdgeKind, EdgeSide, ImageKind, MapDoc, NodeStatus, NodeType, PropKind, StoryEdge, StoryNode } from '@pnp/shared';
 import { DEFAULT_LABEL_STYLE, DOOR_KINDS, EDGE_KINDS, FRAME_PALETTE, EDGE_SIDES, IMAGE_KINDS, LABEL_PLACES, LABEL_SIZES, LABEL_STYLES, NODE_STATUSES, NODE_TYPES, PROP_KINDS, REGION_KINDS, cleanKind, isKnownKind } from '@pnp/shared';
 import { createHash } from 'node:crypto';
@@ -862,7 +862,7 @@ def({
     denoise: z.number().min(0.3).max(0.95).optional(),
     variants: z.number().int().min(1).max(4).optional(),
     seed: z.number().int().optional(),
-    backend: z.enum(['claude', 'agy']).optional().describe('precise way only: which AI writes the description of the empty place and, later, the prop prompts (default: whoever calls)'),
+    backend: z.enum(['claude', 'agy', 'codex']).optional().describe('precise way only: which AI writes the description of the empty place and, later, the prop prompts (default: whoever calls)'),
     model: z.string().optional(),
     view: z.enum(['default', 'strict', 'plan']).optional().describe('region maps, precise way: how flat the terrain is painted. default = natural painted-map look (best for most maps), strict = straight top-down plan view (best for snow/mountain maps), plan = hillshaded survey map. Stored on the map.'),
     consolidate: z.boolean().optional().describe('precise way: after the objects are painted, blend them into the picture (a ring around every object is repainted; shadows appear). Default true; stored on the map.'),
@@ -941,7 +941,7 @@ const gmPrompts = (m: MapDoc, groups: { id: string; kind: string }[]): Record<st
   }
   return out;
 };
-const paintAi = (a: { backend?: Backend; model?: string }, actor: Actor) => ({ backend: a.backend ?? (actor === 'agy' ? 'agy' : 'claude'), model: a.model || undefined });
+const paintAi = (a: { backend?: Backend; model?: string }, actor: Actor) => ({ backend: a.backend ?? (actor === 'agy' || actor === 'codex' ? actor : 'claude'), model: a.model || undefined });
 
 const pickTerrain = (m: ReturnType<Store['maps']['get']>, file?: string) => {
   const f = file ?? m.terrainPick;
@@ -974,7 +974,7 @@ def({
     terrain: z.string().optional().describe('terrain image (default: the one the GM picked)'),
     variants: z.number().int().min(1).max(4).optional(),
     seed: z.number().int().optional(),
-    backend: z.enum(['claude', 'agy']).optional(),
+    backend: z.enum(['claude', 'agy', 'codex']).optional(),
     model: z.string().optional(),
     prompts: z.record(z.string(), z.string()).optional(),
     consolidate: z.boolean().optional().describe('blend the objects into the picture at the end (default: the map\'s setting, normally on)'),
@@ -1047,7 +1047,7 @@ def({
     prompt: z.string().optional().describe('what to paint in this group, this run only'),
     render: z.string().optional().describe('the picture to repaint on (default: the latest render of the map)'),
     seed: z.number().int().optional(),
-    backend: z.enum(['claude', 'agy']).optional(),
+    backend: z.enum(['claude', 'agy', 'codex']).optional(),
     model: z.string().optional(),
   },
   run(tx, a) {
@@ -2161,7 +2161,7 @@ export const aiCommands = () => commands.filter((c) => !c.internal);
 export function runCommand(store: Store, name: string, rawArgs: unknown, actor: Actor): unknown {
   const c = commands.find((x) => x.name === name);
   if (!c) throw new Error(`Unknown command "${name}"`);
-  if (c.internal && (actor === 'claude' || actor === 'agy')) throw new Error(`"${name}" is for the GM only.`);
+  if (c.internal && isAiActor(actor)) throw new Error(`"${name}" is for the GM only.`);
   const args = z.object(c.shape).parse(rawArgs ?? {});
   return store.transact(actor, c.description.slice(0, 40), (tx) => c.run(tx, args));
 }

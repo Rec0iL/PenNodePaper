@@ -21,7 +21,11 @@ export const EDGE_KINDS = [
 ] as const;
 export type EdgeKind = (typeof EDGE_KINDS)[number];
 
-export type Actor = 'user' | 'claude' | 'agy' | 'system';
+/**
+ * Who made a change. 'claude' / 'agy' / 'codex' are the assistants the app runs itself; `ext:<name>` is any other
+ * MCP client that attached on its own (opencode, Cursor, …) and told its name — see actors.ts.
+ */
+export type Actor = 'user' | 'claude' | 'agy' | 'codex' | 'system' | `ext:${string}`;
 
 export interface StoryNode {
   id: string;
@@ -349,7 +353,8 @@ export interface Batch {
 // WebSocket protocol between server and web UI
 // ---------------------------------------------------------------------------
 
-export type Backend = 'claude' | 'agy';
+export type Backend = 'claude' | 'agy' | 'codex';
+export const BACKENDS: Backend[] = ['claude', 'agy', 'codex'];
 
 export interface ChatMsg {
   id: string;
@@ -416,6 +421,7 @@ export * from './regionlines.js';
 export * from './consolidate.js';
 export * from './vtt.js';
 export * from './sheet.js';
+export * from './actors.js';
 export * from './story.js';
 export * from './wiki.js';
 export * from './tables.js';
