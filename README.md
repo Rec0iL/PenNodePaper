@@ -279,7 +279,7 @@ Connect a tabletop app (KINETIK VTT, or any VTT that implements the small bridge
 | 👁️ Show a handout to the players right away | ✅ | ✅ | ✅ | ✅ |
 | 🗺️ Maps & scenes (square grid, token starts) | ✅ | ✅ | ❌ | ✅ |
 | 🧙 NPC entries | ✅ | ✅ | ✅ | ✅ |
-| 🎭 NPC portrait, used as the map token | ✅ | ✅ | ❌ | ❌ |
+| 🎭 NPC portrait, used as the map token | ✅ | ✅ | ❌ | ✅ |
 | 🎯 Map tokens that are the characters (same HP and rolls as the list entry) | ✅ | ✅ | ❌ | ✅ |
 | 👹 Enemy stat blocks (tiers goon → nemesis, moves) | ✅ | ❌ | ❌ | ✅ |
 | ⚔️ Enemies in the combat tracker | ✅ | ✅ | ❌ | ✅ |
