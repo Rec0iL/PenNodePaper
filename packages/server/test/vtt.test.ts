@@ -177,17 +177,25 @@ describe('VTT bridge', () => {
         expect(new Set(keys).size).toBe(keys.length);
       }
     }
-    // EldaraHQ has a map and a combat tracker, HeroHQ has neither
+    // both have a map; only EldaraHQ has a combat tracker (hit points on an NPC entry), HeroHQ has none
     expect(ELDARAHQ_PROFILE.push.scene).toMatchObject({ grids: ['square'] });
-    expect(HEROHQ_PROFILE.push.scene).toBeUndefined();
+    expect(HEROHQ_PROFILE.push.scene).toMatchObject({ grids: ['square'], tokens: true, characterTokens: true });
+    expect(ELDARAHQ_PROFILE.characters!.roles[0].fields.map((f) => f.key)).toContain('hp');
     expect(HEROHQ_PROFILE.characters!.roles[0].fields.map((f) => f.key)).not.toContain('hp');
   });
 
-  it('HeroHQ has no map: PenNodePaper refuses a scene push before it reaches the VTT', async () => {
+  it('HeroHQ takes a scene; a VTT that cannot receive one is refused before the push reaches it', async () => {
     const c = await connect(HEROHQ_PROFILE);
     const m = run('create_map', { name: 'Schankraum', kind: 'battle' }).mapId;
+    run('edit_map', { mapId: m, ops: [{ op: 'room', x: 1, y: 1, w: 6, h: 5 }, { op: 'token', x: 4, y: 2, kind: 'npc', label: 'Wirt' }, { op: 'token', x: 5, y: 3, kind: 'enemy', label: 'Schläger' }] });
+    expect(await run('push_scene', { mapId: m, image: 'plan' })).toMatchObject({ pushed: 'scene', tokens: 2 });
+    const sp = c.received.find((x) => x.t === 'push' && x.kind === 'scene') as any;
+    expect(sp.payload).toMatchObject({ id: m, grid: { type: 'square' }, tokens: [{ kind: 'npc', label: 'Wirt' }, { kind: 'enemy', label: 'Schläger' }] });
+    // a VTT that only describes characters has no scene: the push is refused here, nothing is sent
+    const d = await connect(STRUCTURE_ONLY_PROFILE);
+    await until(() => store.vtt.status().profile?.push.scene === undefined);
     await expect(run('push_scene', { mapId: m, image: 'plan' })).rejects.toThrow(/can't receive "scene"/);
-    expect(c.received.some((x) => x.t === 'push')).toBe(false);
+    expect(d.received.some((x) => x.t === 'push')).toBe(false);
   });
 
   it('a VTT that only DESCRIBES characters: the AI can still write sheets for the GM, pushing is refused with guidance', async () => {
