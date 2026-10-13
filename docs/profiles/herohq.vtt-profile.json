@@ -1,13 +1,20 @@
 {
   "id": "herohq",
   "name": "HeroHQ (How to be a Hero)",
-  "version": "1.0",
+  "version": "1.1",
   "protocol": 1,
   "push": {
     "handout": {
       "text": true,
       "image": true,
       "toPlayer": true
+    },
+    "scene": {
+      "grids": [
+        "square"
+      ],
+      "tokens": true,
+      "characterTokens": true
     },
     "character": {},
     "music_cue": {
