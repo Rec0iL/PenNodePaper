@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import type { Backend, ChatMsg } from '@pnp/shared';
-  import { NODE_TYPE_INFO } from '@pnp/shared';
+  import { BACKENDS, NODE_TYPE_INFO, actorName } from '@pnp/shared';
   import { app, cancelChat, chatMeta, clearChat, focusNode, remember, resetPanelSize, selectNode, sendChat, setPanelSize } from '../lib/app.svelte';
 
   /** When set, this is a per-node thread (compact, filtered to that node). */
@@ -15,8 +15,9 @@
   $effect(() => { app.drafts[draftKey] = { text, pins: [...pins] }; });
   let useSelected = $state(true);
   let list: HTMLDivElement;
-  let models = $state<{ claude: { id: string; label: string }[]; agy: { id: string; label: string }[] } | null>(null);
+  let models = $state<Record<Backend, { id: string; label: string }[]> | null>(null);
   let agy = $state<{ installed: boolean; registered: boolean; permitted: boolean } | null>(null);
+  let codex = $state<{ installed: boolean; loggedIn: boolean | null } | null>(null);
   let setupMsg = $state('');
   let mention = $state<{ q: string; at: number } | null>(null);
 
@@ -24,6 +25,7 @@
     const m = await chatMeta();
     models = m.models;
     agy = m.agy;
+    codex = m.codex;
   });
   async function checkAgy() {
     agy = (await chatMeta(true)).agy;
@@ -151,8 +153,8 @@
   {#if !nodeId}
     <div class="bar" data-tour="chat-bar">
       <div class="seg">
-        {#each ['claude', 'agy'] as b}
-          <button class:on={app.backend === b} style="--c:var(--{b})" onclick={() => { app.backend = b as Backend; remember('pnp.backend', b); }}>{b === 'claude' ? 'Claude' : 'agy'}</button>
+        {#each BACKENDS as b}
+          <button class:on={app.backend === b} style="--c:var(--{b})" onclick={() => { app.backend = b; remember('pnp.backend', b); }}>{actorName(b)}</button>
         {/each}
       </div>
       <select
@@ -168,7 +170,7 @@
   {/if}
 
   {#if app.meta.tutorial?.on && !nodeId}
-    <div class="demo"><b>Practice campaign.</b> The AI here is a scripted stand-in: it knows the requests the tour prepares, and does them with the real tools. In your own campaigns this is Claude or agy.</div>
+    <div class="demo"><b>Practice campaign.</b> The AI here is a scripted stand-in: it knows the requests the tour prepares, and does them with the real tools. In your own campaigns this is Claude, agy or Codex.</div>
   {/if}
 
   {#if app.backend === 'agy' && agy && agy.installed && (!agy.registered || !agy.permitted)}
@@ -180,6 +182,10 @@
     </div>
   {:else if app.backend === 'agy' && agy && !agy.installed}
     <div class="setup"><b>agy not found.</b> Install the Antigravity CLI and make sure <code>agy</code> is on your PATH.</div>
+  {:else if app.backend === 'codex' && codex && !codex.installed}
+    <div class="setup codex"><b>Codex not found.</b> Install the Codex CLI (<code>npm install -g @openai/codex</code>), make sure <code>codex</code> is on your PATH, then log in once with <code>codex login</code>.</div>
+  {:else if app.backend === 'codex' && codex && codex.loggedIn === false}
+    <div class="setup codex"><b>Codex is not logged in.</b> Run <code>codex login</code> in a terminal once. Nothing needs to be registered: this app hands Codex its campaign tools with every message.</div>
   {/if}
 
   <div class="msgs" data-tour="chat-msgs" bind:this={list}>
@@ -199,7 +205,7 @@
           <!-- a turn that only called tools has no text: the tool cards say it all -->
         {:else if m.role === 'assistant'}
           <div class="ai" style="--c:var(--{m.backend})">
-            <span class="who">{m.demo ? 'Tutorial AI' : m.backend === 'agy' ? 'agy' : 'Claude'}</span>
+            <span class="who">{m.demo ? 'Tutorial AI' : actorName(m.backend)}</span>
             <div class="b">{@html fmt(m.text)}{#if m.streaming}<span class="caret"></span>{/if}</div>
           </div>
         {:else if m.role === 'tool' && m.tool}
@@ -229,7 +235,7 @@
       </div>
     {/each}
     {#if busy}
-      <div class="think" style="--c:var(--{app.chatStatus.backend ?? 'claude'})"><i class="spin"></i> {app.chatStatus.demo ? 'Tutorial AI' : app.chatStatus.backend === 'agy' ? 'agy' : 'Claude'} is working…
+      <div class="think" style="--c:var(--{app.chatStatus.backend ?? 'claude'})"><i class="spin"></i> {app.chatStatus.demo ? 'Tutorial AI' : actorName(app.chatStatus.backend ?? 'claude')} is working…
         <button class="btn ghost" onclick={() => cancelChat()}>stop</button></div>
     {/if}
   </div>
@@ -280,6 +286,7 @@
   .demo { margin: 8px 10px 0; padding: 8px 11px; border: 1px solid #2c5a3e; border-left: 3px solid var(--ok); border-radius: var(--radius-s); background: #12301f; font-size: 12px; color: var(--text-dim); line-height: 1.45; }
   .demo b { color: var(--ok); }
   .setup { margin: 8px 10px 0; padding: 10px 12px; border: 1px solid var(--line-2); border-left: 3px solid var(--agy); border-radius: var(--radius-s); background: var(--bg-3); font-size: 12px; }
+  .setup.codex { border-left-color: var(--codex); }
   .setup p { margin: 4px 0 8px; color: var(--text-dim); }
   .setup code, .tool code, .b :global(code) { font-family: var(--mono); font-size: 11px; background: var(--bg); padding: 0 4px; border-radius: 4px; }
   .err { color: var(--danger); margin-left: 8px; }

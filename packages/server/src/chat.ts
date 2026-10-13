@@ -1,6 +1,7 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import type { AiCreativity, Backend, ChatMsg, ChatStatus } from '@pnp/shared';
 import { partyDigest } from './party.js';
@@ -10,7 +11,7 @@ import { beatsFor, scriptFor } from './tutorial/script.js';
 import type { Store } from './store.js';
 
 // ---------------------------------------------------------------------------
-// Integrated chat: runs the Claude Code / agy CLI headless, attached to this
+// Integrated chat: runs the Claude Code / agy / Codex CLI headless, attached to this
 // app's own MCP server, and turns their stream-json output into chat messages
 // and tool-call cards. One long-lived AI session per backend per campaign;
 // per-node threads reuse it with the node pinned as context.
@@ -19,7 +20,7 @@ import type { Store } from './store.js';
 const MCP_NAME = 'pennodepaper';
 
 interface ChatFile {
-  sessions: { claude?: string; agy?: string };
+  sessions: { claude?: string; agy?: string; codex?: string };
   messages: ChatMsg[];
 }
 
@@ -84,7 +85,7 @@ function systemPrompt(store: Store): string {
     ...(creativityBlock(store.state.meta.aiCreativity) ? [creativityBlock(store.state.meta.aiCreativity)] : []),
     `Never delete things the GM did not ask you to delete. Moving a node to the pool is safer than deleting it.`,
     `Images: generate_image makes art with a local ComfyUI (Krea 2). Write prompts as natural-language prose — subject, setting, composition, lighting, mood — never tag lists or "masterpiece"; the campaign style is appended automatically. Use kind portrait for characters, scene for places, item for objects, handout for documents. Only generate when the GM asks, and offer 2-3 variants for important characters.`,
-    `Running the session: when the GM tells you what happened at the table, record it — to move the players use move_players (which characters go where; the party can split, see get_party) or, with no player characters known, mark_played (a prepared POOL node that they visit is placed and linked automatically; use after to say where they came from); set_here when they are at several nodes at once (never invent a group name for that — groups are only for a party that really splits); set_status only marks a node active/done/skipped/untouched WITHOUT moving anyone ("the bell event is running" is active, not "the players are there"); set_known when they learn a clue, advance_clock for ticking threats. When they went off-script ("how do we get back on track?", "what did they miss?"): call story_status first and reason from it — frontier nodes with converges:true are natural merge points, skippedPast/untaken are what they bypassed, unrevealed is what they don't know (never spoil it). On a big canvas group nodes into labelled areas with create_frame (an act, a district). Fix gaps with small bridge nodes (create_node + a "bridge" edge) or by giving a missed clue a second route; never rewrite what already happened. For a recap or "what do the players know?": call player_wiki and write ONLY from it (it holds nothing the players have not experienced); export_player_wiki / push_player_wiki can hand your text to the players. lint_story finds structural problems — run it before a session or after big edits.`,
+    `Running the session: when the GM tells you what happened at the table, record it — to move the players use move_players (which characters go where; the party can split, see get_party) or, with no player characters known, mark_played (a prepared POOL node that they visit is placed and linked automatically; use after to say where they came from); set_here when they are at several nodes at once (never invent a group name for that — groups are only for a party that really splits); set_status only marks a node active/done/skipped/untouched WITHOUT moving anyone ("the bell event is running" is active, not "the players are there"); set_known when they learn a clue, advance_clock for ticking threats. When they went off-script ("how do we get back on track?", "what did they miss?"): call story_status first and reason from it — frontier nodes with converges:true are natural merge points, skippedPast/untaken are what they bypassed, unrevealed is what they don't know (never spoil it). On a big canvas group nodes into labelled areas with create_frame (an act, a district). Fix gaps with small bridge nodes (create_node + a "bridge" edge) or by giving a missed clue a second route; never rewrite what already happened. For a recap or "what do the players know?": call player_wiki and write ONLY from it (it holds nothing the players have not experienced); export_player_wiki / push_player_wiki can hand your text to the players. The GM ends a session with end_session (only when they say so); a recap of the last session is player_wiki with session:"last" — it holds just what happened since the session before, so do not retell older events (list_sessions shows them; entries marked again are places or people the players went back to). Without any ended session, a recap covers the whole story so far. lint_story finds structural problems — run it before a session or after big edits.`,
     `Image style: when the GM asks you to derive or adjust the campaign's visual style, read the world books (list_world_chapters, search_world, get_world_section), then save it with set_image_style — suffix (25-50 words: medium, palette, lighting, mood, typical materials/architecture/costume; no names or plot), negative (what would break the setting), mapSuffix (painted map look, always top-down).`,
     `Maps: a map is an attachment of a LOCATION node — create_map with nodeId gives an existing location its map (it keeps its images, so a location can have both illustrations and a tactical map); without nodeId it creates a new location for it. Battle maps are grid floor plans — build them with edit_map ops (room, corridor, door, prop, label, token; walls derive automatically; 1 cell = 6 ft by default; use get_map to see the rows before editing and keep rooms connected with doors; to shift a room or furniture group use move_area, to change one prop/token/label use edit_prop / edit_token / edit_label — do not redraw; names are set as lettering, never painted: edit_map label / edit_label / remove_label by the id get_map shows (l1, l2…), op lettering for the map's style, on region maps edit_shape changes a shape's name, kind, position or print options in place, and print_map_names prints the names on the finished picture). A token can stand for a character: edit_map token with node = the id of an NPC / enemy node that belongs-to the place (the token takes that node's kind and name; get_map lists the characters that could be placed in "characters"). push_scene then sends those characters to the VTT together with the map and ties each token to its character, so the GM does not have to create the opponents by hand — place the cast that belongs on a battle map this way and set their sheets (set_character_sheet) first. Region maps use vector shapes: terrain areas (water, forest, desert, custom terrains…), STRUCTURES as AREAS (never dots: a city, camp or hospital is a polygon or ellipse of believable size) and LINES (rivers, roads, railways, paths, bridges: multi-point paths with a width). Rivers and roads are painted in their own passes after the terrain, exactly along the drawn path. render_map paints a map with the image model: describe the look (materials, mood), not the layout. The GM chooses in Settings how battle maps are painted (get_map shows paintMode): quick = one pass; precise = two steps that take a while (minutes, depending on the GM's computer) — render_map paints only the EMPTY terrain, the GM judges it in the map editor and picks one (or has it painted again), and only after that does paint_map_props paint every prop group into its place (the GM may have written the prompt of single groups by hand in the editor — get_map shows them as propPrompts; those are used as they are) (touching props of one kind are one object; a row of tables is one long table); the GM then accepts that result or has it painted again. In precise mode never call paint_map_props before the GM has accepted a terrain, and tell the GM that it takes a while. accept_map_terrain makes a terrain the finished picture (maps without props).`,
     `World books are stable reference documents, not canvas nodes. Only write or extend one (write_world) when the GM asks; always give it a dense 300-600 character summary.`,
@@ -174,6 +175,7 @@ export class Chat {
     try {
       if (demo) await this.runDemo(text, nodeId);
       else if (backend === 'claude') await this.runClaude(prompt, opts.model, nodeId);
+      else if (backend === 'codex') await this.runCodex(prompt, opts.model, nodeId);
       else await this.runAgy(prompt, opts.model, nodeId);
     } catch (err) {
       if (!this.cancelled) this.push({ role: 'system', backend, text: err instanceof Error ? err.message : String(err), nodeId });
@@ -366,16 +368,84 @@ export class Chat {
     });
   }
 
+  // ------------------------------- Codex -------------------------------------
+
+  /**
+   * `codex exec --json`: one JSON event per line (thread.started, item.started/updated/completed, turn.failed, …).
+   * This app's MCP server is passed per run with -c overrides (the token through an environment variable, so it is
+   * neither written into Codex's config nor visible in the process list). Shell stays read-only and never asks.
+   */
+  private runCodex(prompt: string, model: string | undefined, nodeId?: string): Promise<void> {
+    const { port, token, campaignDir, store } = this.deps;
+    const codexNote = [
+      `Tooling notes for Codex: the campaign tools are on the MCP server "${MCP_NAME}". Use them for everything about the campaign; do not run shell commands or edit files — you are only the co-GM, the campaign lives in those tools.`,
+      `Prefer targeted calls (search_nodes, get_node) over get_graph once you know what you need.`,
+    ].join('\n');
+    const toml = (v: string) => JSON.stringify(v); // a JSON string is a valid TOML basic string
+    const args = [
+      'exec', '--json', '--skip-git-repo-check', '--sandbox', 'read-only',
+      '-c', `mcp_servers.${MCP_NAME}.url=${toml(`http://127.0.0.1:${port}/mcp?actor=codex`)}`,
+      '-c', `mcp_servers.${MCP_NAME}.bearer_token_env_var=${toml('PNP_MCP_TOKEN')}`,
+      '-c', 'experimental_use_rmcp_client=true',
+      '-c', 'approval_policy="never"',
+    ];
+    if (model) args.push('-m', model);
+    if (this.data.sessions.codex) args.push('resume', this.data.sessions.codex);
+
+    const open = new Map<string, ChatMsg>(); // item id -> card
+    const told = new Set<string>();
+    const fail = (text: string) => {
+      if (!text || told.has(text) || this.cancelled) return;
+      told.add(text);
+      this.push({ role: 'system', backend: 'codex', text: `Codex: ${text.slice(0, 400)}`, nodeId });
+    };
+    return this.spawnLines('codex', args, campaignDir, (ev) => {
+      const e = ev as Record<string, any>;
+      if (e.type === 'thread.started' && e.thread_id) this.data.sessions.codex = String(e.thread_id);
+      else if (e.type === 'item.started' || e.type === 'item.updated' || e.type === 'item.completed') {
+        const it = (e.item ?? {}) as Record<string, any>;
+        const done = e.type === 'item.completed';
+        if (it.type === 'agent_message') {
+          if (done && String(it.text ?? '').trim()) this.push({ role: 'assistant', backend: 'codex', text: String(it.text).trim(), nodeId });
+        } else if (it.type === 'mcp_tool_call' || it.type === 'command_execution' || it.type === 'file_change') {
+          const mcp = it.type === 'mcp_tool_call';
+          let card = open.get(it.id);
+          if (!card) {
+            const name = mcp ? (it.server && it.server !== MCP_NAME ? `${it.server}/${it.tool}` : String(it.tool ?? 'tool')) : it.type === 'command_execution' ? 'shell' : 'file_change';
+            const summary = mcp ? summarizeArgs(it.arguments) : String(it.command ?? '').slice(0, 80);
+            card = this.push({ role: 'tool', backend: 'codex', text: '', nodeId, tool: { name: shortTool(name), summary, status: 'running' } });
+            open.set(it.id, card);
+          }
+          if (done || it.status === 'failed') {
+            const failed = it.status === 'failed' || !!it.error || (!mcp && typeof it.exit_code === 'number' && it.exit_code !== 0);
+            card.tool!.status = failed ? 'error' : 'ok';
+            if (failed) card.text = String(it.error?.message ?? it.error ?? it.aggregated_output ?? '').slice(0, 300);
+            this.update(card);
+          }
+        } else if (it.type === 'error' && done) fail(String(it.message ?? ''));
+      } else if (e.type === 'turn.failed') fail(String(e.error?.message ?? 'the turn failed'));
+      else if (e.type === 'error') fail(String(e.message ?? ''));
+    }, { input: `${systemPrompt(store)}\n${codexNote}\n\n---\n\n${prompt}`, env: { PNP_MCP_TOKEN: token } }).catch((err) => {
+      // a failed turn was already reported with Codex's own words; the exit code only repeats it
+      if (told.size) return;
+      throw err;
+    });
+  }
+
   // ------------------------------- plumbing ----------------------------------
 
-  private spawnLines(bin: string, args: string[], cwd: string, onEvent: (ev: unknown) => void): Promise<void> {
+  private spawnLines(bin: string, args: string[], cwd: string, onEvent: (ev: unknown) => void, opts: { input?: string; env?: Record<string, string> } = {}): Promise<void> {
     return new Promise((resolve, reject) => {
-      const child = spawn(bin, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: process.env });
+      const child = spawn(bin, args, { cwd, stdio: [opts.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], env: { ...process.env, ...opts.env } });
       this.child = child;
+      if (opts.input !== undefined) {
+        child.stdin!.on('error', () => { /* the process ended before reading it all: its exit says why */ });
+        child.stdin!.end(opts.input);
+      }
       let buf = '';
       let stderr = '';
       const timer = setTimeout(() => child.kill('SIGTERM'), 10 * 60_000);
-      child.stdout.on('data', (d: Buffer) => {
+      child.stdout!.on('data', (d: Buffer) => {
         buf += d.toString('utf8');
         let i: number;
         while ((i = buf.indexOf('\n')) >= 0) {
@@ -389,7 +459,7 @@ export class Chat {
           }
         }
       });
-      child.stderr.on('data', (d: Buffer) => (stderr += d.toString('utf8')));
+      child.stderr!.on('data', (d: Buffer) => (stderr += d.toString('utf8')));
       child.on('error', (err) => {
         clearTimeout(timer);
         reject(new Error(`Could not start "${bin}": ${err.message}`));
@@ -423,6 +493,17 @@ function summarizeArgs(a: unknown): string {
 export interface Models {
   claude: { id: string; label: string }[];
   agy: { id: string; label: string }[];
+  codex: { id: string; label: string }[];
+}
+
+/** The model Codex is configured with (~/.codex/config.toml `model = "…"`), to say what "default" means. */
+function codexConfiguredModel(): string {
+  try {
+    const home = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+    return /^\s*model\s*=\s*"([^"]+)"/m.exec(fs.readFileSync(path.join(home, 'config.toml'), 'utf8'))?.[1] ?? '';
+  } catch {
+    return '';
+  }
 }
 
 /** Model lists for the chat's model picker. */
@@ -443,5 +524,8 @@ export function listModels(): Models {
       .map((p) => ({ id: p[0], label: p[1].trim() }));
     if (rows.length) agy = [{ id: '', label: 'default' }, ...rows];
   } catch { /* agy not installed */ }
-  return { claude, agy };
+  // Codex has no model list command; "default" is whatever its own config says, and a model id can be typed into config.toml
+  const configured = codexConfiguredModel();
+  const codex = [{ id: '', label: configured ? `default (${configured})` : 'default' }];
+  return { claude, agy, codex };
 }

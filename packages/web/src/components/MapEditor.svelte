@@ -4,7 +4,7 @@
   // edit_map uses, so the GM and the AI can work on one map at the same time.
   import { onMount, untrack } from 'svelte';
   import {
-    DEFAULT_LABEL_STYLE, DOOR_KINDS, FLOORS, LABEL_PLACES, LABEL_STYLES, NODE_TYPE_INFO, PROP_KINDS, REGION_KINDS, applyOps, canon, charactersOfPlace, cleanKind, derivedWalls, fallbackGroupPrompt, fallbackRegionPrompt, getLabelContext, groupProps, groupRegion, imageSize, isLineKind, lettersSvg, placedLabels, pointInShape, regionKind, renderSvg, strokeWidth, tokenKindOf,
+    DEFAULT_LABEL_STYLE, DOOR_KINDS, actorName, FLOORS, LABEL_PLACES, LABEL_STYLES, NODE_TYPE_INFO, PROP_KINDS, REGION_KINDS, applyOps, canon, charactersOfPlace, cleanKind, derivedWalls, fallbackGroupPrompt, fallbackRegionPrompt, getLabelContext, groupProps, groupRegion, imageSize, isLineKind, lettersSvg, placedLabels, pointInShape, regionKind, renderSvg, strokeWidth, tokenKindOf,
     type DoorKind, type LabelPlace, type LabelSize, type MapDoc, type MapOp, type Placed, type PropKind, type RegionKind,
   } from '@pnp/shared';
   import { app, cmd, say, selectNode, sendChat } from '../lib/app.svelte';
@@ -219,7 +219,7 @@
       dirty = false;
       markFresh(doc, ev.map);
       doc = JSON.parse(JSON.stringify(ev.map));
-      status = `${ev.actor === 'agy' ? 'agy' : 'Claude'} edited the map`;
+      status = `${actorName(ev.actor)} edited the map`;
       void loadPaint();
     });
   });

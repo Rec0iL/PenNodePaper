@@ -154,14 +154,17 @@ Everything above works without it. If you install the `claude` and/or `agy` CLI 
 <img src="docs/img/ai-demo.gif" alt="The AI builds on the canvas: place, link, create, edit, relink, delete, move to pool" width="100%">
 </div>
 
-* **In-app chat** (right dock → *AI*): switch Claude / agy per conversation, pick a model, `@`-mention nodes, selected node is sent as context. Per-node threads live in the inspector and leave a pointer card in the global chat.
+* **In-app chat** (right dock → *AI*): switch Claude / agy / Codex per conversation, pick a model, `@`-mention nodes, selected node is sent as context. Per-node threads live in the inspector and leave a pointer card in the global chat.
 * **Claude** works out of the box (the app spawns `claude -p` headless and hands it this app's MCP server; only the campaign tools are allowed).
 * **agy** needs a one-time *Connect agy* click in the chat (runs `agy mcp add …`, which registers the server in agy's own global config).
-* **External clients** (Claude Code in a terminal, etc.) can attach to `http://127.0.0.1:4317/mcp` with the bearer token from `~/.config/pennodepaper/config.json`:
+* **Codex** needs no setup in the app beyond having the Codex CLI installed and logged in (`codex login`): every message runs `codex exec --json` and hands it this app's MCP server for that run (the token goes through an environment variable, shell access stays read-only).
+* **External clients** (Claude Code in a terminal, opencode, Cursor, …) can attach to `http://127.0.0.1:4317/mcp` with the bearer token from `~/.config/pennodepaper/config.json`:
 
   ```bash
-  claude mcp add --transport http pennodepaper "http://127.0.0.1:4317/mcp?actor=claude" --header "Authorization: Bearer <token>"
+  claude mcp add --transport http pennodepaper "http://127.0.0.1:4317/mcp" --header "Authorization: Bearer <token>"
   ```
+
+  Such a client is recognised by the name it gives in the MCP handshake: its changes show in the activity log, on the cards and in the review bar under that name (*opencode*, …), with their own colour. An `?actor=<label>` on the URL sets the label by hand (`?actor=claude`, `agy` and `codex` are what the app itself uses for the assistants it starts).
 
 Every MCP call is one undo step (`Ctrl+Z` / `Ctrl+Shift+Z`). Deleting is a soft delete (Trash in the pool panel).
 
@@ -329,6 +332,7 @@ Each VTT ships its own small bridge client, and PenNodePaper learns what it can 
 * **Layout** — drag the splitters between the pool, the canvas, the side panel and the activity strip to resize them (double-click a splitter to reset it; sizes are remembered).
 * **Story tab** — where each group is, how and where they can get back on track (meeting points, what was skipped or not yet revealed), the story linter, and progress clocks. **✦ Bridge back with the AI** asks the co-GM for a way to rejoin the story; the **railguard** field above the button lets you say *how* the bridge should go (“keep it short, no fight, a person gives the lead”) — leave it empty and the AI chooses.
 * **For the players** (Story tab) — a spoiler-safe wiki of what the players have experienced and learned: the story so far in play order (marked by group when the party split), the people, places and things they met, the clues they know. It uses only the **read-aloud** text (summaries and notes stay yours). Preview it, export it as markdown, send it to the VTT as a handout, or have the AI write a narrator-style recap from it (`player_wiki`, `export_player_wiki`, `push_player_wiki`). Tick *the players know this* on an NPC, place or item to list it without having visited it.
+* **Sessions** (Story tab) — press **■ End session** when the evening is over. It remembers how far the party got (the steps they played, what they know by now, where they stand), optionally under a title. From then on the wiki, the export, the VTT handout and **✦ Recap with AI** default to *the last session*: they hold only what happened since the session before, so a recap is sized to the evening and never retells older events (places and people the players went back to are marked *again*). A drop-down picks another session, the session in progress, or the whole story. Pressed by mistake? **reopen** takes it back; **rename** gives a session a title later. The played path shows where each session ended, and the AI has `end_session`, `list_sessions`, `rename_session`, `reopen_last_session` and a `session` argument ("last", "open", a number) on `player_wiki` / `export_player_wiki` / `push_player_wiki`.
 * **Image queue** — a chip in the top bar shows what is generating and what waits (click for the list); cards show ⏳ queued / ◌ percent; the Generate button turns into *Add to queue* while something runs.
 * **Connection kinds** — hover a kind in the bar at the bottom for what it is for (leads to, if …, reveals, belongs to, foreshadows, bridge).
 * The AI has the same tools: `move_players`, `set_status`, `mark_played`, `set_known`, `advance_clock`, `story_status`, `lint_story`, `get_party`, `sync_party`.

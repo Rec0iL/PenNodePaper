@@ -1,7 +1,7 @@
 <script lang="ts">
   // The GM's session view: where are the players, what is wrong with the plan, how do we get back on track.
   // All analysis is the shared pure code the AI's tools use too (lint_story / story_status).
-  import { DEFAULT_GROUP, NODE_TYPE_INFO, bridgePrompt, groupColor, lintStory, playerWiki, storyStatus, wikiCount, wikiMarkdown, type CampaignState } from '@pnp/shared';
+  import { DEFAULT_GROUP, NODE_TYPE_INFO, bridgePrompt, groupColor, lintStory, playerWiki, sessionLabel, sessionOverview, sessionsOf, storyStatus, wikiCount, wikiMarkdown, type CampaignState, type WikiScope } from '@pnp/shared';
   import { app, cmd, focusNode, say, sendChat } from '../lib/app.svelte';
 
   const campaign = $derived({ meta: app.meta, nodes: app.nodes, graph: app.graph } as unknown as CampaignState);
@@ -20,25 +20,70 @@
   const laneName = (g: string) => (g === DEFAULT_GROUP ? (split ? 'Rest of the party' : 'Party') : g);
   const gather = (nodeId: string) => cmd('move_players', { characters: everyone, nodeId });
 
-  // what the players know (the same pure code the AI's player_wiki uses)
-  const wiki = $derived(playerWiki(campaign));
+  // sessions: the GM's "End session" marks (what the next recap starts after)
+  const marks = $derived(sessionsOf(campaign));
+  const sessions = $derived(sessionOverview(campaign));
+  const openSession = $derived(sessions[sessions.length - 1]);
+  const finished = $derived(sessions.filter((x) => !x.open).reverse());
+  const lastSeq = $derived(marks.at(-1)?.seq ?? -1);
+  let ending = $state(false);
+  let endName = $state('');
+  let renaming = $state<number | null>(null);
+  let renameText = $state('');
+  let sessionBusy = $state(false);
+  const day = (iso?: string) => (iso ? new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : '');
+  const sizeOf = (c: { story: number; people: number; places: number; things: number; learned: number }) =>
+    [c.story && `${c.story} step${c.story > 1 ? 's' : ''}`, c.people && `${c.people} ${c.people > 1 ? 'people' : 'person'}`, c.places && `${c.places} place${c.places > 1 ? 's' : ''}`, c.things && `${c.things} thing${c.things > 1 ? 's' : ''}`, c.learned && `${c.learned} clue${c.learned > 1 ? 's' : ''}`].filter(Boolean).join(', ') || 'nothing yet';
+  /** the session-ends that fall between two steps of a trail (or after its last one) */
+  const endsBetween = (prev: number, seq: number) => marks.map((m, i) => ({ m, i })).filter(({ m }) => m.seq >= prev && m.seq < seq);
+  async function endSession() {
+    sessionBusy = true;
+    const r = await cmd<{ name: string }>('end_session', { name: endName.trim() || undefined });
+    sessionBusy = false;
+    if (!r) return;
+    ending = false;
+    endName = '';
+    pick = null;
+    say(`${r.name} saved — the next recap tells just this session`, 'ok');
+  }
+  async function reopen() {
+    const r = await cmd<{ reopened: string }>('reopen_last_session', {});
+    if (r) { pick = null; say(`${r.reopened} is open again`, 'ok'); }
+  }
+  async function rename(n: number) {
+    const r = await cmd('rename_session', { session: n, name: renameText });
+    if (r) renaming = null;
+  }
+
+  // what the players know (the same pure code the AI's player_wiki uses); with sessions it is one session's worth, the last one by default
+  let pick = $state<WikiScope | null>(null);
+  const scope = $derived<WikiScope>(typeof pick === 'number' && pick > marks.length + 1 ? 'last' : (pick ?? (marks.length ? 'last' : 'all')));
+  const wiki = $derived(playerWiki(campaign, scope));
   const wikiN = $derived(wikiCount(wiki));
   let showWiki = $state(false);
   let sending = $state(false);
   const canSend = $derived(!!app.vtt?.connected && !!app.vtt.profile?.push.handout);
   async function exportWiki() {
-    const r = await cmd<{ url: string; file: string }>('export_player_wiki', {});
+    const r = await cmd<{ url: string; file: string }>('export_player_wiki', { session: scope });
     if (r) { window.open(r.url, '_blank'); say(`Saved ${r.file} in the exports folder`, 'ok'); }
   }
   async function sendWiki() {
     sending = true;
-    const r = await cmd('push_player_wiki', {});
+    const r = await cmd('push_player_wiki', { session: scope });
     sending = false;
     if (r) say(`Recap added to ${app.vtt?.profile?.name ?? 'the VTT'}'s handouts`, 'ok');
   }
   function recap() {
     app.tab = 'chat';
-    void sendChat('Write a short, vivid recap of the story so far for my players, in the campaign language, as if told by a narrator (about 120-200 words). Call player_wiki first and write ONLY from what it contains — nothing the players have not experienced, no GM secrets, no hints about what comes next. Then create it as a handout node (type handout, title "Previously…", the text as readAloud, place:"pool") so I can push it from the Inspector.');
+    const sess = wiki.session;
+    if (!sess) {
+      void sendChat('Write a short, vivid recap of the story so far for my players, in the campaign language, as if told by a narrator (about 120-200 words). Call player_wiki first and write ONLY from what it contains — nothing the players have not experienced, no GM secrets, no hints about what comes next. Then create it as a handout node (type handout, title "Previously…", the text as readAloud, place:"pool") so I can push it from the Inspector.');
+      return;
+    }
+    // sized by how much happened: ~40 words per story step, ~12 per person, place, thing or clue
+    const words = Math.round(Math.min(260, Math.max(60, wiki.story.length * 40 + (wikiN - wiki.story.length) * 12)) / 10) * 10;
+    const arg = scope === 'last' || scope === 'open' ? scope : sess.number;
+    void sendChat(`Write a short, vivid recap of ${sess.open ? 'the session in progress' : `"${sess.name}"`} for my players, in the campaign language, as if told by a narrator (about ${words} words). Call player_wiki with session:${JSON.stringify(arg)} first and write ONLY from what it contains — it holds just this session, so do not retell earlier events (at most half a sentence to place the scene); nothing the players have not experienced, no GM secrets, no hints about what comes next. Then create it as a handout node (type handout, title "Previously…", the text as readAloud, place:"pool") so I can push it from the Inspector.`);
   }
 
   const lost = $derived(st.skippedPast.length + st.untaken.length + st.unrevealed.filter((u) => u.opens.length).length);
@@ -74,11 +119,13 @@
           {/if}
           <div class="path">
             {#each lane.path as p, i (p.id)}
+              {#each endsBetween(lane.path[i - 1]?.seq ?? -1, p.seq) as e (e.i)}<span class="sess" title={`${sessionLabel(marks, e.i + 1)} ended here`}>┃ {sessionLabel(marks, e.i + 1)} ended</span>{/each}
               {#if i}<span class="arr">›</span>{/if}
-              <button class="step" class:here={lane.here.some((h) => h.id === p.id)} style="--c:{color(p.id)}" onclick={() => focusNode(p.id)} title={`#${p.seq} · ${p.status}`}>{p.title}</button>
+              <button class="step" class:here={lane.here.some((h) => h.id === p.id)} class:old={p.seq <= lastSeq && !lane.here.some((h) => h.id === p.id)} style="--c:{color(p.id)}" onclick={() => focusNode(p.id)} title={`#${p.seq} · ${p.status}`}>{p.title}</button>
             {:else}
               <span class="dim">hasn't played anything yet</span>
             {/each}
+            {#each endsBetween(lane.path.at(-1)?.seq ?? Infinity, Infinity) as e (e.i)}<span class="sess" title={`${sessionLabel(marks, e.i + 1)} ended here`}>┃ {sessionLabel(marks, e.i + 1)} ended</span>{/each}
           </div>
         </div>
       {/each}
@@ -95,6 +142,46 @@
       <p class="dim">Nothing played yet. Select a node and press <b>▶ Players are here</b> in the Inspector (or tell the AI what happened — it records it with <code>mark_played</code>). A pool node the players visit joins the story map automatically.</p>
     {/if}
   </section>
+
+  {#if st.played.length || marks.length}
+    <section data-tour="story-sessions">
+      <div class="label">Sessions {#if marks.length}<span class="chip">{marks.length}</span>{/if}</div>
+      <div class="srow">
+        <div class="st">
+          <b>{openSession.name}</b> <span class="dim">in progress — {sizeOf(openSession.counts)}</span>
+          {#if openSession.endedAt.length}<span class="dim">now at {openSession.endedAt.map((e) => e.title).join(', ')}</span>{/if}
+        </div>
+        {#if !ending}
+          <button class="btn" onclick={() => (ending = true)} disabled={!openSession.total} title={openSession.total ? 'The session is over: remember how far the party got, so the next recap tells only what comes after' : 'Nothing was played since the last session ended'}>■ End session</button>
+        {/if}
+      </div>
+      {#if ending}
+        <div class="endform">
+          <input class="field" bind:value={endName} placeholder="Name it (optional) — e.g. The bridge of Brenn" maxlength="80" onkeydown={(e) => e.key === 'Enter' && endSession()} />
+          <div class="wrow">
+            <button class="btn primary" onclick={endSession} disabled={sessionBusy}>End {openSession.name}</button>
+            <button class="btn ghost" onclick={() => { ending = false; endName = ''; }}>Cancel</button>
+          </div>
+          <p class="dim">Saves how far the party got: {sizeOf(openSession.counts)}. The next recap starts after this point and retells none of it.</p>
+        </div>
+      {/if}
+      {#each finished as x, k (x.number)}
+        <div class="done" class:picked={scope === x.number || (k === 0 && scope === 'last')}>
+          {#if renaming === x.number}
+            <input class="field" bind:value={renameText} placeholder={`Session ${x.number}`} maxlength="80" onkeydown={(e) => { if (e.key === 'Enter') void rename(x.number); if (e.key === 'Escape') renaming = null; }} />
+            <button class="btn" onclick={() => rename(x.number)}>Save</button>
+          {:else}
+            <button class="dn" onclick={() => { pick = k === 0 ? 'last' : x.number; showWiki = true; }} title="Show what happened in this session">
+              <b>{x.name}</b> <span class="dim">{day(x.at)} · {sizeOf(x.counts)}</span>
+              {#if x.endedAt.length}<span class="dim">ended at {x.endedAt.map((e) => e.title).join(', ')}</span>{/if}
+            </button>
+            <button class="lnk" onclick={() => { renaming = x.number; renameText = marks[x.number - 1]?.name ?? ''; }} title="Rename this session">rename</button>
+            {#if k === 0}<button class="lnk" onclick={reopen} title="Pressed by mistake? Open this session again">reopen</button>{/if}
+          {/if}
+        </div>
+      {/each}
+    </section>
+  {/if}
 
   {#if st.played.length}
     <section data-tour="story-back">
@@ -153,6 +240,14 @@
   <section data-tour="story-wiki">
     <div class="label">For the players {#if wikiN}<span class="chip">{wikiN}</span>{/if}</div>
     <p class="dim">What they have experienced and learned. Only the <b>read-aloud</b> text is shown — summaries and notes stay yours, so write a read-aloud for what you want described.{wikiN ? '' : ' Nothing yet.'}</p>
+    {#if marks.length}
+      <select class="field scope" aria-label="Which part of the story" value={String(scope)} onchange={(e) => { const v = e.currentTarget.value; pick = v === 'all' || v === 'open' || v === 'last' ? v : Number(v); }}>
+        <option value="last">Last session — {sessionLabel(marks, marks.length)}</option>
+        <option value="open">Session in progress — {openSession.name}</option>
+        {#each finished.slice(1) as x (x.number)}<option value={String(x.number)}>{x.name}</option>{/each}
+        <option value="all">The whole story so far</option>
+      </select>
+    {/if}
     <div class="wrow">
       <button class="btn" onclick={() => (showWiki = !showWiki)} disabled={!wikiN}>{showWiki ? 'Hide' : 'Preview'}</button>
       <button class="btn" onclick={exportWiki} disabled={!wikiN} title="Save as a markdown file to hand out">⬇ Export .md</button>
@@ -213,6 +308,16 @@
   .wikipre { margin: 8px 0 0; padding: 10px 12px; background: var(--bg-3); border: 1px solid var(--line); border-radius: var(--radius-s); font-size: 11.5px; line-height: 1.55; white-space: pre-wrap; max-height: 300px; overflow: auto; color: var(--text-dim); font-family: inherit; }
   .lnk { background: none; border: 0; color: var(--accent); padding: 0; font-size: 11.5px; text-decoration: underline; text-align: left; }
   .bridge { margin-top: 8px; width: 100%; }
+  .srow { display: flex; gap: 8px; align-items: center; justify-content: space-between; margin-top: 4px; }
+  .st { display: grid; gap: 1px; font-size: 12.5px; min-width: 0; }
+  .endform { margin-top: 8px; display: grid; gap: 6px; }
+  .done { display: flex; gap: 8px; align-items: baseline; padding: 4px 6px; border-radius: 6px; border-left: 3px solid transparent; }
+  .done.picked { border-left-color: var(--accent); background: var(--bg-3); }
+  .dn { flex: 1; min-width: 0; display: grid; gap: 1px; text-align: left; background: transparent; border: 0; padding: 0; color: var(--text-dim); font-size: 12.5px; }
+  .dn:hover { color: var(--text); }
+  .sess { font-size: 10.5px; color: var(--accent); border-left: 2px solid var(--accent); padding-left: 5px; margin: 0 4px; white-space: nowrap; }
+  .step.old { opacity: .6; }
+  .scope { margin-top: 6px; width: 100%; font-size: 12px; }
   .rg { margin-top: 12px; }
   .guidance { margin-top: 4px; resize: vertical; min-height: 44px; font-size: 12px; }
   .issue { display: block; width: 100%; text-align: left; background: transparent; border: 0; padding: 4px 6px; border-radius: 6px; color: var(--text-dim); font-size: 12px; line-height: 1.4; }

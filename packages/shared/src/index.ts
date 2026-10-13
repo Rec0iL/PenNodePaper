@@ -21,7 +21,11 @@ export const EDGE_KINDS = [
 ] as const;
 export type EdgeKind = (typeof EDGE_KINDS)[number];
 
-export type Actor = 'user' | 'claude' | 'agy' | 'system';
+/**
+ * Who made a change. 'claude' / 'agy' / 'codex' are the assistants the app runs itself; `ext:<name>` is any other
+ * MCP client that attached on its own (opencode, Cursor, …) and told its name — see actors.ts.
+ */
+export type Actor = 'user' | 'claude' | 'agy' | 'codex' | 'system' | `ext:${string}`;
 
 export interface StoryNode {
   id: string;
@@ -187,6 +191,21 @@ export interface CampaignMeta {
   aiCreativity?: AiCreativity;
   /** A practice campaign for the welcome tour: its AI and image maker are scripted stand-ins (nothing needs to be set up) until the tour is left. */
   tutorial?: { on: boolean };
+  /** Where each finished session ended (the GM pressed "End session"), oldest first. Session N is everything between mark N-1 and mark N; what comes after the last mark is the session in progress. */
+  sessions?: SessionMark[];
+}
+
+/** One "session ended" press: how far the party had got at that moment, so the next recap only tells what came after. */
+export interface SessionMark {
+  /** the GM's own title for the session (default "Session N") */
+  name?: string;
+  at: string;
+  /** played steps up to this number belong to this session or an earlier one (visit `seq`, see story.ts) */
+  seq: number;
+  /** people, places, things and clues the players knew by then — the next session lists only what is new */
+  known: string[];
+  /** the nodes the players stood at when the session ended */
+  here: string[];
 }
 
 export type AiCreativity = 1 | 2 | 3 | 4 | 5;
@@ -334,7 +353,8 @@ export interface Batch {
 // WebSocket protocol between server and web UI
 // ---------------------------------------------------------------------------
 
-export type Backend = 'claude' | 'agy';
+export type Backend = 'claude' | 'agy' | 'codex';
+export const BACKENDS: Backend[] = ['claude', 'agy', 'codex'];
 
 export interface ChatMsg {
   id: string;
@@ -401,6 +421,7 @@ export * from './regionlines.js';
 export * from './consolidate.js';
 export * from './vtt.js';
 export * from './sheet.js';
+export * from './actors.js';
 export * from './story.js';
 export * from './wiki.js';
 export * from './tables.js';

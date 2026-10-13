@@ -210,13 +210,22 @@ That's all. PenNodePaper starts `claude -p` in the background for each chat mess
 2. Check: `agy --version`.
 3. In PenNodePaper open the right panel → **AI**, pick **agy**, and click **Connect agy** once. This registers PenNodePaper's MCP server in agy's own configuration (`agy mcp add …`).
 
-### Using your own client (Claude Code in a terminal, etc.)
+### Codex (OpenAI Codex CLI)
+
+1. Install the **Codex CLI** following its own documentation (for example `npm install -g @openai/codex`).
+2. Run `codex login` once in a terminal.
+3. Check: `codex --version`.
+4. In PenNodePaper open the right panel → **AI** and pick **Codex**. There is nothing to register: for every message the app starts `codex exec` and hands it the campaign tools for that run. Codex's own configuration is not touched, and its shell access stays read-only. The model is the one in your `~/.codex/config.toml`.
+
+### Using your own client (Claude Code in a terminal, opencode, Cursor, etc.)
 
 Any MCP client can attach to `http://127.0.0.1:4317/mcp` with the bearer token from `~/.config/pennodepaper/config.json`:
 
 ```bash
-claude mcp add --transport http pennodepaper "http://127.0.0.1:4317/mcp?actor=claude" --header "Authorization: Bearer <token>"
+claude mcp add --transport http pennodepaper "http://127.0.0.1:4317/mcp" --header "Authorization: Bearer <token>"
 ```
+
+The client is shown under the name it reports to the server (`opencode`, `cursor`, …) in the activity log and on the canvas. To choose the label yourself, add `?actor=<label>` to the URL.
 
 No AI installed? Everything else still works: you build the story by hand, the welcome tour shows what an AI session looks like (with a scripted stand-in), and `npm run ai-demo -w @pnp/server` plays one against the demo campaign.
 

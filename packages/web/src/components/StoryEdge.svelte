@@ -1,7 +1,7 @@
 <script lang="ts">
   import { EdgeLabel, EdgeReconnectAnchor, getBezierPath, type EdgeProps } from '@xyflow/svelte';
   import { Tween } from 'svelte/motion';
-  import { EDGE_KIND_INFO, inlineBezier, roundedPath, type EdgeKind } from '@pnp/shared';
+  import { EDGE_KIND_INFO, actorColor, actorName, inlineBezier, roundedPath, type EdgeKind } from '@pnp/shared';
   import { app, cmd } from '../lib/app.svelte';
   import { routing } from '../lib/routing.svelte';
 
@@ -13,7 +13,7 @@
   const present = $derived(app.presence?.edgeId === id ? app.presence : null);
   const oldLabel = $derived(app.edgeDiffs[id]?.from ?? '');
   const showOld = $derived(!!app.edgeDiffs[id] && oldLabel !== (data.label ?? ''));
-  const actorColor = $derived(present?.actor === 'agy' ? 'var(--agy)' : 'var(--claude)');
+  const presentColor = $derived(present ? actorColor(present.actor) : 'var(--claude)');
 
   // The displayed end points tween while an edge is being rewired (slide old -> new);
   // otherwise they track the props 1:1 (so dragging nodes stays crisp).
@@ -72,7 +72,7 @@
   });
 </script>
 
-<g style="color:{present ? actorColor : data.played ? (data.trailColor ?? '#ffd166') : style.color}">
+<g style="color:{present ? presentColor : data.played ? (data.trailColor ?? '#ffd166') : style.color}">
   <path
     class="pnp-edge-path"
     class:draw={mode === 'draw'}
@@ -82,7 +82,7 @@
     class:trail={!!data.played && !present}
     d={path[0]}
     pathLength={mode === 'draw' ? 1 : undefined}
-    stroke={present ? actorColor : data.played ? (data.trailColor ?? '#ffd166') : style.color}
+    stroke={present ? presentColor : data.played ? (data.trailColor ?? '#ffd166') : style.color}
     stroke-width={present ? 4 : data.played ? 3.5 : data.proposed ? 3 : 2}
     stroke-dasharray={mode === 'draw' || data.played ? undefined : data.proposed ? '7 5' : style.dash}
     fill="none"
@@ -113,10 +113,10 @@
 {:else if data.label || present || showOld}
   <EdgeLabel x={path[1]} y={path[2]} selectEdgeOnClick>
     <span class="stack">
-      {#if present}<span class="who" style="--pc:{actorColor}">{present.actor === 'agy' ? 'agy' : 'Claude'}</span>{/if}
+      {#if present}<span class="who" style="--pc:{presentColor}">{actorName(present.actor)}</span>{/if}
       {#if showOld && oldLabel}<span class="old">{oldLabel}</span>{/if}
       {#if data.label}
-        <span class="lbl" class:fresh={showOld} style="--c:{present ? actorColor : style.color}" role="presentation" ondblclick={(e) => { e.stopPropagation(); start(); }} title="Double-click to edit">{data.label}</span>
+        <span class="lbl" class:fresh={showOld} style="--c:{present ? presentColor : style.color}" role="presentation" ondblclick={(e) => { e.stopPropagation(); start(); }} title="Double-click to edit">{data.label}</span>
       {/if}
     </span>
   </EdgeLabel>

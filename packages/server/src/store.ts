@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import type {
   Actor, Batch, CampaignState, ChangeEvent, FieldDiff, Frame, Proposal, ImageJob, ImageKind, MapDoc, Placement, StoryEdge, StoryNode, StyleConfig,
 } from '@pnp/shared';
-import { slugify } from '@pnp/shared';
+import { isAiActor, slugify } from '@pnp/shared';
 import path from 'node:path';
 import { Persistence } from './persistence.js';
 import { Backups } from './backup.js';
@@ -260,7 +260,7 @@ export class Store {
     }
     const batch = this.commit(tx.ops, actor, tx.label || label);
     let proposal: string | undefined;
-    if (this.state.meta.aiMode === 'review' && (actor === 'claude' || actor === 'agy')) {
+    if (this.state.meta.aiMode === 'review' && isAiActor(actor)) {
       // a chat run is one proposal; an outside client (Claude Code over MCP) is grouped by the minute
       proposal = this.turn?.id ?? `ext-${actor}-${Math.floor(Date.now() / 60_000)}`;
       batch.proposal = proposal;
