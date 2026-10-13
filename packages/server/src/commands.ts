@@ -1,5 +1,5 @@
 import { z, type ZodRawShape } from 'zod';
-import { DEFAULT_GROUP, charactersOfPlace, isCharacterNode, tokenKindOf, dieLabel, soundsOf, entryLine, fragmentName, parseEntry, rollLog, rollTable, seeded, tableEntries, tableFaces, clockOf, lintStory, nextPlayedSeq, playedPath, playerWiki, wikiMarkdown, slugify, storyStatus, validateSheet, visitsOf, type Visit } from '@pnp/shared';
+import { DEFAULT_GROUP, charactersOfPlace, isCharacterNode, tokenKindOf, dieLabel, soundsOf, entryLine, fragmentName, parseEntry, rollLog, rollTable, seeded, tableEntries, tableFaces, clockOf, lintStory, newSessionMark, nextPlayedSeq, parseScope, playedPath, playerWiki, sessionLabel, sessionOverview, sessionsOf, wikiMarkdown, slugify, storyStatus, validateSheet, visitsOf, type Visit } from '@pnp/shared';
 import type { Actor, Backend, DoorKind, EdgeKind, EdgeSide, ImageKind, MapDoc, NodeStatus, NodeType, PropKind, StoryEdge, StoryNode } from '@pnp/shared';
 import { DEFAULT_LABEL_STYLE, DOOR_KINDS, EDGE_KINDS, FRAME_PALETTE, EDGE_SIDES, IMAGE_KINDS, LABEL_PLACES, LABEL_SIZES, LABEL_STYLES, NODE_STATUSES, NODE_TYPES, PROP_KINDS, REGION_KINDS, cleanKind, isKnownKind } from '@pnp/shared';
 import { createHash } from 'node:crypto';
@@ -1473,7 +1473,12 @@ function markPlayed(tx: Tx, a: { nodeId: string; status?: 'active' | 'done' | 's
       const rest = visits.filter((v) => v.group !== group);
       tx.putNode({ ...settle(n, rest), status: 'skipped' });
     } else {
-      const next = [...visits.filter((v) => v.group !== group), { group, seq, here: status === 'active' }];
+      // coming back to a step of an earlier session: remember the return, so that session's recap does not own it
+      const lastEnd = Math.max(-1, ...sessionsOf(tx.state).map((m) => m.seq));
+      const again = mine?.again ?? [];
+      const returning = mine && status === 'active' && !mine.here && Math.max(mine.seq, ...again) <= lastEnd;
+      const kept = returning ? [...again, nextPlayedSeq(tx.state)] : again;
+      const next = [...visits.filter((v) => v.group !== group), { group, seq, here: status === 'active', ...(kept.length ? { again: kept } : {}) }];
       tx.putNode(settle(n, next));
     }
     tx.label =
@@ -1506,7 +1511,7 @@ function renameGroup(tx: Tx, from: string, to: string) {
     for (const v of vs) {
       const g = v.group === from ? to : v.group;
       const have = merged.find((m) => m.group === g);
-      if (have) { have.seq = Math.min(have.seq, v.seq); have.here = have.here || v.here; } else merged.push({ ...v, group: g });
+      if (have) { have.seq = Math.min(have.seq, v.seq); have.here = have.here || v.here; if (v.again) have.again = [...new Set([...(have.again ?? []), ...v.again])]; } else merged.push({ ...v, group: g });
     }
     const fields: Record<string, unknown> = { ...n.fields, visits: merged };
     delete fields.playedSeq;
@@ -1728,27 +1733,30 @@ def({
   },
 });
 
+const SCOPE = z.union([z.string(), z.number()]).optional().describe('Which part of the story: "all" (default, the whole campaign so far), "last" (the session the GM ended most recently — what a recap before the next session retells), "open" (the session in progress) or a session number.');
+
 def({
   name: 'player_wiki',
   description:
-    'What the PLAYERS know, safe to share: the story so far (in the order they played it), the people, places and things they met, and the clues/lore they learned — only text written for the players (the read-aloud block; summaries and notes are the GM\'s and are never included) or anything they have not experienced. Use it to write a session recap or answer "what do my players know about X?". Returns structured entries plus ready-made markdown.',
+    'What the PLAYERS know, safe to share: the story so far (in the order they played it), the people, places and things they met, and the clues/lore they learned — only text written for the players (the read-aloud block; summaries and notes are the GM\'s and are never included) or anything they have not experienced. Use it to write a session recap or answer "what do my players know about X?". Returns structured entries plus ready-made markdown. For a recap pass `session`: "last" is exactly what happened since the session before it, so nothing gets retold (entries marked `again` are places or people the players went back to).',
   readOnly: true,
-  shape: {},
-  run(tx) {
-    const w = playerWiki(tx.state);
+  shape: { session: SCOPE },
+  run(tx, a) {
+    const w = playerWiki(tx.state, parseScope(a.session));
     return { ...w, markdown: wikiMarkdown(w) };
   },
 });
 
 def({
   name: 'export_player_wiki',
-  description: 'Save the player wiki (see player_wiki) as a markdown file in the campaign\'s exports folder, to hand to the players. Pass `text` to save YOUR OWN spoiler-safe recap instead of the generated list (write it from player_wiki only).',
-  shape: { text: z.string().optional() },
+  description: 'Save the player wiki (see player_wiki) as a markdown file in the campaign\'s exports folder, to hand to the players. Pass `text` to save YOUR OWN spoiler-safe recap instead of the generated list (write it from player_wiki only); `session` picks which part of the story the generated list covers (see player_wiki).',
+  shape: { text: z.string().optional(), session: SCOPE },
   run(tx, a) {
-    const md = a.text?.trim() ? `${a.text.trim()}\n` : wikiMarkdown(playerWiki(tx.state));
+    const w = playerWiki(tx.state, parseScope(a.session));
+    const md = a.text?.trim() ? `${a.text.trim()}\n` : wikiMarkdown(w);
     fs.mkdirSync(tx.store.exportsDir, { recursive: true });
     const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 16);
-    const file = `${slugify(tx.state.meta.name)}-players-${stamp}.md`;
+    const file = `${slugify(tx.state.meta.name)}-players${w.session ? `-session-${w.session.number}` : ''}-${stamp}.md`;
     fs.writeFileSync(path.join(tx.store.exportsDir, file), md);
     return { file, url: `/api/exports/${file}`, chars: md.length };
   },
@@ -1756,13 +1764,79 @@ def({
 
 def({
   name: 'push_player_wiki',
-  description: 'Send the player wiki (or your own spoiler-safe `text`, e.g. a written recap) to the VTT as a text handout titled "Recap". reveal:true shows it to the players right now — only when the GM asked.',
+  description: 'Send the player wiki (or your own spoiler-safe `text`, e.g. a written recap) to the VTT as a text handout titled "Recap". reveal:true shows it to the players right now — only when the GM asked. `session` picks which part of the story the generated list covers (see player_wiki).',
   async: true,
-  shape: { text: z.string().optional(), title: z.string().optional(), reveal: z.boolean().optional() },
+  shape: { text: z.string().optional(), title: z.string().optional(), reveal: z.boolean().optional(), session: SCOPE },
   async run(tx, a) {
-    const text = a.text?.trim() || wikiMarkdown(playerWiki(tx.state));
-    await tx.store.vtt.push({ kind: 'handout', payload: { id: 'player-recap', title: a.title?.trim() || 'Recap', kind: 'text', text, reveal: a.reveal } });
-    return { pushed: 'handout', title: a.title?.trim() || 'Recap', revealed: !!a.reveal, chars: text.length };
+    const w = playerWiki(tx.state, parseScope(a.session));
+    const text = a.text?.trim() || wikiMarkdown(w);
+    const title = a.title?.trim() || (w.session ? `Recap — ${w.session.name}` : 'Recap');
+    await tx.store.vtt.push({ kind: 'handout', payload: { id: 'player-recap', title, kind: 'text', text, reveal: a.reveal } });
+    return { pushed: 'handout', title, revealed: !!a.reveal, chars: text.length };
+  },
+});
+
+def({
+  name: 'end_session',
+  description:
+    'The GM says tonight\'s session is over: remember how far the party got (which steps were played, what the players know by now) so the next recap tells exactly this session and nothing older. Only when the GM says so — never on your own. Optional `name` titles the session (default "Session N"). Fails when nothing was played since the last session end. Afterwards a recap is player_wiki with session "last".',
+  shape: { name: z.string().optional().describe('A title for the session, e.g. "The bridge of Brenn".') },
+  run(tx, a) {
+    const mark = newSessionMark(tx.state, a.name);
+    if (!mark) throw new Error('Nothing was played since the last session ended — record what the players did first (mark_played / set_known).');
+    const m = tx.state.meta;
+    m.sessions = [...sessionsOf(tx.state), mark];
+    tx.store.persistence.writeMeta(m);
+    tx.store.emitMeta();
+    const info = sessionOverview(tx.state).find((i) => i.number === m.sessions!.length)!;
+    return { session: info.number, name: info.name, counts: info.counts, endedAt: info.endedAt.map((e) => e.title), next: info.number + 1 };
+  },
+});
+
+def({
+  name: 'reopen_last_session',
+  description: 'Take back the last "end session" (the GM pressed it by mistake or by accident): that session is open again and everything since the one before it counts as one session.',
+  shape: {},
+  run(tx) {
+    const m = tx.state.meta;
+    const marks = sessionsOf(tx.state);
+    if (!marks.length) throw new Error('No session has been ended yet.');
+    const last = marks[marks.length - 1];
+    m.sessions = marks.slice(0, -1);
+    if (!m.sessions.length) delete m.sessions;
+    tx.store.persistence.writeMeta(m);
+    tx.store.emitMeta();
+    return { reopened: last.name?.trim() || `Session ${marks.length}` };
+  },
+});
+
+def({
+  name: 'rename_session',
+  description: 'Give a finished session a title (or clear it with an empty name to get "Session N" back). `session` is its number from list_sessions.',
+  shape: { session: z.number().int().min(1), name: z.string() },
+  run(tx, a) {
+    const m = tx.state.meta;
+    const marks = sessionsOf(tx.state);
+    if (a.session > marks.length) throw new Error(marks.length ? `Only sessions 1–${marks.length} are finished and can be renamed.` : 'No session has been ended yet.');
+    const name = a.name.trim().slice(0, 80);
+    m.sessions = marks.map((x, i) => {
+      if (i !== a.session - 1) return x;
+      const { name: _old, ...rest } = x;
+      return name ? { ...rest, name } : rest;
+    });
+    tx.store.persistence.writeMeta(m);
+    tx.store.emitMeta();
+    return { session: a.session, name: sessionLabel(m.sessions, a.session) };
+  },
+});
+
+def({
+  name: 'list_sessions',
+  description: 'The campaign\'s sessions, oldest first: number, title, when it ended, where the party stood at the end and how much happened (story steps, people, places, things, clues). The last entry is the session in progress. Use it to know which session a recap should cover.',
+  readOnly: true,
+  shape: {},
+  run(tx) {
+    return sessionOverview(tx.state).map((i) => ({ ...i, endedAt: i.endedAt.map((e) => e.title) }));
   },
 });
 

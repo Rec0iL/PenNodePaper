@@ -187,6 +187,21 @@ export interface CampaignMeta {
   aiCreativity?: AiCreativity;
   /** A practice campaign for the welcome tour: its AI and image maker are scripted stand-ins (nothing needs to be set up) until the tour is left. */
   tutorial?: { on: boolean };
+  /** Where each finished session ended (the GM pressed "End session"), oldest first. Session N is everything between mark N-1 and mark N; what comes after the last mark is the session in progress. */
+  sessions?: SessionMark[];
+}
+
+/** One "session ended" press: how far the party had got at that moment, so the next recap only tells what came after. */
+export interface SessionMark {
+  /** the GM's own title for the session (default "Session N") */
+  name?: string;
+  at: string;
+  /** played steps up to this number belong to this session or an earlier one (visit `seq`, see story.ts) */
+  seq: number;
+  /** people, places, things and clues the players knew by then — the next session lists only what is new */
+  known: string[];
+  /** the nodes the players stood at when the session ended */
+  here: string[];
 }
 
 export type AiCreativity = 1 | 2 | 3 | 4 | 5;

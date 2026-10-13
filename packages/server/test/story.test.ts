@@ -362,6 +362,91 @@ describe('player wiki (spoiler-safe)', () => {
   });
 });
 
+describe('sessions: the recap covers exactly one session', () => {
+  const titles = (l: any[]) => l.map((e) => e.title);
+  const brenn = () => run('create_node', { id: 'brenn', type: 'npc', title: 'Brenn', summary: 'GM only.', readAloud: 'A broad man polishes a glass.', place: 'pool' });
+
+  it('ends a session at where the party got and tells only what came after in the next recap', () => {
+    scenario();
+    brenn();
+    expect(() => run('end_session')).toThrow(/Nothing was played/);
+
+    run('mark_played', { nodeId: 'arrival' });
+    run('mark_played', { nodeId: 'ledger', after: 'arrival' });
+    run('set_known', { nodeId: 'ledger', known: true });
+    const one = run('end_session', { name: 'Fog over Greywater' });
+    expect(one).toMatchObject({ session: 1, name: 'Fog over Greywater', next: 2, endedAt: ['The ledger'] });
+    expect(() => run('end_session')).toThrow(/Nothing was played/); // a double click does not make an empty session
+
+    // session 2
+    run('mark_played', { nodeId: 'warehouse', after: 'arrival' });
+    run('set_known', { nodeId: 'brenn', known: true });
+    expect(titles(run('player_wiki', { session: 'open' }).story)).toEqual(['Warehouse']);
+
+    run('end_session');
+    const last = run('player_wiki', { session: 'last' });
+    expect(last.session).toMatchObject({ number: 2, name: 'Session 2', open: false });
+    expect(titles(last.story)).toEqual(['Warehouse']);
+    expect(titles(last.people)).toEqual(['Brenn']);
+    expect(last.learned).toEqual([]); // the ledger was already known after session 1
+    expect(last.markdown).toContain('# ');
+    expect(last.markdown).not.toContain('Arrival');
+
+    const first = run('player_wiki', { session: 1 });
+    expect(titles(first.story)).toEqual(['Arrival']);
+    expect(titles(first.learned)).toEqual(['The ledger']);
+    expect(first.people).toEqual([]);
+    expect(titles(run('player_wiki').story)).toEqual(['Arrival', 'Warehouse']); // default: everything
+
+    expect(run('list_sessions').map((x: any) => [x.number, x.name, x.open, x.total])).toEqual([[1, 'Fog over Greywater', false, 2], [2, 'Session 2', false, 2], [3, 'Session 3', true, 0]]);
+  });
+
+  it('marks places the players came back to, and keeps later steps out of a finished session even after a reset', () => {
+    scenario();
+    run('mark_played', { nodeId: 'arrival' });
+    run('mark_played', { nodeId: 'warehouse', after: 'arrival' });
+    run('end_session');
+    run('set_status', { nodeId: 'warehouse', status: 'untouched' }); // the GM wipes the last step
+    run('mark_played', { nodeId: 'arrival' }); // and the party goes back to the arrival
+    run('mark_played', { nodeId: 'warehouse', after: 'arrival' }); // and plays the warehouse over again
+    const open = run('player_wiki', { session: 'open' });
+    expect(open.story.map((e: any) => [e.title, !!e.again])).toEqual([['Arrival', true], ['Warehouse', false]]);
+    expect(run('player_wiki', { session: 1 }).story.map((e: any) => e.title)).toEqual(['Arrival']);
+    expect(open.markdown).toContain('_(again)_');
+  });
+
+  it('can be reopened, renamed, survives a restart, and rejects sessions that do not exist', () => {
+    scenario();
+    run('mark_played', { nodeId: 'arrival' });
+    run('end_session');
+    run('mark_played', { nodeId: 'warehouse', after: 'arrival' });
+    run('end_session');
+    run('rename_session', { session: 1, name: 'The arrival' });
+    expect(run('list_sessions')[0].name).toBe('The arrival');
+    expect(() => run('player_wiki', { session: 7 })).toThrow(/no session 7/);
+    expect(() => run('player_wiki', { session: 'yesterday' })).toThrow(/Unknown session/);
+
+    const again = new Store(new Persistence(dir));
+    expect(again.state.meta.sessions).toHaveLength(2);
+    expect(again.state.meta.sessions![0].name).toBe('The arrival');
+
+    expect(run('reopen_last_session')).toEqual({ reopened: 'Session 2' });
+    expect(run('player_wiki', { session: 'open' }).story.map((e: any) => e.title)).toEqual(['Warehouse']);
+    run('reopen_last_session');
+    expect(store.state.meta.sessions).toBeUndefined();
+    expect(() => run('reopen_last_session')).toThrow(/No session/);
+    expect(run('player_wiki', { session: 'last' }).story.map((e: any) => e.title)).toEqual(['Arrival', 'Warehouse']); // no session ended: all of it
+  });
+
+  it('exports a session as its own file', () => {
+    scenario();
+    run('mark_played', { nodeId: 'arrival' });
+    run('end_session');
+    const r = run('export_player_wiki', { session: 'last' });
+    expect(r.file).toContain('-session-1-');
+  });
+});
+
 describe('random tables', () => {
   const mk = () => run('create_node', { id: 'weather', type: 'table', title: 'Harbour weather', place: 'canvas' });
 

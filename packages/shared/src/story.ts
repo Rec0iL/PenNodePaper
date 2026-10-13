@@ -61,7 +61,12 @@ export interface Visit {
   group: string;
   seq: number;
   here: boolean;
+  /** numbers of later returns to this node, after a session had ended (so a recap can say they went back) */
+  again?: number[];
 }
+
+/** Every step number a visit stands for: the first arrival and the later returns. */
+export const visitSeqs = (v: Visit): number[] => [v.seq, ...(v.again ?? [])];
 
 /** Visits stored on a node. Nodes tracked before groups existed carry just `playedSeq`: that is the one party. */
 export function visitsOf(n: StoryNode): Visit[] {
@@ -69,7 +74,9 @@ export function visitsOf(n: StoryNode): Visit[] {
   if (Array.isArray(v)) {
     return v.flatMap((x): Visit[] => {
       const o = x as Partial<Visit>;
-      return o && typeof o.group === 'string' && typeof o.seq === 'number' ? [{ group: o.group, seq: o.seq, here: o.here === true }] : [];
+      if (!o || typeof o.group !== 'string' || typeof o.seq !== 'number') return [];
+      const again = Array.isArray(o.again) ? o.again.filter((a): a is number => typeof a === 'number') : [];
+      return [{ group: o.group, seq: o.seq, here: o.here === true, ...(again.length ? { again } : {}) }];
     });
   }
   return typeof n.fields.playedSeq === 'number' ? [{ group: DEFAULT_GROUP, seq: n.fields.playedSeq, here: n.status === 'active' }] : [];
@@ -79,7 +86,9 @@ export function visitsOf(n: StoryNode): Visit[] {
 export const isPlayed = (n: StoryNode) => visitsOf(n).length > 0 || n.status === 'done' || n.status === 'active';
 export const isKnown = (n: StoryNode) => n.fields.known === true || n.status === 'done';
 
-export const nextPlayedSeq = (s: CampaignState): number => Math.max(0, ...alive(s).flatMap((n) => visitsOf(n).map((v) => v.seq))) + 1;
+/** Next visit number. A session end keeps its number even when nodes were reset afterwards, so later steps never fall back into a finished session. */
+export const nextPlayedSeq = (s: CampaignState): number =>
+  Math.max(0, ...alive(s).flatMap((n) => visitsOf(n).map((v) => v.seq)), ...(s.meta.sessions ?? []).map((m) => m.seq)) + 1;
 
 /** All groups that have been tracked, in order of first appearance. */
 export function groupsOf(s: CampaignState): string[] {
