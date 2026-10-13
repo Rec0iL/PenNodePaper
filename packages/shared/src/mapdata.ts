@@ -50,6 +50,8 @@ export type LabelSize = (typeof LABEL_SIZES)[number];
  * the printed picture. `style` is a lettering style id (labelstyles.ts); without one the map's own style is used.
  */
 export interface MapLabel {
+  /** stable handle (l1, l2…): how the AI and the editor address a name without coordinates */
+  id?: string;
   x: number; y: number; text: string;
   place?: LabelPlace; style?: string; show?: boolean; size?: LabelSize;
   area?: { x: number; y: number; w: number; h: number };

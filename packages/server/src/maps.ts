@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { Resvg } from '@resvg/resvg-js';
-import { FLOORS, REGION_KINDS, migratePins, regionKind, slugify, type MapDoc } from '@pnp/shared';
+import { FLOORS, REGION_KINDS, ensureLabelIds, migratePins, regionKind, slugify, type MapDoc } from '@pnp/shared';
 import { installLabelContext, labelFontFiles } from './labels.js';
 import { newMap } from '@pnp/shared';
 
@@ -28,6 +28,7 @@ export class Maps {
     return fs.readdirSync(this.dir).filter((f) => f.endsWith('.json')).map((f) => {
       const m = JSON.parse(fs.readFileSync(path.join(this.dir, f), 'utf8')) as MapDoc;
       if (m.kind === 'region') migratePins(m);
+      ensureLabelIds(m);
       return m;
     });
   }
@@ -36,6 +37,7 @@ export class Maps {
       const m = JSON.parse(fs.readFileSync(this.file(id), 'utf8')) as MapDoc;
       m.background ??= 'land';
       if (m.kind === 'region') migratePins(m); // places are areas now, not dots
+      ensureLabelIds(m); // names have handles (l1, l2…) the AI can address
       return m;
     } catch {
       throw new Error(`No such map "${id}". Known maps: ${this.list().map((m) => m.id).join(', ') || '(none)'}`);
@@ -83,6 +85,8 @@ export class Maps {
         `Terrain kinds (painted first): ${ids('terrain')}`,
         `Structure kinds (inpainted into the shape afterwards): ${ids('structure')}   (* = custom kind of this map)`,
         ...(m.shapes.length ? m.shapes.map(shape) : ['no shapes']),
+        ...(m.labels.length ? [`free labels: ${m.labels.map((l) => `${l.id ?? '?'} "${l.text}"@${Math.round(l.x)},${Math.round(l.y)}${l.area ? ` area ${Math.round(l.area.x)},${Math.round(l.area.y)} ${Math.round(l.area.w)}x${Math.round(l.area.h)}` : ''}${l.place ? ` ${l.place}` : ''}${l.style ? ` style=${l.style}` : ''}${l.show === false ? ' (not printed)' : ''}`).join(' ')}`] : []),
+        `lettering style of the map: ${m.lettering?.style ?? 'plain-light'}`,
       ].join('\n');
     }
     const legend = Object.entries(FLOORS).map(([c, f]) => `${c}=${f.name}`).join(' ');
@@ -91,7 +95,7 @@ export class Maps {
       ...m.rows.map((r, y) => `${String(y).padStart(2)} ${r}`),
       `doors: ${m.doors.map((d) => `${d.x},${d.y}/${d.side}:${d.kind}`).join(' ') || 'none'}`,
       `props: ${m.props.map((p) => `${p.id}@${p.x},${p.y}`).join(' ') || 'none'}`,
-      `labels: ${m.labels.map((l) => `"${l.text}"@${l.x},${l.y}${l.area ? ` area ${l.area.x},${l.area.y} ${l.area.w}x${l.area.h}` : ''}${l.place ? ` ${l.place}` : ''}${l.style ? ` style=${l.style}` : ''}${l.show === false ? ' (not printed)' : ''}`).join(' ') || 'none'}`,
+      `labels: ${m.labels.map((l) => `${l.id ?? '?'} "${l.text}"@${l.x},${l.y}${l.area ? ` area ${l.area.x},${l.area.y} ${l.area.w}x${l.area.h}` : ''}${l.place ? ` ${l.place}` : ''}${l.style ? ` style=${l.style}` : ''}${l.show === false ? ' (not printed)' : ''}`).join(' ') || 'none'}`,
       `tokens: ${m.tokens.map((t) => `${t.kind}${t.label ? `:${t.label}` : ''}${t.node ? `→node ${t.node}` : ''}@${t.x},${t.y}`).join(' ') || 'none'}`,
     ].join('\n');
   }
