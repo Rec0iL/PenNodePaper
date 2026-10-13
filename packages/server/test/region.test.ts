@@ -604,8 +604,8 @@ describe('precise painting of a region map', () => {
     expect(r.paintMode).toBe('staged');
     expect(r.structureGroups).toHaveLength(4);
     expect(r.linePasses).toEqual(['water: river', 'land: asphalt road']);
-    expect(r.view).toBe('default');
-    expect(r.view).toBeDefined();
+    expect(r.camera).toBe('default'); // how flat the land is painted (render_map's view)
+    expect(r.view).toContain('Region map'); // the readable description of the map is still there
     expect(r.consolidate).toBe(true);
   });
 });

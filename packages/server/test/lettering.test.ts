@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { LABEL_FONTS, LABEL_STYLES, applyOps, layoutLabel, newMap, placeLabels, estimateWidth, type MapDoc } from '@pnp/shared';
 import { runCommand } from '../src/commands.js';
 import { FONT_DIR, installLabelContext, labelFontFiles, printNames } from '../src/labels.js';
-import { imageSize, renderSvg, toPng } from '../src/maps.js';
+import { Maps, imageSize, renderSvg, toPng } from '../src/maps.js';
 import { imageDimensions } from '../src/vtt.js';
 import { Persistence } from '../src/persistence.js';
 import { Store } from '../src/store.js';
@@ -120,6 +120,103 @@ describe('where names stand', () => {
     expect(svg).not.toContain('class="letters"><g opacity="0.35"></g>');
     expect(renderSvg(m, 'control')).not.toContain('<text');
     expect(toPng(svg).length).toBeGreaterThan(1000);
+  });
+});
+
+describe('changing names and shapes in place', () => {
+  it('names have handles; edit_label and remove_label work by id', () => {
+    const m = newMap('t', 'T', 'battle', 20, 14);
+    const r = applyOps(m, [
+      { op: 'label', x: 3, y: 3, text: 'Hall' },
+      { op: 'label', x: 8, y: 3, text: 'Kitchen', id: 'kit' },
+      { op: 'label', x: 12, y: 8, text: 'Cellar' },
+    ]);
+    expect(m.labels.map((l) => l.id)).toEqual(['l1', 'kit', 'l3']);
+    expect(r.notes).toEqual(['label “Hall” is l1', 'label “Kitchen” is kit', 'label “Cellar” is l3']);
+    applyOps(m, [{ op: 'edit_label', id: 'kit', text: 'Great kitchen', style: 'banner', place: 'above', to: [9, 4] }]);
+    expect(m.labels[1]).toMatchObject({ id: 'kit', text: 'Great kitchen', style: 'banner', place: 'above', x: 9, y: 4 });
+    // a label with the same id is replaced, not duplicated
+    applyOps(m, [{ op: 'label', id: 'kit', x: 9, y: 4, text: 'Kitchen again' }]);
+    expect(m.labels).toHaveLength(3);
+    expect(m.labels[1].text).toBe('Kitchen again');
+    expect(() => applyOps(m, [{ op: 'edit_label', id: 'nope', text: 'x' }])).toThrow(/No label "nope".*l1 “Hall”/);
+    expect(() => applyOps(m, [{ op: 'edit_label', text: 'x' }])).toThrow(/needs the label id/);
+    applyOps(m, [{ op: 'remove_label', id: 'l1' }]);
+    expect(m.labels.map((l) => l.id)).toEqual(['kit', 'l3']);
+    // the old way still works
+    applyOps(m, [{ op: 'edit_label', x: 12, y: 8, text: 'Wine cellar' }, { op: 'remove_label', x: 9, y: 4 }]);
+    expect(m.labels.map((l) => l.text)).toEqual(['Wine cellar']);
+  });
+
+  it('names made before handles get them when the map is loaded; copies get new ones', () => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'pnp-ids-'));
+    try {
+      const maps = new Maps(d);
+      const m = maps.create('Old', 'battle', 12, 8);
+      applyOps(m, [{ op: 'room', x: 1, y: 1, w: 4, h: 3 }]);
+      m.labels = [{ x: 2, y: 2, text: 'A' }, { x: 4, y: 2, text: 'B' }];
+      maps.save(m, { backup: 'none' });
+      const back = maps.get(m.id);
+      expect(back.labels.map((l) => l.id)).toEqual(['l1', 'l2']);
+      applyOps(back, [{ op: 'move_area', x: 1, y: 1, w: 4, h: 3, dx: 0, dy: 3, copy: true }]);
+      const ids = back.labels.map((l) => l.id);
+      expect(new Set(ids).size).toBe(ids.length);
+      expect(maps.describe(back)).toContain('l1 "A"@2,2');
+    } finally {
+      fs.rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  it('edit_shape changes only what is given', () => {
+    const m = newMap('r', 'R', 'region');
+    applyOps(m, [
+      { op: 'shape', type: 'polygon', kind: 'forest', points: [[100, 100], [300, 100], [300, 250]], label: 'Darkwood', id: 'f', labelPlace: 'above' },
+      { op: 'shape', type: 'ellipse', kind: 'city', points: [[600, 300], [40, 30]], label: 'Eldoria', id: 'c', prompt: 'a walled river town' },
+      { op: 'shape', type: 'path', kind: 'river', points: [[0, 0], [100, 100]], id: 'r', width: 20 },
+    ]);
+    applyOps(m, [{ op: 'edit_shape', id: 'c', label: 'New Eldoria', labelStyle: 'banner', labelSize: 'lg' }]);
+    expect(m.shapes.find((s) => s.id === 'c')).toMatchObject({ label: 'New Eldoria', labelStyle: 'banner', labelSize: 'lg', prompt: 'a walled river town', points: [[600, 300], [40, 30]], kind: 'city' });
+    applyOps(m, [{ op: 'edit_shape', id: 'c', move: [50, -20] }, { op: 'edit_shape', id: 'f', move: [10, 10] }]);
+    expect(m.shapes.find((s) => s.id === 'c')!.points).toEqual([[650, 280], [40, 30]]); // the radii stay
+    expect(m.shapes.find((s) => s.id === 'f')!.points).toEqual([[110, 110], [310, 110], [310, 260]]);
+    applyOps(m, [{ op: 'edit_shape', id: 'f', kind: 'swamp', points: [[0, 0], [10, 0], [10, 10]], labelPlace: 'below', labelShow: false }]);
+    expect(m.shapes.find((s) => s.id === 'f')).toMatchObject({ kind: 'swamp', labelPlace: 'below', labelShow: false, label: 'Darkwood' });
+    applyOps(m, [{ op: 'edit_shape', id: 'f', labelShow: true, label: null }, { op: 'edit_shape', id: 'c', prompt: null, labelStyle: null, labelSize: null }, { op: 'edit_shape', id: 'r', width: null }]);
+    const f = m.shapes.find((s) => s.id === 'f')!, c = m.shapes.find((s) => s.id === 'c')!;
+    expect(f.label).toBeUndefined();
+    expect(f.labelShow).toBeUndefined();
+    expect(c.prompt).toBeUndefined();
+    expect(c.labelStyle).toBeUndefined();
+    expect(m.shapes.find((s) => s.id === 'r')!.width).toBeUndefined();
+    expect(() => applyOps(m, [{ op: 'edit_shape', id: 'zz', label: 'x' }])).toThrow(/No shape "zz"/);
+    expect(() => applyOps(m, [{ op: 'edit_shape', id: 'f', kind: 'lava-lake' }])).toThrow(/Unknown kind/);
+    expect(() => applyOps(m, [{ op: 'edit_shape', id: 'f', labelStyle: 'nope' }])).toThrow(/Unknown lettering style/);
+  });
+
+  it('the AI path: edit_map ops, ids in get_map, a library kind comes along on edit_shape', () => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'pnp-aiops-'));
+    try {
+      const store = new Store(new Persistence(d));
+      const run = (name: string, args: unknown = {}) => runCommand(store, name, args, 'claude') as any;
+      run('create_node', { id: 'realm', type: 'location', title: 'Realm', summary: 'x' });
+      const { mapId } = run('create_map', { name: 'Realm', nodeId: 'realm', kind: 'region' });
+      run('set_region_kind', { id: 'crater', name: 'Crater', layer: 'terrain', color: '#553322', prompt: 'a crater' });
+      const r = run('edit_map', { mapId, ops: [
+        { op: 'shape', type: 'polygon', kind: 'forest', points: [[10, 10], [200, 10], [200, 150]], label: 'Darkwood', id: 'wood' },
+        { op: 'label', x: 500, y: 400, text: 'Here be dragons', style: 'seachart' },
+      ] });
+      expect(r.notes).toEqual(['label “Here be dragons” is l1']);
+      const view = run('get_map', { mapId }).view as string;
+      expect(view).toContain('wood [terrain] forest "Darkwood"');
+      expect(view).toContain('l1 "Here be dragons"@500,400 style=seachart');
+      run('edit_map', { mapId, ops: [{ op: 'edit_shape', id: 'wood', kind: 'crater', label: 'The Crater', labelStyle: 'runestone' }, { op: 'edit_label', id: 'l1', text: 'Dragons', show: false }] });
+      const m = store.maps.get(mapId);
+      expect(m.shapes[0]).toMatchObject({ kind: 'crater', label: 'The Crater', labelStyle: 'runestone' });
+      expect(m.kinds?.some((k) => k.id === 'crater')).toBe(true);
+      expect(m.labels[0]).toMatchObject({ text: 'Dragons', show: false });
+    } finally {
+      fs.rmSync(d, { recursive: true, force: true });
+    }
   });
 });
 

@@ -22,18 +22,19 @@ export type MapOp =
   | { op: 'open'; x: number; y: number; side: EdgeSide }
   | { op: 'prop'; kind: PropKind; x: number; y: number; w?: number; h?: number; rot?: number; label?: string; id?: string }
   | { op: 'remove_prop'; id: string }
-  | { op: 'label'; x: number; y: number; text: string; place?: LabelPlace; style?: string; show?: boolean; size?: LabelSize; area?: { x: number; y: number; w: number; h: number } }
+  | { op: 'label'; id?: string; x: number; y: number; text: string; place?: LabelPlace; style?: string; show?: boolean; size?: LabelSize; area?: { x: number; y: number; w: number; h: number } }
   | { op: 'token'; x: number; y: number; kind: 'pc' | 'npc' | 'enemy'; label?: string; node?: string }
-  | { op: 'remove_label'; x: number; y: number }
+  | { op: 'remove_label'; id?: string; x?: number; y?: number }
   | { op: 'remove_token'; x: number; y: number }
   | { op: 'move_area'; x: number; y: number; w: number; h: number; dx: number; dy: number; copy?: boolean }
   | { op: 'edit_prop'; id: string; kind?: PropKind; x?: number; y?: number; w?: number; h?: number; rot?: number | null; label?: string | null }
   | { op: 'edit_token'; x: number; y: number; to?: [number, number]; kind?: 'pc' | 'npc' | 'enemy'; label?: string | null; node?: string | null }
-  | { op: 'edit_label'; x: number; y: number; to?: [number, number]; text?: string; place?: LabelPlace; style?: string | null; show?: boolean; size?: LabelSize | null; area?: { x: number; y: number; w: number; h: number } | null }
+  | { op: 'edit_label'; id?: string; x?: number; y?: number; to?: [number, number]; text?: string; place?: LabelPlace; style?: string | null; show?: boolean; size?: LabelSize | null; area?: { x: number; y: number; w: number; h: number } | null }
   | { op: 'lettering'; style: string }
   | { op: 'resize'; cols: number; rows: number }
   | { op: 'shape'; type: 'polygon' | 'path' | 'ellipse' | 'pin'; kind: string; points: [number, number][]; r?: number; width?: number; label?: string; prompt?: string; id?: string; labelPlace?: LabelPlace; labelStyle?: string | null; labelSize?: LabelSize | null; labelShow?: boolean }
   | { op: 'remove_shape'; id: string }
+  | { op: 'edit_shape'; id: string; kind?: string; points?: [number, number][]; move?: [number, number]; r?: number | null; width?: number | null; label?: string | null; prompt?: string | null; labelPlace?: LabelPlace; labelStyle?: string | null; labelSize?: LabelSize | null; labelShow?: boolean }
   | { op: 'define_kind'; kind: Partial<RegionKind> }
   | { op: 'remove_kind'; id: string }
   | { op: 'clear_all' };
@@ -92,6 +93,28 @@ function applyLabelProps(l: MapDoc['labels'][number], o: LabelProps) {
 }
 
 // ------------------------------------ lettering ---------------------------------------
+
+const labelIds = (m: MapDoc) => m.labels.map((l) => `${l.id ?? '?'} “${l.text}”`).join(', ') || 'none';
+/** the next free label handle: l1, l2… */
+function newLabelId(m: MapDoc, from = 1 + m.labels.length): string {
+  let n = Math.max(1, from);
+  while (m.labels.some((l) => l.id === `l${n}`)) n++;
+  return `l${n}`;
+}
+/** Names made before they had handles get one (l1, l2… in drawing order). Returns true when something changed. */
+export function ensureLabelIds(m: MapDoc): boolean {
+  let changed = false;
+  const seen = new Set<string>();
+  for (const l of m.labels ?? []) {
+    if (l.id && !seen.has(l.id)) { seen.add(l.id); continue; }
+    let n = seen.size + 1;
+    while (seen.has(`l${n}`) || (m.labels ?? []).some((q) => q !== l && q.id === `l${n}`)) n++;
+    l.id = `l${n}`;
+    seen.add(l.id);
+    changed = true;
+  }
+  return changed;
+}
 
 let labelCtx: LabelCtx = { measure: estimateWidth };
 /** The server and the browser tell the engine how to measure text in the real fonts (and where the generated materials are). */
@@ -209,14 +232,24 @@ export function applyOps(m: MapDoc, ops: MapOp[]): { ok: number; notes: string[]
         m.props = m.props.filter((p) => p.id !== o.id);
         break;
       case 'label': {
-        const l: MapDoc['labels'][number] = { x: o.x, y: o.y, text: o.text };
+        const id = o.id?.trim() || newLabelId(m);
+        const l: MapDoc['labels'][number] = { id, x: o.x, y: o.y, text: o.text };
         applyLabelProps(l, o);
-        m.labels.push(l);
+        // a label with this id is replaced (the same name again, edited), anything else is added
+        const at = m.labels.findIndex((q) => q.id === id);
+        if (at >= 0) m.labels[at] = l; else m.labels.push(l);
+        notes.push(`label “${o.text}” is ${id}`);
         break;
       }
-      case 'remove_label':
-        m.labels = m.labels.filter((l) => Math.hypot(l.x - o.x, l.y - o.y) > 0.75);
+      case 'remove_label': {
+        if (o.id !== undefined) {
+          if (!m.labels.some((l) => l.id === o.id)) throw new Error(`No label "${o.id}". Labels: ${labelIds(m)}`);
+          m.labels = m.labels.filter((l) => l.id !== o.id);
+        } else if (o.x !== undefined && o.y !== undefined) {
+          m.labels = m.labels.filter((l) => Math.hypot(l.x - o.x!, l.y - o.y!) > 0.75);
+        } else throw new Error('remove_label needs the label id (from get_map) or x and y');
         break;
+      }
       case 'remove_token':
         m.tokens = m.tokens.filter((t) => !(t.x === o.x && t.y === o.y));
         break;
@@ -254,7 +287,11 @@ export function applyOps(m: MapDoc, ops: MapOp[]): { ok: number; notes: string[]
         m.open.push(...opens.map(shift));
         m.props.push(...props.map((p) => ({ ...shift(p), id: o.copy ? `${p.kind}-${Math.random().toString(36).slice(2, 6)}` : p.id })));
         m.tokens.push(...tokens.map(shift));
-        m.labels.push(...labels.map((l) => ({ ...shift(l), ...(l.area ? { area: { ...l.area, x: l.area.x + dx, y: l.area.y + dy } } : {}) })));
+        for (const l of labels) {
+          const moved = { ...shift(l), ...(l.area ? { area: { ...l.area, x: l.area.x + dx, y: l.area.y + dy } } : {}) };
+          if (o.copy) moved.id = newLabelId(m, 1 + m.labels.length);
+          m.labels.push(moved);
+        }
         notes.push(`${o.copy ? 'copied' : 'moved'} ${cells.length} cells, ${props.length} props, ${tokens.length} tokens, ${doors.length} doors by ${dx},${dy}`);
         break;
       }
@@ -288,8 +325,15 @@ export function applyOps(m: MapDoc, ops: MapOp[]): { ok: number; notes: string[]
         break;
       }
       case 'edit_label': {
-        const l = m.labels.find((q) => Math.hypot(q.x - o.x, q.y - o.y) <= 0.75);
-        if (!l) throw new Error(`No label near ${o.x},${o.y}`);
+        let l: MapDoc['labels'][number] | undefined;
+        if (o.id !== undefined) {
+          l = m.labels.find((q) => q.id === o.id);
+          if (!l) throw new Error(`No label "${o.id}". Labels: ${labelIds(m)}`);
+        } else if (o.x !== undefined && o.y !== undefined) {
+          const [ox, oy] = [o.x, o.y];
+          l = m.labels.find((q) => Math.hypot(q.x - ox, q.y - oy) <= 0.75);
+          if (!l) throw new Error(`No label near ${ox},${oy}`);
+        } else throw new Error('edit_label needs the label id (from get_map) or x and y');
         if (o.to) {
           const [dx, dy] = [o.to[0] - l.x, o.to[1] - l.y];
           [l.x, l.y] = o.to;
@@ -347,6 +391,46 @@ export function applyOps(m: MapDoc, ops: MapOp[]): { ok: number; notes: string[]
       case 'remove_shape':
         m.shapes = m.shapes.filter((s) => s.id !== o.id);
         break;
+      case 'edit_shape': {
+        const s = m.shapes.find((q) => q.id === o.id);
+        if (!s) throw new Error(`No shape "${o.id}". Shapes: ${m.shapes.map((q) => q.id).join(', ') || 'none'}`);
+        if (o.kind !== undefined) {
+          if (!isKnownKind(o.kind, m.kinds)) throw new Error(`Unknown kind "${o.kind}". Use: ${[...REGION_KINDS.map((k) => k.id), ...(m.kinds ?? []).map((k) => k.id)].join(', ')} (define your own with define_kind).`);
+          s.kind = o.kind;
+        }
+        if (o.points) {
+          if (!o.points.length) throw new Error('A shape needs points');
+          s.points = o.points.map(([x, y]) => [x, y] as [number, number]);
+        }
+        if (o.move) {
+          // an ellipse is [centre, radii]: only the centre moves
+          const [dx, dy] = o.move;
+          s.points = s.type === 'ellipse' ? ([[s.points[0][0] + dx, s.points[0][1] + dy], ...s.points.slice(1)] as [number, number][]) : s.points.map(([x, y]) => [x + dx, y + dy] as [number, number]);
+        }
+        const setOrDrop = (key: 'r' | 'width' | 'label' | 'prompt', v: number | string | null | undefined) => {
+          if (v === undefined) return;
+          const t = s as unknown as Record<string, unknown>;
+          if (v === null || (typeof v === 'string' && !v.trim())) delete t[key];
+          else t[key] = typeof v === 'string' ? (key === 'prompt' ? v.replace(/\s+/g, ' ').trim() : v.trim()) : v;
+        };
+        setOrDrop('r', o.r); setOrDrop('width', o.width); setOrDrop('label', o.label); setOrDrop('prompt', o.prompt);
+        if (o.labelPlace !== undefined) {
+          if (!LABEL_PLACES.includes(o.labelPlace)) throw new Error(`labelPlace must be one of: ${LABEL_PLACES.join(', ')}`);
+          s.labelPlace = o.labelPlace;
+        }
+        if (o.labelStyle !== undefined) {
+          if (o.labelStyle === null || o.labelStyle === '') delete s.labelStyle;
+          else if (!isLabelStyle(o.labelStyle)) throw new Error(`Unknown lettering style "${o.labelStyle}". Use: ${LABEL_STYLES.map((x) => x.id).join(', ')}`);
+          else s.labelStyle = o.labelStyle;
+        }
+        if (o.labelSize !== undefined) {
+          if (o.labelSize === null || o.labelSize === 'md') delete s.labelSize;
+          else if (!LABEL_SIZES.includes(o.labelSize)) throw new Error(`labelSize must be one of: ${LABEL_SIZES.join(', ')}`);
+          else s.labelSize = o.labelSize;
+        }
+        if (o.labelShow !== undefined) { if (o.labelShow) delete s.labelShow; else s.labelShow = false; }
+        break;
+      }
       case 'clear_all':
         m.rows = Array.from({ length: m.grid.rows }, () => '.'.repeat(m.grid.cols));
         m.doors = []; m.walls = []; m.open = []; m.props = []; m.labels = []; m.tokens = []; m.shapes = [];
