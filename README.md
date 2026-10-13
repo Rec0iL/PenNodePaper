@@ -184,6 +184,8 @@ Two kinds of stable reference documents live in the **Library** tab (not on the 
 
 Per node: **Inspector → Images**. Pick a kind (portrait / scene / item / handout / banner), write a prompt or let the AI write it (**✦ AI writes it**), generate 1–4 variants, choose the cover, click for the lightbox. Jobs run one at a time with live progress; finished images attach to the node as undoable edits. Settings (⚙): ComfyUI URL + model pickers (defaults = your KINETIK Krea 2 Turbo setup), campaign image style, campaign language. The AI can do all of it through `generate_image`, `image_queue`, `set_cover_image`, `remove_image`.
 
+**Pictures you already have:** the **⬆ Import** button next to *Generate* adds PNG, JPEG, WebP (or GIF / AVIF / BMP, converted) files to the node's gallery — several at once. They behave like generated ones: cover, lightbox, VTT handout, one undo step.
+
 ## 🗺️ Maps
 
 
@@ -220,6 +222,8 @@ The editor autosaves and edits through the same ops as the AI's `edit_map`, so y
 <img src="docs/img/battle-two-step.gif" alt="Painting a battle map in steps: the plan, the empty room, then every prop group appears in its place, then the blend" width="85%">
 </div>
 
+**Your own map picture.** In the **Paint** tab, **⬆ Import a picture…** (under *Your own picture*) uses an image you already have as the map's picture. A preview shows it over the grid, and the *Scaling* choice says how it goes onto the map: **Fit** (all of it, empty bars if the shape differs), **Fill** (covers the map, the edges are cropped) or **Stretch**. Or tick *make the grid / canvas the shape of the picture* and the map adapts instead (battle maps: you give the cells across, the rows follow; floors you drew stay where they are). The picture is stored at the size the map is painted at. With precise painting you can also import it as the **terrain**, and step 2 paints the props / structures onto it.
+
 **Region maps work in the same two steps.** **① Terrain:** the land is painted from your areas (sea, forest, desert, snow… and your own terrain types); rivers and roads are *not* part of this sketch, so the model cannot invent or lose them. Then the **lines** are painted one kind at a time — rivers first, then roads, railways, paths and bridges: each line is drawn exactly along your path with its width, the whole picture is refined at a low strength, and only a corridor around the line is kept (everything else is untouched). *Camera* chooses how flat the land is painted: natural (painted-map look), top-down, or a hillshaded survey map. **② Structures:** every structure you drew as an **area** (a city, a camp, a hospital, a custom type — a place is never a dot) is painted into exactly its shape, each with its own AI-written prompt that follows the campaign's style (a camp is tipis, yurts or canvas tents depending on the world); touching shapes of one kind are one object. **③ Blend** as for battle maps. About 1 minute per pass on a 16 GB card.
 
 <div align="center">
@@ -232,7 +236,7 @@ The editor autosaves and edits through the same ops as the AI's `edit_map`, so y
 <img src="docs/img/region-two-step.gif" alt="Painting a region map in steps: the plan, the land, the river, the roads and the bridge, then every structure appears in its area, then the blend" width="85%">
 </div>
 
-**A second one — a snowy mountain pass** (the *top-down* camera, so the mountains are painted as relief seen from above instead of side-on icons): the river, the road with its bridge and the footpath follow the drawn lines, and the fort, the camps, the towers and the cave sit in their areas.
+**A second one — a snowy mountain pass** (the *top-down* camera — the camera icon pointing straight down — so the mountains are painted as relief seen from above instead of side-on icons): the river, the road with its bridge and the footpath follow the drawn lines, and the fort, the camps, the towers and the cave sit in their areas.
 
 <div align="center">
 <img src="docs/img/region2-before-after.jpg" alt="A second region plan, a snowy mountain pass: the plan, painted in one pass (a different landscape, the river and the road drift) and painted in steps (the river, road and bridge follow the lines, the fort, camps and towers sit in their areas)" width="100%">

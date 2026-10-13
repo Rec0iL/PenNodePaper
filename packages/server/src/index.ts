@@ -3,7 +3,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { getRequestListener } from '@hono/node-server';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { DEFAULT_COMFY, type Actor, type Backend, type CommandResult, type MapPaintMode, type ServerMsg } from '@pnp/shared';
 import { spawnSync } from 'node:child_process';
@@ -17,6 +17,7 @@ import { estimatePaint } from './mappaint.js';
 import { FONT_DIR, LABEL_ASSET_DIR, installLabelContext } from './labels.js';
 import { importArchive } from './backup.js';
 import { thumbnail } from './thumbs.js';
+import { MAX_IMPORT_BYTES, checkImport, keepImport } from './imagefile.js';
 import { extractText } from './imports.js';
 import { createCampaign, forgetCampaign, listCampaigns, looksLikeCampaign, rememberCampaign } from './campaigns.js';
 import { handleMcp, mcpIdentity } from './mcp.js';
@@ -597,6 +598,67 @@ app.get('/api/images/:file', async (c) => {
   }
   const type = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' }[path.extname(file).toLowerCase()] ?? 'application/octet-stream';
   return new Response(await fs.promises.readFile(p), { headers: { 'content-type': type, 'cache-control': 'public, max-age=31536000, immutable' } });
+});
+
+// --- importing pictures the GM already has ----------------------------------------------
+// The body is the picture itself (raw bytes). What it is, is decided by its first bytes, never by the name the browser gave.
+async function importedPicture(req: Request): Promise<ReturnType<typeof checkImport>> {
+  if (Number(req.headers.get('content-length') ?? 0) > MAX_IMPORT_BYTES + 4096) throw new Error(`The picture is too big (the limit is ${MAX_IMPORT_BYTES / 1e6} MB).`);
+  return checkImport(Buffer.from(await req.arrayBuffer()));
+}
+const importError = (c: Context, err: unknown, status: 400 | 404 | 409 = 400) => c.json({ error: err instanceof Error ? err.message : String(err) }, status);
+
+// a picture for a node's gallery (undoable, like a generated one)
+app.post('/api/nodes/:id/images/import', async (c) => {
+  const n = store.state.nodes[c.req.param('id')];
+  if (!n || n.trashed) return importError(c, new Error(`Node "${c.req.param('id')}" not found`), 404);
+  try {
+    const img = await importedPicture(c.req.raw);
+    const file = keepImport(path.join(campaignDir, 'images'), n.id, img);
+    store.transact('user', `Imported an image for “${n.title}”`, (tx) => {
+      const cur = tx.requireNode(n.id);
+      if (!cur.images.includes(file)) tx.putNode({ ...cur, images: [...cur.images, file], updatedAt: new Date().toISOString() });
+    });
+    return c.json({ ok: true, file, w: img.w, h: img.h });
+  } catch (err) {
+    return importError(c, err);
+  }
+});
+
+// a picture as a map's painted picture (as=render) or as the terrain the props are painted onto (as=terrain). The editor has
+// already scaled it to the size of the map's picture: that is what everything downstream (VTT scene, overlay, step 2) counts on.
+app.post('/api/maps/:id/import', async (c) => {
+  let m: ReturnType<typeof store.maps.get>;
+  try {
+    m = store.maps.get(c.req.param('id'));
+  } catch (err) {
+    return importError(c, err, 404);
+  }
+  const nodeId = mapNode(m.id);
+  if (!nodeId) return importError(c, new Error('This map is not attached to a node — create the map node first.'), 409);
+  try {
+    const img = await importedPicture(c.req.raw);
+    const want = imageSize(m);
+    if (img.w !== want.w || img.h !== want.h) throw new Error(`The picture is ${img.w}×${img.h} px, this map's picture is ${want.w}×${want.h} px — scale it to that size first.`);
+    const asTerrain = c.req.query('as') === 'terrain';
+    const file = keepImport(path.join(campaignDir, 'images'), nodeId, img, asTerrain ? 'import-terrain' : 'import-map');
+    const cur = store.maps.get(m.id);
+    if (asTerrain) {
+      cur.terrains = [...(cur.terrains ?? []).filter((f) => f !== file), file].slice(-8);
+      cur.terrainPick = file;
+    } else {
+      cur.renders = [...cur.renders.filter((f) => f !== file), file];
+      store.transact('user', `Imported the picture of “${cur.name}”`, (tx) => {
+        const n = tx.requireNode(nodeId);
+        if (!n.images.includes(file)) tx.putNode({ ...n, images: [...n.images, file], updatedAt: new Date().toISOString() });
+      });
+    }
+    store.maps.save(cur, { backup: 'none' });
+    store.emitMap(cur, 'user');
+    return c.json({ ok: true, file, as: asTerrain ? 'terrain' : 'render' });
+  } catch (err) {
+    return importError(c, err);
+  }
 });
 
 // fonts and generated materials of the label styles (the editor draws the same lettering as the server prints)

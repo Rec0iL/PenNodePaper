@@ -4,11 +4,13 @@
   // edit_map uses, so the GM and the AI can work on one map at the same time.
   import { onMount, untrack } from 'svelte';
   import {
-    DEFAULT_LABEL_STYLE, DOOR_KINDS, actorName, FLOORS, LABEL_PLACES, LABEL_STYLES, NODE_TYPE_INFO, PROP_KINDS, REGION_KINDS, applyOps, canon, charactersOfPlace, cleanKind, derivedWalls, fallbackGroupPrompt, fallbackRegionPrompt, getLabelContext, groupProps, groupRegion, imageSize, isLineKind, lettersSvg, placedLabels, pointInShape, regionKind, renderSvg, strokeWidth, tokenKindOf,
-    type DoorKind, type LabelPlace, type LabelSize, type MapDoc, type MapOp, type Placed, type PropKind, type RegionKind,
+    DEFAULT_LABEL_STYLE, DOOR_KINDS, FIT_MODES, actorName, gridForPicture, sizeForPicture, FLOORS, LABEL_PLACES, LABEL_STYLES, NODE_TYPE_INFO, PROP_KINDS, REGION_KINDS, applyOps, canon, charactersOfPlace, cleanKind, derivedWalls, fallbackGroupPrompt, fallbackRegionPrompt, getLabelContext, groupProps, groupRegion, imageSize, isLineKind, lettersSvg, placedLabels, pointInShape, regionKind, renderSvg, strokeWidth, tokenKindOf,
+    type DoorKind, type FitMode, type LabelPlace, type LabelSize, type MapDoc, type MapOp, type Placed, type PropKind, type RegionKind,
   } from '@pnp/shared';
   import { app, cmd, say, selectNode, sendChat } from '../lib/app.svelte';
   import { initLabels, labelState } from '../lib/labels.svelte';
+  import { PICTURE_ACCEPT, importMapPicture, loadPicture, scaleOnto, toPngBlob, type Picture } from '../lib/imageImport';
+  import CameraIcon from './CameraIcon.svelte';
 
   let { mapId, onclose }: { mapId: string; onclose: () => void } = $props();
 
@@ -935,7 +937,12 @@
   /** region maps: how flat the terrain is painted; both kinds: blend the objects in at the end */
   let viewMode = $state<'default' | 'strict' | 'plan'>('default');
   let consolidate = $state(true);
-  const VIEW_HINT = { default: 'the natural painted-map look (mountains as icons) — best for most maps', strict: 'straight down like a satellite image — best for snow, mountains and plans', plan: 'a hillshaded survey map: heavy relief, very flat' };
+  /** the camera the land is painted with; top-down and survey map look from the same angle (straight down), the survey map is the satellite */
+  const CAMERAS: { id: 'default' | 'strict' | 'plan'; name: string; hint: string }[] = [
+    { id: 'default', name: 'natural', hint: 'looks at the land at an angle, like a painted game map (mountains as icons) — best for most maps' },
+    { id: 'strict', name: 'top-down', hint: 'looks straight down, like a photo from above — best for snow, mountains and plans' },
+    { id: 'plan', name: 'survey map', hint: 'a satellite survey: straight down like top-down, drawn as a hillshaded map with heavy relief, very flat' },
+  ];
   $effect(() => {
     if (doc && !untrack(() => promptTouched)) {
       viewMode = doc.view ?? 'default';
@@ -1020,6 +1027,104 @@
     );
     say('Asked the AI — see the AI tab for progress');
   }
+  // ---- import: a picture the GM already has becomes the map's picture --------------------------------
+  let imp = $state<Picture | null>(null);
+  let impMode = $state<FitMode>('fit');
+  let impBars = $state('#0b0d12');
+  let impMatch = $state(false);
+  let impCols = $state(24);
+  let impAs = $state<'render' | 'terrain'>('render');
+  let impBusy = $state(false);
+  let impCanvas = $state<HTMLCanvasElement | null>(null);
+
+  /** the size of the picture the map needs — and, when the map is made to match, the grid / canvas it gets */
+  const impTarget = $derived.by(() => {
+    if (!doc || !imp) return null;
+    if (!impMatch) return { w: dim.w, h: dim.h, cell: dim.cell, cols: doc.grid.cols, rows: doc.grid.rows, grid: null as { cols: number; rows: number } | null, size: null as { w: number; h: number } | null };
+    if (doc.kind === 'battle') {
+      const g = gridForPicture(imp.w, imp.h, impCols);
+      const s = imageSize({ ...$state.snapshot(doc), grid: { ...doc.grid, ...g } } as MapDoc);
+      return { w: s.w, h: s.h, cell: s.cell, cols: g.cols, rows: g.rows, grid: g, size: null };
+    }
+    const sz = sizeForPicture(imp.w, imp.h);
+    return { w: sz.w, h: sz.h, cell: 0, cols: 0, rows: 0, grid: null, size: sz };
+  });
+  const impSameShape = $derived(!!imp && !!impTarget && Math.abs(imp.w / imp.h - impTarget.w / impTarget.h) < 0.03);
+
+  // the preview is the picture as it will be stored, with the grid over it
+  $effect(() => {
+    const c = impCanvas;
+    const t = impTarget;
+    const p = imp;
+    const mode = impMode;
+    const bars = impBars;
+    if (!c || !t || !p) return;
+    const k = Math.min(1, 560 / Math.max(t.w, t.h));
+    scaleOnto(c, p, Math.round(t.w * k), Math.round(t.h * k), mode, bars);
+    if (battle && t.cell) {
+      const g = c.getContext('2d')!;
+      g.strokeStyle = 'rgba(255,255,255,0.35)';
+      g.lineWidth = 1;
+      g.beginPath();
+      for (let x = 0; x <= t.cols; x++) { g.moveTo(x * t.cell * k + 0.5, 0); g.lineTo(x * t.cell * k + 0.5, t.rows * t.cell * k); }
+      for (let y = 0; y <= t.rows; y++) { g.moveTo(0, y * t.cell * k + 0.5); g.lineTo(t.cols * t.cell * k, y * t.cell * k + 0.5); }
+      g.stroke();
+    }
+  });
+
+  async function pickImport(e: Event & { currentTarget: HTMLInputElement }) {
+    const f = e.currentTarget.files?.[0];
+    e.currentTarget.value = '';
+    if (!f) return;
+    try {
+      const pic = await loadPicture(f);
+      imp?.bitmap.close();
+      imp = pic;
+      impCols = doc?.grid.cols ?? 24;
+      impMatch = false;
+      impAs = 'render';
+    } catch (err) {
+      say(err instanceof Error ? err.message : String(err));
+    }
+  }
+  function dropImport() {
+    imp?.bitmap.close();
+    imp = null;
+  }
+  async function runImport() {
+    const t = impTarget;
+    if (!doc || !imp || !t || !nodeId) return;
+    impBusy = true;
+    try {
+      // the map first (the server counts on the saved grid / canvas to know the size of the picture), then the picture
+      if (impMatch) {
+        if (t.grid) resize(t.grid.cols, t.grid.rows);
+        else if (t.size) setSize(t.size.w, t.size.h);
+      }
+      dirty = true;
+      await save();
+      const c = document.createElement('canvas');
+      scaleOnto(c, imp, t.w, t.h, impMode, impBars);
+      const as = staged ? impAs : 'render';
+      const r = await importMapPicture(mapId, await toPngBlob(c), as);
+      if (!r.ok) {
+        say(r.error);
+        return;
+      }
+      const file = String(r.json.file);
+      if (as === 'terrain') view = 'terrain';
+      else {
+        shownRender = file;
+        view = 'painted';
+      }
+      say(as === 'terrain' ? 'Picture imported as the terrain — paint the props onto it in step 2' : 'Picture imported', 'ok');
+      dropImport();
+      void loadPaint();
+    } finally {
+      impBusy = false;
+    }
+  }
+
   const cancel = () => fetch('/api/images/cancel', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
 
   const painted = $derived(shownRender ?? doc?.renders.at(-1) ?? null);
@@ -1297,6 +1402,50 @@
               </div>
             {/each}
           {/snippet}
+          {#snippet importView()}
+            <div class="label">Your own picture</div>
+            <label class="btn" class:off={impBusy} title="Use a picture you already have as this map's picture (PNG, JPEG, WebP…)">⬆ Import a picture…<input type="file" accept={PICTURE_ACCEPT} hidden disabled={impBusy} data-tour="map-import" onchange={pickImport} /></label>
+            {#if imp && impTarget}
+              <div class="imp">
+                <div class="dim"><b>{imp.name}</b> · {imp.w}×{imp.h} px</div>
+                <canvas class="impview" bind:this={impCanvas}></canvas>
+                <div class="dim">Scaled to {impTarget.w}×{impTarget.h} px{battle ? ` — ${impTarget.cols}×${impTarget.rows} cells` : ''}, the size this map is painted at.</div>
+                <div class="label">Scaling</div>
+                <div class="seg w">
+                  {#each FIT_MODES as m (m.id)}<button class:on={impMode === m.id} title={m.hint} onclick={() => (impMode = m.id)}>{m.label}</button>{/each}
+                </div>
+                <div class="dim">{FIT_MODES.find((m) => m.id === impMode)?.hint}</div>
+                {#if impMode === 'fit' && !impSameShape}
+                  <label class="chk">empty bars <input type="color" bind:value={impBars} aria-label="Colour of the empty bars" /></label>
+                {/if}
+                <label class="chk" title={battle ? 'Change the number of rows so the grid has the shape of the picture' : 'Change the canvas so it has the shape of the picture'}>
+                  <input type="checkbox" bind:checked={impMatch} /> make the {battle ? 'grid' : 'canvas'} the shape of the picture
+                </label>
+                {#if impMatch && battle}
+                  <label class="num">cells across <input class="field" type="number" min="4" max="80" bind:value={impCols} /></label>
+                  <div class="dim">The grid becomes {impTarget.cols}×{impTarget.rows} cells (floors you drew stay where they are).</div>
+                {:else if impMatch}
+                  <div class="dim">The canvas becomes {impTarget.w}×{impTarget.h} px.</div>
+                {:else if !impSameShape}
+                  <div class="dim">The picture is not the shape of the map: {impMode === 'fit' ? 'there will be empty bars' : impMode === 'fill' ? 'its edges are cropped' : 'it is distorted'}. Tick the box above to change the {battle ? 'grid' : 'canvas'} instead.</div>
+                {/if}
+                {#if impMatch && doc?.renders.length}<p class="warn">Painted versions you already have keep their old size and may no longer fit the map.</p>{/if}
+                {#if staged}
+                  <div class="label">Use it as</div>
+                  <div class="seg w">
+                    <button class:on={impAs === 'render'} onclick={() => (impAs = 'render')} title="The finished picture of the map">finished picture</button>
+                    <button class:on={impAs === 'terrain'} onclick={() => (impAs = 'terrain')} title="An empty terrain: step 2 paints the props onto it">terrain</button>
+                  </div>
+                  <div class="dim">{impAs === 'render' ? 'It becomes the picture shown to the players (and sent to the VTT).' : `An empty ${battle ? 'place' : 'land'}: step 2 paints the ${battle ? 'props' : 'structures'} onto it, exactly where you put them.`}</div>
+                {/if}
+                <div class="row">
+                  <button class="btn primary grow" disabled={impBusy || !nodeId} onclick={runImport}>{impBusy ? 'Importing…' : 'Import'}</button>
+                  <button class="btn ghost" disabled={impBusy} onclick={dropImport}>cancel</button>
+                </div>
+                {#if !nodeId}<p class="warn">This map has no map node — create it from the canvas or ask the AI.</p>{/if}
+              </div>
+            {/if}
+          {/snippet}
           {#snippet rendersView()}
             {#if doc?.renders.length}
               <div class="label">Painted versions <span class="dim">({doc.renders.length})</span></div>
@@ -1321,11 +1470,13 @@
             </div>
             <div class="dim">{TERRAIN_HINT[fidelity]}</div>
             {#if !battle}
-              <div class="label">Camera <span class="dim">— how flat the land is painted</span></div>
-              <div class="seg w">
-                {#each [['default', 'natural'], ['strict', 'top-down'], ['plan', 'survey map']] as [v, n]}<button class:on={viewMode === v} onclick={() => (viewMode = v as typeof viewMode)}>{n}</button>{/each}
+              <div class="label">Camera <span class="dim">— how the land is painted</span></div>
+              <div class="cams" role="radiogroup" aria-label="Camera">
+                {#each CAMERAS as c (c.id)}
+                  <button class="cam" class:on={viewMode === c.id} role="radio" aria-checked={viewMode === c.id} aria-label={c.name} title={`${c.name} — ${c.hint}`} onclick={() => (viewMode = c.id)}><CameraIcon kind={c.id} /></button>
+                {/each}
               </div>
-              <div class="dim">{VIEW_HINT[viewMode]}</div>
+              {#each CAMERAS.filter((c) => c.id === viewMode) as c (c.id)}<div class="dim"><b>{c.name}</b> — {c.hint}</div>{/each}
             {/if}
             <div class="row">
               <select class="field" bind:value={variants} title="How many terrains to paint to choose from">{#each [1, 2, 3, 4] as n}<option value={n}>{n}×</option>{/each}</select>
@@ -1387,6 +1538,7 @@
             {/if}
             {@render jobsView()}
             {@render rendersView()}
+            {@render importView()}
             {#if doc?.renders.length}<div class="dim">Not happy? Paint the {battle ? 'props' : 'structures'} again for a new variation, choose another terrain — or, if just one object came out wrong, open <i>Painting prompts of the groups</i> and use <b>↻ paint this one again</b> on it.</div>{/if}
           {:else}
             <div class="label">What does the place look like?</div>
@@ -1408,6 +1560,7 @@
             {#if battle}<p class="dim">Quick painting (1 step). For props that land exactly where you put them, switch to <button class="lnk" onclick={() => (app.settingsOpen = true)}>Precise painting (2 steps)</button> in Settings.</p>{/if}
             {@render jobsView()}
             {@render rendersView()}
+            {@render importView()}
           {/if}
         {:else if panel === 'draw' && doc && !battle}
           {#snippet kindGroup(title: string, list: RegionKind[])}
@@ -1618,6 +1771,14 @@
   .seg button.on { background: var(--accent); color: #0a0c11; font-weight: 600; }
   .seg button:disabled { opacity: 0.35; }
   .seg.w { width: 100%; }
+  .cams { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .cam { display: grid; place-items: center; padding: 6px 0 4px; background: var(--bg-3); border: 1px solid var(--line-2); border-radius: 9px; color: var(--text-dim); }
+  .cam:hover { border-color: var(--accent); color: var(--text); }
+  .cam.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+  .imp { display: grid; gap: 6px; margin-top: 6px; }
+  .impview { width: 100%; height: auto; display: block; border: 1px solid var(--line-2); border-radius: 8px; background: #07080c; }
+  label.btn { cursor: pointer; }
+  label.btn.off { opacity: .6; pointer-events: none; }
   .tools .seg button { padding: 3px 5px; font-size: 11px; }
   .row { display: flex; gap: 6px; align-items: center; }
   .row .field { width: auto; }

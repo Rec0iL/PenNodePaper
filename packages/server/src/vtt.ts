@@ -9,6 +9,7 @@ import {
 } from '@pnp/shared';
 import { toPng } from './maps.js';
 import type { Store } from './store.js';
+import { imageDimensions } from './imagefile.js';
 
 // ---------------------------------------------------------------------------
 // VTT bridge: a VTT's GM page connects to /bridge, announces its capability
@@ -181,27 +182,7 @@ const node = (store: Store, id: string): StoryNode => {
   return n;
 };
 
-/** Width/height of a PNG, JPEG or WebP file (enough header parsing, no dependency). */
-export function imageDimensions(buf: Buffer): { w: number; h: number } | null {
-  if (buf.length > 24 && buf.readUInt32BE(0) === 0x89504e47) return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
-  if (buf.length > 4 && buf[0] === 0xff && buf[1] === 0xd8) {
-    let i = 2;
-    while (i + 9 < buf.length) {
-      if (buf[i] !== 0xff) { i++; continue; }
-      const m = buf[i + 1];
-      if (m >= 0xc0 && m <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(m)) return { h: buf.readUInt16BE(i + 5), w: buf.readUInt16BE(i + 7) };
-      i += 2 + buf.readUInt16BE(i + 2);
-    }
-    return null;
-  }
-  if (buf.length >= 30 && buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP') {
-    const k = buf.toString('ascii', 12, 16);
-    if (k === 'VP8X') return { w: 1 + buf.readUIntLE(24, 3), h: 1 + buf.readUIntLE(27, 3) };
-    if (k === 'VP8L') { const b = buf.readUInt32LE(21); return { w: 1 + (b & 0x3fff), h: 1 + ((b >> 14) & 0x3fff) }; }
-    if (k === 'VP8 ') return { w: buf.readUInt16LE(26) & 0x3fff, h: buf.readUInt16LE(28) & 0x3fff };
-  }
-  return null;
-}
+export { imageDimensions };
 
 /** Map render files of a node (they are listed among its images, but are not illustrations). */
 function renderFiles(store: Store, n: StoryNode): Set<string> {

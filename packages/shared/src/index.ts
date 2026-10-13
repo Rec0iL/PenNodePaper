@@ -422,6 +422,7 @@ export * from './consolidate.js';
 export * from './vtt.js';
 export * from './sheet.js';
 export * from './actors.js';
+export * from './imagefit.js';
 export * from './story.js';
 export * from './wiki.js';
 export * from './tables.js';

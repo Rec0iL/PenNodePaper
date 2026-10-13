@@ -1,6 +1,7 @@
 <script lang="ts">
   import { IMAGE_KINDS, type ImageKind, type StoryNode } from '@pnp/shared';
   import { activeJobs, app, cmd, jobAhead, say, sendChat } from '../lib/app.svelte';
+  import { PICTURE_ACCEPT, importNodePicture } from '../lib/imageImport';
 
   let { node, mapRenders = [] }: { node: StoryNode; mapRenders?: string[] } = $props();
 
@@ -59,6 +60,23 @@
     if (f && f.target === 'image' && f.nodeId === node.id) { prompt = f.text; touched = true; }
   });
 
+  // pictures the GM already has
+  let importing = $state(false);
+  async function importFiles(e: Event & { currentTarget: HTMLInputElement }) {
+    const files = [...(e.currentTarget.files ?? [])];
+    e.currentTarget.value = '';
+    if (!files.length) return;
+    importing = true;
+    let added = 0;
+    for (const f of files) {
+      const r = await importNodePicture(node.id, f);
+      if (r.ok) added++;
+      else say(`${f.name}: ${r.error}`);
+    }
+    importing = false;
+    if (added) say(`${added} picture${added > 1 ? 's' : ''} added to “${node.title}”`, 'ok');
+  }
+
   const cancel = () => fetch('/api/images/cancel', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
 </script>
 
@@ -108,6 +126,7 @@
     <div class="acts">
       <button class="btn primary" data-tour="img-generate" onclick={generate} disabled={prompt.trim().length < 8}>{justQueued ? '✓ Queued' : busy ? 'Add to queue' : 'Generate'}</button>
       <button class="btn" onclick={askAi} title="Let the AI write the prompt and generate">✦ AI writes it</button>
+      <label class="btn" class:off={importing} title="Add pictures you already have (PNG, JPEG, WebP, GIF…) — they join the gallery like generated ones">{importing ? 'Importing…' : '⬆ Import'}<input type="file" accept={PICTURE_ACCEPT} multiple hidden disabled={importing} data-tour="img-import" onchange={importFiles} /></label>
       {#if busy}<button class="btn ghost" onclick={cancel}>stop</button>{/if}
       <button class="btn ghost gear" onclick={() => (app.settingsOpen = true)} title="ComfyUI & style settings">⚙</button>
     </div>
@@ -137,7 +156,9 @@
   @keyframes pnp-wait { to { background-position: 22px 0; } }
   .gen { display: grid; gap: 6px; }
   .r2 { display: grid; grid-template-columns: 1fr 70px; gap: 6px; }
-  .acts { display: flex; gap: 6px; align-items: center; }
+  .acts { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  label.btn { cursor: pointer; }
+  label.btn.off { opacity: .6; pointer-events: none; }
   .gear { margin-left: auto; }
   .hint { margin: 0; color: var(--text-faint); font-size: 11px; }
 .badge.map { background: #12301f; color: var(--ok); }
