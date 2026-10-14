@@ -6,7 +6,7 @@ import { getRequestListener } from '@hono/node-server';
 import { Hono, type Context } from 'hono';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { DEFAULT_COMFY, type Actor, type Backend, type CommandResult, type MapPaintMode, type ServerMsg } from '@pnp/shared';
-import { spawnSync } from 'node:child_process';
+import { spawnCliSync } from './cli.js';
 import { Chat, listModels } from './chat.js';
 import { imageSize, renderSvg } from './maps.js';
 import { generateStyle, runOnce } from './style.js';
@@ -444,7 +444,7 @@ const readAgySettings = (): { permissions?: { allow?: string[] } } & Record<stri
 let agyCache: { at: number; value: { installed: boolean; registered: boolean; permitted: boolean } } | null = null;
 const agyStatus = (fresh = false) => {
   if (!fresh && agyCache && Date.now() - agyCache.at < 30_000) return agyCache.value;
-  const r = spawnSync('agy', ['mcp', 'list'], { encoding: 'utf8', timeout: 15000 });
+  const r = spawnCliSync('agy', ['mcp', 'list'], { encoding: 'utf8', timeout: 15000 });
   const value = {
     installed: !r.error,
     registered: /\bpennodepaper\b/.test(r.stdout ?? ''),
@@ -460,11 +460,11 @@ app.get('/api/agy/status', (c) => c.json(agyStatus()));
 let codexCache: { at: number; value: { installed: boolean; loggedIn: boolean | null } } | null = null;
 const codexStatus = () => {
   if (codexCache && Date.now() - codexCache.at < 30_000) return codexCache.value;
-  const v = spawnSync('codex', ['--version'], { encoding: 'utf8', timeout: 10000 });
+  const v = spawnCliSync('codex', ['--version'], { encoding: 'utf8', timeout: 10000 });
   const installed = !v.error && v.status === 0;
   let loggedIn: boolean | null = null;
   if (installed) {
-    const l = spawnSync('codex', ['login', 'status'], { encoding: 'utf8', timeout: 10000 });
+    const l = spawnCliSync('codex', ['login', 'status'], { encoding: 'utf8', timeout: 10000 });
     if (!l.error) loggedIn = l.status === 0 ? true : /not logged in|log in|login/i.test(`${l.stdout}${l.stderr}`) ? false : null;
   }
   const value = { installed, loggedIn };
@@ -475,7 +475,7 @@ app.get('/api/codex/status', (c) => c.json(codexStatus()));
 app.post('/api/agy/setup', (c) => {
   let output = '';
   if (!agyStatus(true).registered) {
-    const r = spawnSync('agy', ['mcp', 'add', '--header', `Authorization: Bearer ${cfg.token}`, 'pennodepaper', mcpUrl], { encoding: 'utf8', timeout: 20000 });
+    const r = spawnCliSync('agy', ['mcp', 'add', '--header', `Authorization: Bearer ${cfg.token}`, 'pennodepaper', mcpUrl], { encoding: 'utf8', timeout: 20000 });
     output += `${r.stdout ?? ''}${r.stderr ?? ''}`.trim();
   }
   // Headless agy auto-denies MCP calls unless an allow-rule exists in its settings.json.

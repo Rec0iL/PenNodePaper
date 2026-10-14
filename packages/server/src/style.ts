@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawnCli } from './cli.js';
 import { DEFAULT_STYLE, type Backend, type StyleConfig } from '@pnp/shared';
 import type { Store } from './store.js';
 
@@ -88,7 +88,7 @@ export const runOnce: Runner = (backend, prompt, model) =>
         : backend === 'codex'
           ? ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '-c', 'approval_policy="never"', ...(model ? ['-m', model] : []), '-']
           : ['-p', prompt, '--output-format', 'json', ...(model ? ['--model', model] : [])];
-    const child = spawn(backend, args, { stdio: [backend === 'codex' ? 'pipe' : 'ignore', 'pipe', 'pipe'], env: process.env });
+    const child = spawnCli(backend, args, { stdio: [backend === 'codex' ? 'pipe' : 'ignore', 'pipe', 'pipe'], env: process.env });
     if (backend === 'codex') {
       child.stdin!.on('error', () => { /* its exit code tells */ });
       child.stdin!.end(prompt);

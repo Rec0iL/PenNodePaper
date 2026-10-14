@@ -178,8 +178,12 @@ npm run dev
 
 Things to know when running natively:
 
-* Optional tools must be **on your PATH** and found as plain commands: `claude`, `agy`, `weasyprint`, `magick`, `pdftotext`, `unzip`, `tar`, `git`. Windows 10/11 already include `tar`.
-* Install Claude Code with its **native installer** (it provides a real `claude.exe`). A `claude.cmd` shim from an npm global install can't be launched by the app.
+* **`npm` is blocked in PowerShell** ("Die Datei npm.ps1 kann nicht geladen werden … Ausführung von Skripts … deaktiviert" / *running scripts is disabled on this system*). Windows does not run `.ps1` scripts by default, and `npm` starts through `npm.ps1`. Pick one:
+  * allow it once for your user (no administrator needed): `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, confirm with `J` / `Y`;
+  * or call the `.cmd` version: `npm.cmd install`, `npm.cmd run dev`;
+  * or use the classic **Command Prompt** (`cmd`) instead of PowerShell.
+* Optional tools must be **on your PATH** and found as plain commands: `claude`, `agy`, `codex`, `weasyprint`, `magick`, `pdftotext`, `unzip`, `tar`, `git`. Windows 10/11 already include `tar`.
+* AI programs installed with **npm** (`npm install -g @openai/codex`, or Claude Code via npm) are found too, even though npm gives them a `.cmd` launcher. If the app still says one is *not installed*, check that `codex --version` (or `claude --version`) works in a **new** terminal window, then **restart PenNodePaper from that terminal** — a program started before the PATH changed doesn't see the new PATH.
 * ImageMagick: `winget install ImageMagick.ImageMagick` (tick *Add to PATH*).
 * `pdftotext` (poppler) and `unzip` have no official Windows installer; get them from a package manager such as [Scoop](https://scoop.sh) (`scoop install poppler unzip`) or [Chocolatey](https://chocolatey.org).
 * WeasyPrint on Windows is easiest as the standalone executable from the [WeasyPrint releases](https://github.com/Kozea/WeasyPrint/releases); put it on your PATH as `weasyprint`.
@@ -365,6 +369,8 @@ Your campaigns live in `campaigns/` (not tracked by git), so updating never touc
 | `npm install` fails with a Node error | Check `node -v`: it must be 20 or newer. |
 | Chat says **agy not found** / Claude does nothing | The CLI is not on the PATH of the terminal that started PenNodePaper. Check `claude --version` / `agy --version`, and make sure you are logged in. Restart `npm run dev` after installing. |
 | agy chat can't use the tools | Click **Connect agy** in the chat (once), then try again. |
+| Windows: `npm` says *running scripts is disabled on this system* | PowerShell blocks `npm.ps1`. Run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or use `npm.cmd install` / the Command Prompt (see [Native Windows](#native-windows-untested-for-the-optional-tools)). |
+| Windows: Codex / Claude / agy is *not found* although it starts in a terminal | PenNodePaper has to be started from a terminal where the command works (a new window after installing). Check `where codex`: it should list a `codex.cmd` or `codex.exe`. |
 | Generating a picture fails, or the ComfyUI dot in the settings is red | Start ComfyUI, open **⚙ Settings → ComfyUI** and press **↻ test**; the dot turns green when it answers. In WSL2 see the [ComfyUI note](#-windows). |
 | ComfyUI refuses the workflow | A model file in the settings isn't installed or has the wrong CLIP type. Pick the files from the lists in the settings. |
 | *GM binder (PDF)* fails | `weasyprint --version` must work in the same terminal. Install WeasyPrint (see the [table](#-other-optional-tools)). |

@@ -1,4 +1,5 @@
-import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
+import { spawnCli, spawnCliSync } from './cli.js';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -436,7 +437,7 @@ export class Chat {
 
   private spawnLines(bin: string, args: string[], cwd: string, onEvent: (ev: unknown) => void, opts: { input?: string; env?: Record<string, string> } = {}): Promise<void> {
     return new Promise((resolve, reject) => {
-      const child = spawn(bin, args, { cwd, stdio: [opts.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], env: { ...process.env, ...opts.env } });
+      const child = spawnCli(bin, args, { cwd, stdio: [opts.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], env: { ...process.env, ...opts.env } });
       this.child = child;
       if (opts.input !== undefined) {
         child.stdin!.on('error', () => { /* the process ended before reading it all: its exit says why */ });
@@ -516,7 +517,7 @@ export function listModels(): Models {
   ];
   let agy: Models['agy'] = [{ id: '', label: 'default' }];
   try {
-    const r = spawnSync('agy', ['models'], { encoding: 'utf8', timeout: 15000 });
+    const r = spawnCliSync('agy', ['models'], { encoding: 'utf8', timeout: 15000 });
     const rows = r.stdout
       .split('\n')
       .map((l) => l.split('\t'))
