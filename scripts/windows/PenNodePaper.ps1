@@ -14,6 +14,9 @@
   Run it with:  powershell -NoProfile -ExecutionPolicy Bypass -File PenNodePaper.ps1 start
   (the shortcuts made by install-launcher.ps1 do exactly that, so the PowerShell script policy is not in the way).
   PNP_NO_TRAY=1 leaves the tray icon out. PNP_PORT changes the port (default 4317).
+  When it starts the server it first looks for a new version (git fetch) and installs it (git pull --ff-only, npm install
+  when a package list changed, the UI is rebuilt). Nothing is touched when there are changes of your own, when you are
+  offline, or when the server already runs. PNP_NO_UPDATE=1 turns the update off.
   Keep this file plain ASCII: Windows PowerShell 5.1 reads it as ANSI.
 #>
 param(
@@ -31,6 +34,7 @@ $Url = "http://localhost:$Port"
 $State = Join-Path $env:LOCALAPPDATA 'pennodepaper'
 $PidFile = Join-Path $State 'server.pid'
 $Log = Join-Path $State 'server.log'
+$NoticeFile = Join-Path $State 'notice.txt'
 $IcoPath = Join-Path $PSScriptRoot 'pennodepaper.ico'
 $PsExe = (Get-Process -Id $PID).Path
 New-Item -ItemType Directory -Force -Path $State | Out-Null
@@ -96,6 +100,55 @@ function Invoke-Npm([string[]]$npmArgs, [string]$what) {
   if ($p.ExitCode -ne 0) { throw "$what failed - see $Log and $Log.err" }
 }
 
+# git with a time limit and without any prompt; { Ok; Out; Err }
+function Invoke-Git([string[]]$gitArgs, [int]$timeoutMs = 30000) {
+  $psi = New-Object System.Diagnostics.ProcessStartInfo
+  $psi.FileName = 'git.exe'
+  $psi.Arguments = (($gitArgs | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' ')
+  $psi.WorkingDirectory = $Root
+  $psi.UseShellExecute = $false
+  $psi.CreateNoWindow = $true
+  $psi.RedirectStandardOutput = $true
+  $psi.RedirectStandardError = $true
+  $psi.EnvironmentVariables['GIT_TERMINAL_PROMPT'] = '0'
+  $p = [System.Diagnostics.Process]::Start($psi)
+  $out = $p.StandardOutput.ReadToEndAsync()
+  $err = $p.StandardError.ReadToEndAsync()
+  if (-not $p.WaitForExit($timeoutMs)) {
+    try { $p.Kill() } catch { }
+    return @{ Ok = $false; Out = ''; Err = 'timed out' }
+  }
+  return @{ Ok = ($p.ExitCode -eq 0); Out = $out.Result.Trim(); Err = $err.Result.Trim() }
+}
+
+# a line for the tray icon to show as a balloon (the tray may start after this script has written it)
+function Set-Notice([string]$text) {
+  Set-Content -Path $NoticeFile -Value $text
+  Add-Content -Path (Join-Path $State 'launcher.log') -Value "$(Get-Date -Format s) $text"
+}
+
+# Looks for a new version and installs it. Never stops the start: whatever is wrong, the version that is here is started.
+function Update-App {
+  if ($env:PNP_NO_UPDATE -eq '1') { return }
+  try {
+    if (-not (Test-Path (Join-Path $Root '.git'))) { return }
+    if (-not (Get-Command git.exe -ErrorAction SilentlyContinue)) { return }
+    if (-not (Invoke-Git @('fetch', '--quiet')).Ok) { return } # offline
+    $n = Invoke-Git @('rev-list', '--count', 'HEAD..@{u}')
+    if (-not $n.Ok -or -not $n.Out -or [int]$n.Out -eq 0) { return }
+    $dirty = Invoke-Git @('status', '--porcelain', '--untracked-files=no')
+    if ($dirty.Out) { Set-Notice 'An update is available, but this copy has changes of its own - it was not updated.'; return }
+    $before = (Invoke-Git @('rev-parse', 'HEAD')).Out
+    $pull = Invoke-Git @('pull', '--ff-only', '--quiet') 180000
+    if (-not $pull.Ok) { Set-Notice "The update did not work: $($pull.Err)"; return }
+    $changed = (Invoke-Git @('diff', '--name-only', $before, 'HEAD')).Out
+    if ($changed -match '(^|/)package(-lock)?\.json') { Invoke-Npm @('install') 'npm install' }
+    Set-Notice "PenNodePaper was updated ($($n.Out) new change$(if ([int]$n.Out -ne 1) { 's' }))."
+  } catch {
+    Add-Content -Path (Join-Path $State 'launcher.log') -Value "$(Get-Date -Format s) update skipped: $($_.Exception.Message)"
+  }
+}
+
 # run this script again (hidden, detached) with another command: the tray menu and the start-up use it
 function Start-Self([string[]]$more) {
   $a = @('-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', "`"$PSCommandPath`"") + $more
@@ -143,6 +196,8 @@ function Start-Server([bool]$lan) {
     $mode = Get-Mode (Get-Status)
     if (($mode -eq 'lan') -eq $lan) { return }
     Stop-Server
+  } else {
+    Update-App
   }
   if (-not (Test-Path (Join-Path $Root 'node_modules'))) { Invoke-Npm @('install') 'npm install' }
   if (Test-NeedsBuild) { Invoke-Npm @('run', 'build') 'Building the UI' }
@@ -154,7 +209,7 @@ function Start-Server([bool]$lan) {
 }
 
 function Invoke-Start([bool]$lan) {
-  Start-TrayProcess 'Starting PenNodePaper (the first start builds the pages, this can take a minute)...'
+  Start-TrayProcess 'Starting PenNodePaper (looking for updates; the first start and updates take a minute)...'
   Start-Server $lan
   Start-Process $Url
 }
@@ -244,6 +299,15 @@ function Build-Menu {
   [void](Add-MenuItem 'Quit tray icon' { $script:Notify.Visible = $false; [System.Windows.Forms.Application]::Exit() })
 }
 
+# a message the launcher left for the user (an update was installed, ...); older than ten minutes is not news any more
+function Show-Notice {
+  if (-not (Test-Path $NoticeFile)) { return }
+  $age = (Get-Date) - (Get-Item $NoticeFile).LastWriteTime
+  $text = (Get-Content $NoticeFile -Raw).Trim()
+  Remove-Item $NoticeFile -ErrorAction SilentlyContinue
+  if ($text -and $age.TotalMinutes -lt 10) { $script:Notify.ShowBalloonTip(8000, 'PenNodePaper', $text, 'Info') }
+}
+
 function Update-Tray {
   $st = Get-Status
   $sig = if ($null -eq $st) { 'down' } else { ($st | ConvertTo-Json -Compress) }
@@ -269,10 +333,10 @@ function Invoke-Tray {
   })
   Update-Tray
   $script:Notify.Visible = $true
-  if ($Message) { $script:Notify.ShowBalloonTip(5000, 'PenNodePaper', $Message, 'Info') }
+  if ($Message) { $script:Notify.ShowBalloonTip(5000, 'PenNodePaper', $Message, 'Info') } else { Show-Notice }
   $script:Timer = New-Object System.Windows.Forms.Timer
   $script:Timer.Interval = 3000
-  $script:Timer.add_Tick({ try { Update-Tray } catch { } })
+  $script:Timer.add_Tick({ try { Update-Tray; Show-Notice } catch { } })
   $script:Timer.Start()
   [System.Windows.Forms.Application]::Run()
   $script:Notify.Dispose()
@@ -288,6 +352,7 @@ function Invoke-SelfTest {
   Write-Host "node_modules: $(Test-Path (Join-Path $Root 'node_modules'))"
   Write-Host "UI built    : $(-not (Test-NeedsBuild))"
   Write-Host "Icon file   : $(Test-Path $IcoPath)"
+  Write-Host "Updates     : $(if ($env:PNP_NO_UPDATE -eq '1') { 'off (PNP_NO_UPDATE)' } elseif ((Test-Path (Join-Path $Root '.git')) -and (Get-Command git.exe -ErrorAction SilentlyContinue)) { 'on (git)' } else { 'not possible here (no git checkout / no git.exe)' })"
   Write-Host "State/log   : $State"
   $st = Get-Status
   Write-Host "Server      : $(Get-Header $st)"
