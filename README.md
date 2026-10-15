@@ -112,7 +112,7 @@ cd PenNodePaper          # or the name of the folder you unpacked, e.g. cd PenNo
 
 > ⚠️ Every command below has to be run **in that folder**. `npm install` somewhere else (your home folder, the folder *containing* the project…) does nothing useful.
 
-**3. Install what it needs** (Linux, macOS, or Windows via [WSL2](docs/INSTALL.md#-windows)):
+**3. Install what it needs** (Linux and macOS; **on Windows** run `npm install` by hand — the [Windows section](docs/INSTALL.md#-windows) of the install guide has the few steps, a Start menu entry with a tray icon and no WSL needed):
 
 ```bash
 ./scripts/install.sh          # or: bash scripts/install.sh   (if your unzip dropped the executable bit)

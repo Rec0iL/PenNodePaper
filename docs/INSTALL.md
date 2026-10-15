@@ -4,7 +4,7 @@ This guide takes you from nothing to a running PenNodePaper on **Linux**, **macO
 
 > **Good to know:** the core app only needs **Node.js**. Everything else is optional, and each optional tool unlocks exactly one feature. You can start with the core and add tools later; nothing needs to be reinstalled.
 >
-> **Tested on:** Linux (Fedora-based). macOS uses the same commands through Homebrew. **Windows is best used through WSL2** (see [Windows](#-windows)); running natively is possible for the core app but is untested for the optional tools.
+> **Tested on:** Linux (Fedora-based) and **Windows 10/11, running natively** (no WSL needed — see [Windows](#-windows)). macOS uses the same commands as Linux, through Homebrew.
 
 **Contents**
 [What you need](#-what-you-need) · [Quick start](#-quick-start) · [Linux](#-linux) · [macOS](#-macos) · [Windows](#-windows) · [AI assistants](#-ai-assistants-claude-and-agy) · [ComfyUI](#-comfyui-pictures-and-painted-maps) · [Other optional tools](#-other-optional-tools) · [Connect a VTT](#-connect-a-vtt) · [Configuration](#-configuration) · [Updating](#-updating) · [Troubleshooting](#-troubleshooting)
@@ -55,6 +55,8 @@ or by hand, if you only want the core:
 ```bash
 npm install
 ```
+
+> **On Windows** there is no install script: do the `npm install` by hand and follow the [Windows](#-windows) section, which also has a Start menu entry with a tray icon (it builds and updates PenNodePaper for you).
 
 **4. Start**
 
@@ -139,58 +141,54 @@ brew install imagemagick poppler weasyprint
 
 ## 🪟 Windows
 
-### Recommended: WSL2 (a real Linux inside Windows)
+PenNodePaper runs **natively on Windows**: no WSL, no virtual machine. That also makes the connection to ComfyUI trivial: both run on the same Windows computer and talk over `localhost` (ComfyUI's default address `http://127.0.0.1:8188` just works).
 
-Everything in this project, including the optional tools, is built and tested for Linux, so WSL2 is the smoothest path on Windows.
+### 1. Install Node.js and git, get the code
 
-1. Open **PowerShell as administrator** and run:
-   ```powershell
-   wsl --install -d Ubuntu
-   ```
-   Restart if asked, then open the **Ubuntu** app and create your user.
-2. Inside Ubuntu, follow the [Linux](#-linux) steps (use nvm for Node.js).
-3. Open **<http://localhost:5273>** in your normal Windows browser. WSL2 forwards `localhost`, so it just works.
-4. Keep your campaigns inside the Linux file system (for example `~/PenNodePaper`), not under `/mnt/c/…`: it is much faster and file watching is reliable.
-
-**ComfyUI on Windows with PenNodePaper in WSL2:** ComfyUI listens on `127.0.0.1` of Windows, which WSL2 cannot reach by default. Either turn on mirrored networking (create or edit `%UserProfile%\.wslconfig`):
-
-```ini
-[wsl2]
-networkingMode=mirrored
-```
-
-then run `wsl --shutdown` and start again, or start ComfyUI with `--listen 0.0.0.0` and enter the Windows host's address in **⚙ Settings → ComfyUI**.
-
-**A VTT in your Windows browser** can connect to `ws://127.0.0.1:4317/bridge` as usual (the same `localhost` forwarding).
-
-### Native Windows (untested for the optional tools)
-
-The core app is plain Node.js and should run natively:
+In PowerShell or the Command Prompt:
 
 ```powershell
 winget install OpenJS.NodeJS.LTS
 winget install Git.Git
+```
+
+Close the terminal and open a **new** one (so the new programs are on the PATH), then:
+
+```powershell
 git clone https://github.com/Rec0iL/PenNodePaper.git
 cd PenNodePaper
 npm install
-npm run dev
 ```
 
-Things to know when running natively:
+Without git you can download the ZIP from the GitHub page (**Code → Download ZIP**) and unpack it; the launcher's automatic updates (below) need the git clone, though.
 
-* **`npm` is blocked in PowerShell** ("Die Datei npm.ps1 kann nicht geladen werden … Ausführung von Skripts … deaktiviert" / *running scripts is disabled on this system*). Windows does not run `.ps1` scripts by default, and `npm` starts through `npm.ps1`. Pick one:
-  * allow it once for your user (no administrator needed): `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, confirm with `J` / `Y`;
-  * or call the `.cmd` version: `npm.cmd install`, `npm.cmd run dev`;
-  * or use the classic **Command Prompt** (`cmd`) instead of PowerShell.
-* **Start menu entry with a tray icon:** run `scripts\windows\Install-Launcher.cmd` once (double-click; it asks whether you also want a desktop shortcut). Afterwards type *PenNodePaper* in the Start menu: it builds the UI on the first start, runs the server in the background, opens the browser and puts a tray icon next to the clock — grey = stopped, green = running for this computer only, blue = open to your network. Left-click opens PenNodePaper; right-click starts / stops it, switches LAN mode and copies the address and access code for another device. *PenNodePaper (LAN mode)* and *Stop PenNodePaper* are separate Start menu entries. It only needs Node.js and works with the default PowerShell script policy. **Updates:** whenever the launcher starts the server it checks for a new version and installs it by itself (`git pull --ff-only`, then `npm install` if needed and a rebuild); a balloon at the tray icon says so. It leaves your copy alone when you changed files in it, when you are offline, or when the server is already running. Set the environment variable `PNP_NO_UPDATE=1` to switch it off. Without installing anything, `scripts\windows\PenNodePaper.cmd` does the same. Logs: `%LOCALAPPDATA%\pennodepaper\`; `powershell -ExecutionPolicy Bypass -File scripts\windows\PenNodePaper.ps1 selftest` prints what the launcher finds (Node, npm, icon, server).
-* Optional tools must be **on your PATH** and found as plain commands: `claude`, `agy`, `codex`, `weasyprint`, `magick`, `pdftotext`, `unzip`, `tar`, `git`. Windows 10/11 already include `tar`.
-* AI programs installed with **npm** (`npm install -g @openai/codex`, or Claude Code via npm) are found too, even though npm gives them a `.cmd` launcher. If the app still says one is *not installed*, check that `codex --version` (or `claude --version`) works in a **new** terminal window, then **restart PenNodePaper from that terminal** — a program started before the PATH changed doesn't see the new PATH.
-* ImageMagick: `winget install ImageMagick.ImageMagick` (tick *Add to PATH*).
-* `pdftotext` (poppler) and `unzip` have no official Windows installer; get them from a package manager such as [Scoop](https://scoop.sh) (`scoop install poppler unzip`) or [Chocolatey](https://chocolatey.org).
-* WeasyPrint on Windows is easiest as the standalone executable from the [WeasyPrint releases](https://github.com/Kozea/WeasyPrint/releases); put it on your PATH as `weasyprint`.
-* The settings file lives in `C:\Users\<you>\.config\pennodepaper\`.
+**`npm` is blocked in PowerShell?** ("npm.ps1 cannot be loaded because running scripts is disabled on this system" / "Die Datei npm.ps1 kann nicht geladen werden …"). Windows does not run `.ps1` scripts by default, and `npm` starts through `npm.ps1`. Pick one:
 
-If anything misbehaves natively, switch to WSL2: it's the same app with the supported environment.
+* allow it once for your user (no administrator needed): `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, confirm with `Y` (`J` on a German Windows);
+* or call the `.cmd` version: `npm.cmd install`, `npm.cmd run dev`;
+* or use the classic **Command Prompt** (`cmd`) instead of PowerShell.
+
+### 2. Start it
+
+Either of these:
+
+* **Start menu entry with a tray icon (recommended):** run `scripts\windows\Install-Launcher.cmd` once (double-click; it asks whether you also want a desktop shortcut). Afterwards type *PenNodePaper* in the Start menu: it builds the UI on the first start, runs the server in the background, opens the browser and puts a tray icon next to the clock — grey = stopped, green = running for this computer only, blue = open to your network. Left-click opens PenNodePaper; right-click starts / stops it, switches LAN mode and copies the address and access code for another device. *PenNodePaper (LAN mode)* and *Stop PenNodePaper* are separate Start menu entries. It only needs Node.js and works with the default PowerShell script policy. Without installing anything, `scripts\windows\PenNodePaper.cmd` does the same.
+  **Updates:** whenever the launcher starts the server it checks for a new version and installs it by itself (`git pull --ff-only`, then `npm install` if needed and a rebuild); a balloon at the tray icon says so. It leaves your copy alone when you changed files in it, when you are offline, or when the server is already running. Set the environment variable `PNP_NO_UPDATE=1` to switch it off.
+  Logs are in `%LOCALAPPDATA%\pennodepaper\`; `powershell -ExecutionPolicy Bypass -File scripts\windows\PenNodePaper.ps1 selftest` prints what the launcher finds (Node, npm, icon, server).
+* **or from a terminal:** `npm run dev` and open **<http://localhost:5273>**.
+
+### 3. Optional tools
+
+Each of these must be **on your PATH** and found as a plain command: `claude`, `agy`, `codex`, `weasyprint`, `magick`, `pdftotext`, `unzip`, `tar`, `git`. Windows 10/11 already include `tar`.
+
+* **AI programs** (see [AI assistants](#-ai-assistants-claude-and-agy)): Claude Code, Codex and agy installed with **npm** are found too, even though npm gives them a `.cmd` launcher. If the app still says one is *not installed*, check that `codex --version` (or `claude --version`) works in a **new** terminal window, then **restart PenNodePaper from that terminal** (or start it again from the Start menu): a program started before the PATH changed doesn't see the new PATH.
+* **ComfyUI** on the same computer: nothing to configure, see [ComfyUI](#-comfyui-pictures-and-painted-maps).
+* **ImageMagick** (thumbnails): `winget install ImageMagick.ImageMagick` (tick *Add to PATH*).
+* **`pdftotext`** (poppler) and **`unzip`** (importing `.pdf` / `.docx` notes) have no official Windows installer; get them from a package manager such as [Scoop](https://scoop.sh) (`scoop install poppler unzip`) or [Chocolatey](https://chocolatey.org).
+* **WeasyPrint** (GM binder PDF) on Windows is easiest as the standalone executable from the [WeasyPrint releases](https://github.com/Kozea/WeasyPrint/releases); put it on your PATH as `weasyprint`.
+* **A VTT** in your browser connects to `ws://127.0.0.1:4317/bridge` as usual.
+
+The settings file lives in `C:\Users\<you>\.config\pennodepaper\`.
 
 ---
 
@@ -201,7 +199,7 @@ PenNodePaper does not include an AI. It drives **command-line assistants you ins
 ### Claude (Claude Code)
 
 1. Install the CLI (pick one):
-   * macOS / Linux / WSL: `curl -fsSL https://claude.ai/install.sh | bash`
+   * macOS / Linux: `curl -fsSL https://claude.ai/install.sh | bash`
    * Windows PowerShell: `irm https://claude.ai/install.ps1 | iex`
    * or with npm: `npm install -g @anthropic-ai/claude-code`
 2. Run `claude` once in a terminal and **log in** (a Claude subscription or an API account).
@@ -359,6 +357,8 @@ npm run dev        # or: npm run build && npm start
 
 Your campaigns live in `campaigns/` (not tracked by git), so updating never touches them.
 
+On Windows the [Start menu launcher](#-windows) does all of this by itself when it starts the server.
+
 ---
 
 ## 🩺 Troubleshooting
@@ -370,9 +370,9 @@ Your campaigns live in `campaigns/` (not tracked by git), so updating never touc
 | `npm install` fails with a Node error | Check `node -v`: it must be 20 or newer. |
 | Chat says **agy not found** / Claude does nothing | The CLI is not on the PATH of the terminal that started PenNodePaper. Check `claude --version` / `agy --version`, and make sure you are logged in. Restart `npm run dev` after installing. |
 | agy chat can't use the tools | Click **Connect agy** in the chat (once), then try again. |
-| Windows: `npm` says *running scripts is disabled on this system* | PowerShell blocks `npm.ps1`. Run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or use `npm.cmd install` / the Command Prompt (see [Native Windows](#native-windows-untested-for-the-optional-tools)). |
+| Windows: `npm` says *running scripts is disabled on this system* | PowerShell blocks `npm.ps1`. Run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or use `npm.cmd install` / the Command Prompt (see [Native Windows](#-windows)). |
 | Windows: Codex / Claude / agy is *not found* although it starts in a terminal | PenNodePaper has to be started from a terminal where the command works (a new window after installing). Check `where codex`: it should list a `codex.cmd` or `codex.exe`. |
-| Generating a picture fails, or the ComfyUI dot in the settings is red | Start ComfyUI, open **⚙ Settings → ComfyUI** and press **↻ test**; the dot turns green when it answers. In WSL2 see the [ComfyUI note](#-windows). |
+| Generating a picture fails, or the ComfyUI dot in the settings is red | Start ComfyUI, open **⚙ Settings → ComfyUI** and press **↻ test**; the dot turns green when it answers. ComfyUI and PenNodePaper must run on the same computer (or enter the other computer's address there). |
 | ComfyUI refuses the workflow | A model file in the settings isn't installed or has the wrong CLIP type. Pick the files from the lists in the settings. |
 | *GM binder (PDF)* fails | `weasyprint --version` must work in the same terminal. Install WeasyPrint (see the [table](#-other-optional-tools)). |
 | Importing a `.docx` / `.pdf` does nothing | Install `unzip` (docx) or poppler's `pdftotext` (pdf). Pasted text and `.md` / `.txt` always work. |

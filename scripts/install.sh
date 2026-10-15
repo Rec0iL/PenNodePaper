@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PenNodePaper installer (Linux, macOS, and Windows inside WSL2).
+# PenNodePaper installer (Linux and macOS; Windows runs natively, see docs/INSTALL.md).
 #
 # Run it from anywhere; it works in the folder it lives in:
 #     ./scripts/install.sh              install, build, offer the optional tools
