@@ -11,7 +11,19 @@ export interface ImportInfo { name: string; chars: number; importedAt: string }
 const decodeXml = (s: string) =>
   s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n))).replace(/&amp;/g, '&');
 
-/** Plain text of an uploaded notes file. Markdown/text as is; .docx and .pdf through unzip / pdftotext (installed on most systems). */
+/**
+ * One file out of a zip (a .docx is one). `unzip` where it exists; otherwise `tar`, which is bsdtar on Windows 10/11 and
+ * Mac and reads zip archives too — so Windows needs no extra program for Word files.
+ */
+export function readZipEntry(file: string, entry: string): Buffer | null {
+  for (const [bin, args] of [['unzip', ['-p', file, entry]], ['tar', ['-xOf', file, entry]], ['bsdtar', ['-xOf', file, entry]]] as const) {
+    const r = spawnSync(bin, [...args], { maxBuffer: 64 * 1024 * 1024, windowsHide: true });
+    if (!r.error && r.status === 0 && r.stdout.length) return r.stdout;
+  }
+  return null;
+}
+
+/** Plain text of an uploaded notes file. Markdown/text as is; .docx and .pdf through unzip (or tar) / pdftotext (installed on most systems). */
 export function extractText(buf: Buffer, filename: string): string {
   const ext = path.extname(filename).toLowerCase();
   if (['.md', '.markdown', '.txt', '.text', ''].includes(ext)) return buf.toString('utf8');
@@ -20,10 +32,10 @@ export function extractText(buf: Buffer, filename: string): string {
   fs.writeFileSync(tmp, buf);
   try {
     if (ext === '.docx') {
-      const r = spawnSync('unzip', ['-p', tmp, 'word/document.xml'], { maxBuffer: 64 * 1024 * 1024 });
-      if (r.error || r.status !== 0) throw new Error('Could not open the .docx (is `unzip` installed, and is it a real Word file?).');
+      const xml = readZipEntry(tmp, 'word/document.xml');
+      if (!xml) throw new Error('Could not open the .docx (is it a real Word file? `unzip` or `tar` has to be installed).');
       return decodeXml(
-        r.stdout.toString('utf8')
+        xml.toString('utf8')
           .replace(/<w:tab\/>/g, '\t')
           .replace(/<w:br\/>/g, '\n')
           .replace(/<\/w:p>/g, '\n')

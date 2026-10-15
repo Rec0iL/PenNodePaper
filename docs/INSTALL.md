@@ -20,7 +20,7 @@ This guide takes you from nothing to a running PenNodePaper on **Linux**, **macO
 | 🎨 Generated pictures and painted maps | a local **ComfyUI** with an image model | optional |
 | 📘 GM binder (printable PDF) | **WeasyPrint** (`weasyprint` on your PATH) | optional |
 | 🖼️ Fast image thumbnails | **ImageMagick** (`magick` or `convert`) | optional (speed only) |
-| 📥 Import notes from `.docx` / `.pdf` | **`unzip`** (docx) and **`pdftotext`** from poppler (pdf) | optional |
+| 📥 Import notes from `.docx` / `.pdf` | **`unzip`** or `tar` (docx; Windows and macOS have `tar`) and **`pdftotext`** from poppler (pdf) | optional |
 | 🛟 Backups (snapshots, archives) | **`tar`** | usually already there |
 | 🛟 Optional git history of a campaign | **`git`** | optional |
 | 🔌 Live link to a tabletop app | a VTT with a PenNodePaper bridge ([supported VTTs](../README.md#supported-vtts)) | optional |
@@ -179,13 +179,15 @@ Either of these:
 
 ### 3. Optional tools
 
-Each of these must be **on your PATH** and found as a plain command: `claude`, `agy`, `codex`, `weasyprint`, `magick`, `pdftotext`, `unzip`, `tar`, `git`. Windows 10/11 already include `tar`.
+**One script installs them:** double-click `scripts\windows\Install-Tools.cmd` (the launcher installer offers it at the end, too). It shows what is missing and asks once; then it installs **ImageMagick** (thumbnails), **poppler** (`pdftotext`, importing `.pdf` notes), **WeasyPrint** (the GM binder PDF) and, if they are missing, **git** and **Node.js** — through `winget`, except WeasyPrint, which is its standalone program from the [WeasyPrint releases](https://github.com/Kozea/WeasyPrint/releases) (kept in `%LOCALAPPDATA%\pennodepaper\tools` and added to your PATH). `Install-Tools.cmd -Check` only reports, `-Yes` doesn't ask. **Word (`.docx`) notes need no extra program**: Windows' own `tar` reads them. Afterwards stop PenNodePaper (tray icon → Stop) and start it again so that it sees the new programs.
+
+By hand, each of these has to be **on your PATH** and found as a plain command: `claude`, `agy`, `codex`, `weasyprint`, `magick`, `pdftotext`, `tar`, `git`. Windows 10/11 already include `tar`.
 
 * **AI programs** (see [AI assistants](#-ai-assistants-claude-and-agy)): Claude Code, Codex and agy installed with **npm** are found too, even though npm gives them a `.cmd` launcher. If the app still says one is *not installed*, check that `codex --version` (or `claude --version`) works in a **new** terminal window, then **restart PenNodePaper from that terminal** (or start it again from the Start menu): a program started before the PATH changed doesn't see the new PATH.
 * **ComfyUI** on the same computer: nothing to configure, see [ComfyUI](#-comfyui-pictures-and-painted-maps).
-* **ImageMagick** (thumbnails): `winget install ImageMagick.ImageMagick` (tick *Add to PATH*).
-* **`pdftotext`** (poppler) and **`unzip`** (importing `.pdf` / `.docx` notes) have no official Windows installer; get them from a package manager such as [Scoop](https://scoop.sh) (`scoop install poppler unzip`) or [Chocolatey](https://chocolatey.org).
-* **WeasyPrint** (GM binder PDF) on Windows is easiest as the standalone executable from the [WeasyPrint releases](https://github.com/Kozea/WeasyPrint/releases); put it on your PATH as `weasyprint`.
+* **ImageMagick** (thumbnails): `winget install ImageMagick.ImageMagick`.
+* **`pdftotext`** (poppler, importing `.pdf` notes): `winget install oschwartz10612.Poppler`.
+* **WeasyPrint** (GM binder PDF): unpack `weasyprint-windows-onedir.zip` from the [WeasyPrint releases](https://github.com/Kozea/WeasyPrint/releases) somewhere and put the folder with `weasyprint.exe` on your PATH.
 * **A VTT** in your browser connects to `ws://127.0.0.1:4317/bridge` as usual.
 
 The settings file lives in `C:\Users\<you>\.config\pennodepaper\`.
@@ -375,7 +377,7 @@ On Windows the [Start menu launcher](#-windows) does all of this by itself when 
 | Generating a picture fails, or the ComfyUI dot in the settings is red | Start ComfyUI, open **⚙ Settings → ComfyUI** and press **↻ test**; the dot turns green when it answers. ComfyUI and PenNodePaper must run on the same computer (or enter the other computer's address there). |
 | ComfyUI refuses the workflow | A model file in the settings isn't installed or has the wrong CLIP type. Pick the files from the lists in the settings. |
 | *GM binder (PDF)* fails | `weasyprint --version` must work in the same terminal. Install WeasyPrint (see the [table](#-other-optional-tools)). |
-| Importing a `.docx` / `.pdf` does nothing | Install `unzip` (docx) or poppler's `pdftotext` (pdf). Pasted text and `.md` / `.txt` always work. |
+| Importing a `.docx` / `.pdf` does nothing | Install `unzip` (docx; on Windows `tar` is enough, it comes with Windows) or poppler's `pdftotext` (pdf) — on Windows `Install-Tools.cmd` does that. Pasted text and `.md` / `.txt` always work. |
 | Pictures load slowly in a big campaign | Install ImageMagick; thumbnails are created automatically. |
 | VTT doesn't connect | Check the address and token in **⚙ Settings → VTT link**, that the VTT's link toggle is on, and that both run on the same computer (the server only accepts `127.0.0.1`). |
 

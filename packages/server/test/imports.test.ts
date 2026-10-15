@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -44,5 +45,31 @@ describe('imported notes', () => {
     store.imports.save('notes.txt', 'Brenn the barkeep hides a secret.');
     expect(runCommand(store, 'list_imports', {}, 'claude')).toMatchObject([{ name: 'notes' }]);
     expect(runCommand(store, 'read_import', { name: 'notes' }, 'claude')).toMatchObject({ next: null, text: expect.stringContaining('Brenn') });
+  });
+});
+
+describe('Word files without unzip (Windows has tar, not unzip)', () => {
+  it('falls back to tar / bsdtar when unzip is not on the PATH', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pnp-docx-'));
+    const oldPath = process.env.PATH;
+    try {
+      // a real (tiny) .docx: a zip with word/document.xml
+      fs.mkdirSync(path.join(dir, 'src', 'word'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'src', 'word', 'document.xml'), '<w:document><w:p><w:r><w:t>Hallo Greywater</w:t></w:r></w:p></w:document>');
+      const docx = path.join(dir, 'notes.docx');
+      const made = spawnSync('zip', ['-qr', docx, 'word'], { cwd: path.join(dir, 'src') });
+      if (made.error || made.status !== 0) return; // no zip here: nothing to test with
+      // a PATH that has bsdtar (as "tar") but no unzip
+      const bin = path.join(dir, 'bin');
+      fs.mkdirSync(bin);
+      const bsd = spawnSync('which', ['bsdtar'], { encoding: 'utf8' }).stdout.trim();
+      if (!bsd) return; // GNU tar only (cannot read zip): the fallback is for bsdtar systems
+      fs.symlinkSync(bsd, path.join(bin, 'tar'));
+      process.env.PATH = bin;
+      expect(extractText(fs.readFileSync(docx), 'notes.docx')).toContain('Hallo Greywater');
+    } finally {
+      process.env.PATH = oldPath;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
