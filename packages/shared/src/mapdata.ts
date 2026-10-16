@@ -57,6 +57,23 @@ export interface MapLabel {
   area?: { x: number; y: number; w: number; h: number };
 }
 
+/** One painting of a prop / structure group: the finished picture that has it (in the group's area) and what it was painted with. */
+export interface GroupVariant {
+  id: string;
+  /** the finished picture (one of `renders`) that contains this painting of the group */
+  file: string;
+  seed: number;
+  at: string;
+  /** the wording the group was painted with */
+  text?: string;
+}
+/** All paintings of one group, oldest first, and the one the latest picture shows. */
+export interface GroupVariants {
+  kind: string;
+  variants: GroupVariant[];
+  pick?: string;
+}
+
 export interface MapDoc {
   id: string;
   name: string;
@@ -92,6 +109,11 @@ export interface MapDoc {
   kinds?: RegionKind[];
   /** finished painted renders (files in images/), cover first */
   renders: string[];
+  /**
+   * The paintings of every prop / structure group, by the group's signature (kind + place, see groupSig). A group that is painted
+   * again keeps its earlier paintings here, so the GM can bring an older one back.
+   */
+  groupVariants?: Record<string, GroupVariants>;
   /** two-step paint: finished images of the EMPTY terrain (candidates the GM chooses from) and the one picked for step 2 */
   terrains?: string[];
   terrainPick?: string;

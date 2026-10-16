@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  DEFAULT_COMFY, DEFAULT_STYLE, IMAGE_KINDS, slugify,
+  DEFAULT_COMFY, DEFAULT_STYLE, IMAGE_KINDS, effectiveCfg, slugify,
   type Actor, type ComfyConfig, type ImageJob, type ImageKind, type MapPaintMode, type StyleConfig,
 } from '@pnp/shared';
 import { Comfy, ComfyError } from './comfy.js';
@@ -16,6 +16,9 @@ import type { Store } from './store.js';
 // ---------------------------------------------------------------------------
 
 type Workflow = ReturnType<Comfy['buildWorkflow']>;
+
+/** How much longer a step takes when the negative prompt is on (CFG above 1 runs the model twice per step): the guess until it has been measured. */
+const NEGATIVE_FACTOR = 1.5;
 
 /** What a multi-image job (e.g. painting all props of a map) gets to work with. */
 export interface RunCtx {
@@ -44,8 +47,8 @@ export interface CustomJob {
   build?: (seed: number) => Promise<Workflow>;
   /** Several generations (and other work) that end in one image: returns the final PNG. */
   runner?: (ctx: RunCtx) => Promise<Buffer>;
-  /** Called with the saved file name once the image exists. */
-  after?: (file: string) => void;
+  /** Called with the saved file name (and the job: its seed…) once the image exists. */
+  after?: (file: string, job: ImageJob) => void;
   /** Part of the saved file name, e.g. "terrain". */
   fileTag?: string;
   /** false = keep the image out of the node's pictures (work-in-progress images such as terrain candidates). Default true. */
@@ -69,6 +72,16 @@ export interface ImageRequest {
   actor: Actor;
 }
 
+/** One ComfyUI generation of an image: what it was told (the final prompts, as sent). */
+export interface PaintPass {
+  phase?: string;
+  positive: string;
+  negative: string;
+  denoise?: number;
+  /** the negative prompt was in effect (CFG above 1) */
+  negativeOn?: boolean;
+}
+
 interface Meta {
   nodeId: string;
   prompt: string;
@@ -77,6 +90,8 @@ interface Meta {
   w: number;
   h: number;
   at: string;
+  /** every generation the picture is made of, in order: what the GM can read to see how a map was painted */
+  passes?: PaintPass[];
 }
 
 /** File extension for the bytes ComfyUI returned (always PNG); the tutorial's stand-in ships compact JPEGs. */
@@ -92,8 +107,8 @@ export class ImageService {
   private queue: { job: ImageJob; negative?: string; custom?: CustomJob }[] = [];
   private running = false;
   private controllers = new Map<string, AbortController>();
-  /** measured speed of this computer: milliseconds per megapixel per sampler step (null until the first image) */
-  private msPerMpStep: number | null = null;
+  /** measured speed of this computer: milliseconds per megapixel per sampler step (null until the first image), with and without the negative prompt (CFG above 1 makes every step about twice the work) */
+  private msPerMpStep: { guided: number | null; plain: number | null } = { guided: null, plain: null };
   readonly ai: Runner;
   private readonly modeFn: () => MapPaintMode;
 
@@ -117,13 +132,19 @@ export class ImageService {
 
   /** Rough seconds for generating `megapixels` on this computer: measured once an image has been made, else a typical 16 GB card. */
   estimateSeconds(megapixels: number): { seconds: number; measured: boolean } {
-    const perMpStep = this.msPerMpStep ?? 9500; // ~77 s per megapixel at 8 steps on a Quadro RTX 5000 (the dev machine)
-    return { seconds: (perMpStep * this.comfyConfig().steps * megapixels) / 1000, measured: this.msPerMpStep !== null };
+    const guided = effectiveCfg(this.comfyConfig()) > 1;
+    const mine = guided ? this.msPerMpStep.guided : this.msPerMpStep.plain;
+    const other = guided ? this.msPerMpStep.plain : this.msPerMpStep.guided;
+    // ~77 s per megapixel at 8 steps on a Quadro RTX 5000 (the dev machine); the negative prompt roughly doubles the work of a step
+    const perMpStep = mine ?? (other !== null ? other * (guided ? NEGATIVE_FACTOR : 1 / NEGATIVE_FACTOR) : 9500 * (guided ? NEGATIVE_FACTOR : 1));
+    return { seconds: (perMpStep * this.comfyConfig().steps * megapixels) / 1000, measured: mine !== null || other !== null };
   }
-  private noteSpeed(ms: number, megapixels: number) {
+  private noteSpeed(ms: number, megapixels: number, guided: boolean) {
     if (megapixels <= 0.05 || ms < 500) return;
     const v = ms / (megapixels * Math.max(1, this.comfyConfig().steps));
-    this.msPerMpStep = this.msPerMpStep === null ? v : this.msPerMpStep * 0.6 + v * 0.4;
+    const key = guided ? 'guided' : 'plain';
+    const old = this.msPerMpStep[key];
+    this.msPerMpStep[key] = old === null ? v : old * 0.6 + v * 0.4;
   }
 
   comfyConfig(): ComfyConfig {
@@ -228,10 +249,17 @@ export class ImageService {
           this.emit(job);
         }
       };
+      const passes: PaintPass[] = [];
       const timed = async (wf: Workflow, megapixels: number, onProgress: (p: number) => void): Promise<Buffer> => {
         const t = Date.now();
         const { bytes } = await this.comfy.generate(wf, { signal: ctl.signal, onProgress, job: { nodeId: job.nodeId, kind: job.kind, seed: job.seed } });
-        if (!this.comfy.simulated) this.noteSpeed(Date.now() - t, megapixels); // a stand-in's pace says nothing about this computer
+        const cfg = (wf['13']?.inputs as { cfg?: unknown } | undefined)?.cfg;
+        const guided = typeof cfg === 'number' && cfg > 1;
+        if (!this.comfy.simulated) this.noteSpeed(Date.now() - t, megapixels, guided); // a stand-in's pace says nothing about this computer
+        // what this generation was told, for the picture's record (the final prompts, as sent)
+        const text = (id: string) => String((wf[id]?.inputs as { text?: unknown } | undefined)?.text ?? '');
+        const denoise = (wf['13']?.inputs as { denoise?: unknown } | undefined)?.denoise;
+        passes.push({ ...(job.phase ? { phase: job.phase } : {}), positive: text('10'), negative: text('11'), ...(typeof denoise === 'number' ? { denoise } : {}), ...(guided ? { negativeOn: true } : {}) });
         return bytes;
       };
       let bytes: Buffer;
@@ -250,10 +278,10 @@ export class ImageService {
       }
       const file = `${slugify(job.nodeId)}${custom?.fileTag ? `-${custom.fileTag}` : ''}-${job.seed}.${imageExt(bytes)}`;
       fs.writeFileSync(path.join(this.dir, file), bytes);
-      this.record(file, { nodeId: job.nodeId, prompt: job.prompt, seed: job.seed, kind: job.kind as ImageKind, w: job.w, h: job.h, at: new Date().toISOString() });
+      this.record(file, { nodeId: job.nodeId, prompt: job.prompt, seed: job.seed, kind: job.kind as ImageKind, w: job.w, h: job.h, at: new Date().toISOString(), ...(passes.length ? { passes } : {}) });
       job.file = file;
       try {
-        custom?.after?.(file);
+        custom?.after?.(file, job);
       } catch (e) {
         console.error('[images] after-hook failed', e);
       }

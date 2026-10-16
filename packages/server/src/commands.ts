@@ -1,5 +1,5 @@
 import { z, type ZodRawShape } from 'zod';
-import { DEFAULT_GROUP, DEFAULT_STYLE, cleanCameraText, customCamera, isAiActor, lookOnly, charactersOfPlace, isCharacterNode, tokenKindOf, dieLabel, soundsOf, entryLine, fragmentName, parseEntry, rollLog, rollTable, seeded, tableEntries, tableFaces, clockOf, lintStory, newSessionMark, nextPlayedSeq, parseScope, playedPath, playerWiki, sessionLabel, sessionOverview, sessionsOf, wikiMarkdown, slugify, storyStatus, validateSheet, visitsOf, type Visit } from '@pnp/shared';
+import { DEFAULT_GROUP, DEFAULT_STYLE, cameraKey, cameraProfile, cleanCameraText, controlLegend, customCamera, dropAiPrompts, groupSig, groupsOfMap, paintPlan, recordVariant, variantsOf, isAiActor, lookOnly, charactersOfPlace, isCharacterNode, tokenKindOf, dieLabel, soundsOf, entryLine, fragmentName, parseEntry, rollLog, rollTable, seeded, tableEntries, tableFaces, clockOf, lintStory, newSessionMark, nextPlayedSeq, parseScope, playedPath, playerWiki, sessionLabel, sessionOverview, sessionsOf, wikiMarkdown, slugify, storyStatus, validateSheet, visitsOf, type Visit } from '@pnp/shared';
 import type { Actor, Backend, DoorKind, EdgeKind, EdgeSide, ImageKind, MapDoc, NodeStatus, NodeType, PropKind, StoryEdge, StoryNode } from '@pnp/shared';
 import { DEFAULT_LABEL_STYLE, DOOR_KINDS, EDGE_KINDS, FRAME_PALETTE, EDGE_SIDES, IMAGE_KINDS, LABEL_PLACES, LABEL_SIZES, LABEL_STYLES, NODE_STATUSES, NODE_TYPES, PROP_KINDS, REGION_KINDS, cleanKind, isKnownKind } from '@pnp/shared';
 import { createHash } from 'node:crypto';
@@ -7,7 +7,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { BINDER_SECTIONS, MAX_COPIES, binderParts, renderPdf } from './binder.js';
 import { buildBundle, characterFromNode, mapCast, handoutFromNode, illustrationsOf, kinetikSession, roleFor, sceneFromImage, sceneFromMap, sheetOf, wantsPlayerStarts } from './vtt.js';
-import { CONTROL_LEGEND, applyOps, groupProps, groupRegion, imageSize, lineStages, regionLegend, renderSvg, toPng, type MapOp } from './maps.js';
+import { applyOps, groupProps, groupRegion, imageSize, lineStages, regionLegend, renderSvg, toPng, type MapOp } from './maps.js';
+import { composeVariant } from './variants.js';
+import { checkImport, keepImport } from './imagefile.js';
 import { propsRunner, readTerrain, mapLook, regionGroupInfos, regionStructuresRunner, regionTerrainRunner, repaintGroupRunner, terrainRunner, estimatePaint, type Fidelity } from './mappaint.js';
 import type { Store, Tx } from './store.js';
 import { printNames, printableCount } from './labels.js';
@@ -618,7 +620,7 @@ def({
     prompt: z.string(),
     width: z.number().optional(),
     size: z.number().optional(),
-    lineGroup: z.enum(['water', 'land']).optional().describe('lines only: water pass (rivers, canals) or land pass (roads, rails, paths, bridges); default derived from the name'),
+    lineGroup: z.enum(['water', 'land', 'wall']).optional().describe('lines only: water pass (rivers, canals), land pass (roads, rails, paths, bridges) or wall pass (walls, palisades, fortifications — painted last, with a gate where a road passes); default derived from the name'),
   },
   run(tx, a) {
     const k = cleanKind(a);
@@ -787,6 +789,18 @@ def({
   },
 });
 
+/** What will be painted by which pass, and the shapes no pass paints (for the AI). */
+const planOf = (m: MapDoc) => {
+  const p = paintPlan(m);
+  return { passes: p.passes, ...(p.orphans.length ? { notPainted: p.orphans.map((o) => `${o.id} (${o.kind}): ${o.why}`) } : {}) };
+};
+/** The paintings every group has had, by group id: the one the latest picture shows is marked. */
+const variantList = (m: MapDoc) =>
+  Object.fromEntries(groupsOfMap(m).flatMap((g) => {
+    const v = variantsOf(m, g);
+    return v && v.variants.length ? [[g.id, { kind: g.kind, variants: v.variants.map((x) => ({ id: x.id, seed: x.seed, at: x.at, current: v.pick === x.id })) }]] : [];
+  }));
+
 def({
   name: 'get_map',
   description: 'Text view of a map: for battle maps the cell rows (y=0 is the top, "." = rock) with the floor legend plus doors/props/labels/tokens; for region maps the shapes. Read this before editing.',
@@ -800,6 +814,8 @@ def({
       paintMode: tx.store.images?.mapMode() ?? 'quick', terrains: m.terrains ?? [], terrainPick: m.terrainPick ?? null,
       ...(m.kind === 'battle' ? { propGroups: groupProps(m).length } : { structureGroups: regionGroupInfos(m), linePasses: lineStages(m).map((st) => `${st.group}: ${st.names.join(', ')}`) }),
       camera: m.view ?? 'default', ...(customCamera(m) ? { cameraText: customCamera(m) } : {}),
+      paintPlan: planOf(m),
+      groupVariants: variantList(m),
       consolidate: m.consolidate !== false,
       lettering: { style: m.lettering?.style ?? DEFAULT_LABEL_STYLE, namesToPrint: printableCount(m), printedPictures: m.lettered ?? {}, styles: LABEL_STYLES.map((x) => `${x.id} — ${x.name} (${x.setting})`) },
       ...(m.kind === 'region' && (tx.state.meta.regionKinds ?? []).length ? { libraryKinds: (tx.state.meta.regionKinds ?? []).map((k) => ({ id: k.id, name: k.name, layer: k.layer, geometry: k.geometry, inThisMap: !!m.kinds?.some((x) => x.id === k.id) })) } : {}),
@@ -879,6 +895,7 @@ def({
     const { w, h } = imageSize(m);
     // the camera belongs to the map and counts in both ways of painting
     if (a.view !== undefined || a.cameraText !== undefined) {
+      const before = cameraKey(m);
       const view = a.view ?? m.view ?? 'default';
       if (view === 'custom') {
         const text = cleanCameraText(a.cameraText ?? m.viewText);
@@ -887,8 +904,12 @@ def({
         m.viewText = text;
       } else if (view === 'default') delete m.view;
       else if (m.kind === 'region') m.view = view; // strict / plan are for region maps; a battle map is painted from above
+      if (cameraKey(m) !== before) dropAiPrompts(m); // what the AI wrote for the groups was written for the old camera
       maps.save(m, { backup: 'none' });
     }
+    // shapes that no pass paints (a wall drawn as an area, a town drawn as a line…) are said right away
+    const orphans = paintPlan(m).orphans;
+    const notPainted = orphans.length ? { notPainted: orphans.map((o) => `${o.id} (${o.kind}): ${o.why}`) } : {};
     if (images.mapMode() === 'staged') {
       // precise way, step 1: the empty terrain. Candidates stay with the map (not on the node) until the GM picks one.
       const place = a.prompt.trim();
@@ -913,14 +934,14 @@ def({
         },
       });
       return {
-        queued: jobs.map((j) => ({ jobId: j.id, seed: j.seed })), size: `${w}x${h}`, step: '1 of 2: empty terrain',
+        queued: jobs.map((j) => ({ jobId: j.id, seed: j.seed })), size: `${w}x${h}`, step: '1 of 2: empty terrain', ...notPainted,
         note: `Precise painting, step 1 of 2. Queued the EMPTY terrain (${m.kind === 'region' ? 'no structures yet' : 'no props yet'}). When it is done the GM looks at it in the map editor (Paint tab) and picks one or has it painted again; then call paint_map_props. This takes a while — minutes, depending on the computer.`,
       };
     }
     const denoise = a.denoise ?? FIDELITY[a.fidelity ?? 'balanced'];
     const style = images.style();
-    const prompt = `${a.prompt.trim().replace(/[.\s]+$/, '')}. ${mapLook(style, m)}. ${m.kind === 'battle' ? CONTROL_LEGEND : regionLegend(m)}`;
-    const negative = `${style.negative}, characters, people${customCamera(m) ? '' : ', perspective view'}, 3d render, photograph`;
+    const prompt = `${a.prompt.trim().replace(/[.\s]+$/, '')}. ${mapLook(style, m)}. ${m.kind === 'battle' ? controlLegend(m) : regionLegend(m)}`;
+    const negative = `${style.negative}, characters, people${cameraProfile(m).custom ? '' : ', perspective view'}, 3d render, photograph`;
     const png = toPng(renderSvg(m, 'control'));
     const jobs = images.enqueueCustom({
       nodeId, kind: 'map', prompt: a.prompt.trim(), w, h, variants: a.variants, seed: a.seed, actor: tx.actor,
@@ -935,7 +956,7 @@ def({
         tx.store.emitMap(cur, tx.actor);
       },
     });
-    return { queued: jobs.map((j) => ({ jobId: j.id, seed: j.seed })), size: `${w}x${h}`, denoise, note: 'Queued (~1.5 min each). The result becomes the node cover; check with image_queue.' };
+    return { queued: jobs.map((j) => ({ jobId: j.id, seed: j.seed })), size: `${w}x${h}`, denoise, ...notPainted, note: 'Queued (~1.5 min each). The result becomes the node cover; check with image_queue.' };
   },
 });
 
@@ -1030,9 +1051,11 @@ def({
     const jobs = images.enqueueCustom({
       nodeId, kind: 'map', prompt: place, w, h, variants: a.variants, seed: a.seed, actor: tx.actor,
       runner,
-      after: (out) => {
+      after: (out, job) => {
         const cur = maps.get(m.id);
         cur.renders.push(out);
+        // every group keeps this painting of it, so it can be brought back after a later one
+        for (const g of groupsOfMap(cur)) recordVariant(cur, g, { file: out, seed: job.seed, text: cur.propPrompts?.[g.id]?.text });
         maps.save(cur, { backup: 'none' });
         tx.store.emitMap(cur, tx.actor);
       },
@@ -1088,15 +1111,65 @@ def({
         maps.save(cur, { backup: 'none' });
         tx.store.emitMap(cur, tx.actor);
       }),
-      after: (out) => {
+      after: (out, job) => {
         const cur = maps.get(m.id);
         cur.renders.push(out);
+        const cg = groupsOfMap(cur).find((x) => x.id === a.group);
+        if (cg) {
+          // a map painted before the paintings were kept: the picture this one was painted on is the group's first painting
+          if (!variantsOf(cur, cg)) recordVariant(cur, cg, { file, seed: 0, text: cur.propPrompts?.[a.group]?.text, at: fileTime(tx.store.imagesDir, file) });
+          recordVariant(cur, cg, { file: out, seed: job.seed, text: cur.propPrompts?.[a.group]?.text });
+        }
         maps.save(cur, { backup: 'none' });
         tx.store.emitMap(cur, tx.actor);
       },
     });
     tx.label = `Repainted group ${a.group} of “${m.name}”`;
-    return { queued: jobs.map((j) => ({ jobId: j.id, seed: j.seed })), group: a.group, kind: g.kind, on: file, note: 'Painting this one group again on the latest picture; the result is added as a new render and becomes the node cover.' };
+    return { queued: jobs.map((j) => ({ jobId: j.id, seed: j.seed })), group: a.group, kind: g.kind, on: file, note: 'Painting this one group again on the latest picture; the result is added as a new render and becomes the node cover. Every earlier painting of the group is kept: get_map lists them (groupVariants) and pick_group_variant brings one back.' };
+  },
+});
+
+/** When a picture was made (its file's date), for the first painting of a group that was recorded afterwards. */
+const fileTime = (dir: string, file: string): string => {
+  try { return fs.statSync(path.join(dir, path.basename(file))).mtime.toISOString(); } catch { return new Date().toISOString(); }
+};
+
+def({
+  name: 'pick_group_variant',
+  description:
+    'Bring an EARLIER painting of one prop / structure group back (the GM sees every painting of a group in the map editor and clicks the one they like; get_map lists them as groupVariants). The older painting is taken from the picture it is in and put into the latest picture around the group; nothing else changes. The result is added as a new render. Needs no ComfyUI.',
+  shape: {
+    mapId: z.string(),
+    group: z.string().describe('group id: g1, g2…'),
+    variant: z.string().describe('the id of the painting, from get_map groupVariants'),
+  },
+  run(tx, a) {
+    const m = tx.store.maps.get(a.mapId);
+    const nodeId = mapNodeId(tx, m.id);
+    if (!nodeId) throw new Error(`Map "${m.id}" is not attached to any node.`);
+    const g = groupsOfMap(m).find((x) => x.id === a.group);
+    if (!g) throw new Error(`This map has no group "${a.group}". Groups: ${groupsOfMap(m).map((x) => `${x.id} (${x.kind})`).join(', ') || 'none'}.`);
+    const v = variantsOf(m, g);
+    const variant = v?.variants.find((x) => x.id === a.variant);
+    if (!v || !variant) throw new Error(`Group ${a.group} has no painting "${a.variant}". It has: ${v?.variants.map((x) => x.id).join(', ') || 'none yet (they are kept from the next painting on)'}.`);
+    const latest = m.renders.at(-1);
+    if (!latest) throw new Error('This map has no finished picture yet.');
+    if (variant.file === latest || v.pick === variant.id) {
+      v.pick = variant.id;
+      tx.store.maps.save(m, { backup: 'none' });
+      tx.store.emitMap(m, tx.actor);
+      return { ok: true, file: latest, note: 'The latest picture shows this painting already.' };
+    }
+    const png = composeVariant(m, g.id, readTerrain(tx.store.imagesDir, latest), readTerrain(tx.store.imagesDir, variant.file));
+    const file = keepImport(tx.store.imagesDir, nodeId, checkImport(png), 'variant');
+    const n = tx.requireNode(nodeId);
+    if (!n.images.includes(file)) tx.putNode({ ...n, images: [...n.images, file], updatedAt: now() });
+    if (!m.renders.includes(file)) m.renders.push(file);
+    v.pick = variant.id;
+    tx.store.maps.save(m, { backup: 'none' });
+    tx.store.emitMap(m, tx.actor);
+    tx.label = `Brought back an earlier ${g.kind.replace(/_/g, ' ')} of “${m.name}”`;
+    return { ok: true, file, group: g.id, variant: variant.id };
   },
 });
 

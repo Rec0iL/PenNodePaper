@@ -545,6 +545,56 @@ describe('precise painting of a region map', () => {
     await idle();
   });
 
+  it('walls get their own pass after the roads, with their own words, and the other passes keep away from walls', async () => {
+    const mapId = setup();
+    const m = store.maps.get(mapId);
+    m.shapes.push({ id: 'town-wall', type: 'path', kind: 'wall', points: [[120, 200], [320, 200], [320, 330]] });
+    store.maps.save(m, { backup: 'none' });
+    run('render_map', { mapId, prompt: PLACE, seed: 5 });
+    await idle();
+    expect(wfs).toHaveLength(4); // terrain, rivers, roads, walls
+    const [terrain, water, land, walls] = wfs;
+    expect(terrain['10'].inputs.text).toContain('No rivers, no streams, no roads, no paths, no walls');
+    expect(terrain['11'].inputs.text).toMatch(/walls, fortifications/);
+    expect(water['11'].inputs.text).toMatch(/walls, fortifications/);
+    expect(land['10'].inputs.text).not.toMatch(/\bwall/i); // no wall in the road pass: it is painted afterwards, on its own
+    expect(land['11'].inputs.text).toMatch(/walls, fortifications/);
+    expect(walls['10'].inputs.text).toMatch(/^.*Fortification walls run across the land with battlements and towers, with a gate where a road passes through/);
+    expect(walls['10'].inputs.text).not.toContain('Nothing is built anywhere'); // walls are built
+    expect(walls['11'].inputs.text).toMatch(/new road/);
+    expect(walls['11'].inputs.text).not.toMatch(/castle|tower/);
+    expect(walls['13'].inputs.denoise).toBe(0.3);
+    expect(walls['28'].class_type).toBe('ImageCompositeMasked'); // kept only inside its own corridor
+    expect(seen.map((j) => j.phase).filter(Boolean)).toEqual(expect.arrayContaining(['Painting the rivers…', 'Painting roads, rails and bridges…', 'Painting the walls…']));
+    expect(aiCalls[0]).toMatch(/do NOT mention rivers, streams, roads, paths, railways or walls/);
+  });
+
+  it('the camera reaches the structures and the AI that writes their prompts, not only the land', async () => {
+    const mapId = setup();
+    run('render_map', { mapId, prompt: PLACE, view: 'strict' });
+    await idle();
+    run('set_map_terrain', { mapId, file: store.maps.get(mapId).terrains![0] });
+    wfs.length = 0;
+    aiCalls.length = 0;
+    run('paint_map_props', { mapId });
+    await idle();
+    for (const wf of wfs.slice(0, 4)) {
+      expect(wf['10'].inputs.text).toMatch(/Hand-painted overland map in plan view, the camera straight down at 90 degrees, orthographic, no tilt/);
+      expect(wf['11'].inputs.text).toMatch(/perspective view/);
+    }
+    const req = aiCalls.find((c) => c.includes('GROUPS (JSON)'))!;
+    expect(req).toContain('(seen straight down in plan view)');
+    expect(req).toContain('as seen straight down in plan view, on a map');
+    // and the survey map says it its own way
+    run('render_map', { mapId, prompt: PLACE, view: 'plan' });
+    await idle();
+    run('set_map_terrain', { mapId, file: store.maps.get(mapId).terrains!.at(-1)! });
+    wfs.length = 0;
+    run('paint_map_props', { mapId });
+    await idle();
+    expect(wfs[0]['10'].inputs.text).toMatch(/survey-plan symbol/);
+  });
+
   it('a map without lines has no line passes', async () => {
     const mapId = setup();
     const m = store.maps.get(mapId);

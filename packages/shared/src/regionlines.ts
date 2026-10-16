@@ -1,5 +1,5 @@
 import type { MapDoc } from './mapdata.js';
-import { isLineKind, lineGroupOf, regionKind, type RegionKind } from './regionkinds.js';
+import { LINE_GROUPS, isLineKind, lineGroupOf, regionKind, type LineGroup, type RegionKind } from './regionkinds.js';
 import { strokeWidth } from './regiongroups.js';
 
 // ---------------------------------------------------------------------------
@@ -43,7 +43,7 @@ export function strokeSvg(s: Shape, k: RegionKind, width: number): string {
 }
 
 export interface LineStage {
-  group: 'water' | 'land';
+  group: LineGroup;
   /** kind ids drawn in this pass */
   kinds: string[];
   shapes: Shape[];
@@ -53,10 +53,10 @@ export interface LineStage {
   prompts: string[];
 }
 
-/** The line passes a map needs, water before land; empty groups are skipped. */
+/** The line passes a map needs: water, then land lines, then walls; empty groups are skipped. */
 export function lineStages(m: Pick<MapDoc, 'shapes' | 'kinds'>): LineStage[] {
   const out: LineStage[] = [];
-  for (const group of ['water', 'land'] as const) {
+  for (const group of LINE_GROUPS) {
     const shapes = m.shapes.filter((s) => s.type === 'path' && s.points.length >= 2).filter((s) => {
       const k = regionKind(s.kind, m.kinds);
       return isLineKind(k) && lineGroupOf(k) === group;
@@ -64,7 +64,8 @@ export function lineStages(m: Pick<MapDoc, 'shapes' | 'kinds'>): LineStage[] {
     if (!shapes.length) continue;
     const kinds = [...new Set(shapes.map((s) => s.kind))];
     const ks = kinds.map((id) => regionKind(id, m.kinds));
-    out.push({ group, kinds, shapes, names: ks.map((k) => k.name.toLowerCase()), prompts: ks.filter((k) => k.custom).map((k) => k.prompt) });
+    // a custom kind brings its own wording; walls always do (the generic words below are for roads and rivers)
+    out.push({ group, kinds, shapes, names: ks.map((k) => k.name.toLowerCase()), prompts: ks.filter((k) => k.custom || group === 'wall').map((k) => k.prompt) });
   }
   return out;
 }
@@ -86,8 +87,11 @@ export function corridorSvg(m: Pick<MapDoc, 'size' | 'kinds'>, stage: Pick<LineS
 /** What the pass tells the model it is painting (the kinds' names, plus the GM's own wording for custom kinds). */
 export function lineStageWhat(st: Pick<LineStage, 'group' | 'names' | 'prompts'>): { what: string; not: string } {
   const list = st.names.join(', ');
+  const head = `${list.charAt(0).toUpperCase()}${list.slice(1)}`;
   const extra = st.prompts.length ? ` ${st.prompts.join('. ')}.` : '';
-  return st.group === 'water'
-    ? { what: `${list.charAt(0).toUpperCase()}${list.slice(1)} winds through the land, with natural banks.${extra}`, not: 'roads, paths, railway, bridge' }
-    : { what: `${list.charAt(0).toUpperCase()}${list.slice(1)} cross the land, with a bridge where they cross water. No new rivers or streams anywhere.${extra}`, not: 'river, stream, new water channel' };
+  if (st.group === 'water') return { what: `${head} winds through the land, with natural banks.${extra}`, not: 'roads, paths, railway, bridge, walls, fortifications' };
+  if (st.group === 'wall') {
+    return { what: `Fortification walls${list === 'wall' ? '' : ` (${list})`} run across the land with battlements and towers, with a gate where a road passes through. No new rivers, streams or roads anywhere.${extra}`, not: 'river, stream, new road, new water channel' };
+  }
+  return { what: `${head} cross the land, with a bridge where they cross water. No new rivers or streams anywhere.${extra}`, not: 'river, stream, new water channel, walls, fortifications' };
 }

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { getRequestListener } from '@hono/node-server';
 import { Hono, type Context } from 'hono';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { DEFAULT_COMFY, MAP_VIEWS, cleanCameraText, type Actor, type Backend, type CommandResult, type MapPaintMode, type ServerMsg } from '@pnp/shared';
+import { DEFAULT_COMFY, MAP_VIEWS, cameraKey, cleanCameraText, dropAiPrompts, type Actor, type Backend, type CommandResult, type MapPaintMode, type ServerMsg } from '@pnp/shared';
 import { spawnCliSync } from './cli.js';
 import { Chat, listModels } from './chat.js';
 import { imageSize, renderSvg } from './maps.js';
@@ -713,6 +713,8 @@ app.put('/api/maps/:id', async (c) => {
   doc.lettered = cur.lettered;
   doc.terrains = cur.terrains;
   doc.terrainPick = cur.terrainPick;
+  doc.groupVariants = cur.groupVariants; // the paintings of the groups belong to the server, too
+  if (!doc.groupVariants) delete doc.groupVariants;
   // the camera is chosen in the editor: only the known ones, and the GM's own words kept short
   if (doc.view && !(MAP_VIEWS as string[]).includes(doc.view)) delete doc.view;
   if (doc.view === 'default') delete doc.view;
@@ -727,6 +729,7 @@ app.put('/api/maps/:id', async (c) => {
   const pp = { ...aiWritten, ...(doc.propPrompts ?? {}) };
   if (Object.keys(pp).length) doc.propPrompts = pp;
   else delete doc.propPrompts;
+  if (cameraKey(doc) !== cameraKey(cur)) dropAiPrompts(doc); // what the AI wrote was written for the old camera
   doc.updatedAt = new Date().toISOString();
   store.maps.save(doc, { backup: 'throttled' });
   store.emitMap(doc, 'user');

@@ -1,10 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  CONSOLIDATE_DENOISE, DEFAULT_STYLE, FLOORS, LINE_DENOISE, cameraOr, customCamera, lookOnly, consolidatePrompt, corridorSvg, derivedWalls, describeGroups, describeRegionGroups, fallbackGroupPrompt, fallbackRegionPrompt,
+  CONSOLIDATE_DENOISE, DEFAULT_STYLE, FLOORS, LINE_DENOISE, cameraProfile, lookOnly, consolidatePrompt, corridorSvg, derivedWalls, describeGroups, describeRegionGroups, fallbackGroupPrompt, fallbackRegionPrompt,
   groupMasks, groupProps, groupRegion, cropFor, imageSize, isLineKind, lineStageWhat, lineStages, linesDrawnSvg, regionCrops, regionKind, regionLegend, regionMasks,
   renderSvg, ringMaskSvg, terrainLegend, toPng, usedKinds,
-  type Backend, type FloorChar, type GroupInfo, type MapDoc, type PropGroup, type RegionGroup, type RegionGroupInfo, type StyleConfig,
+  type Backend, type CameraProfile, type FloorChar, type GroupInfo, type MapDoc, type PropGroup, type RegionGroup, type RegionGroupInfo, type StyleConfig,
 } from './maps.js';
 import { ComfyError } from './comfy.js';
 import type { RunCtx } from './images.js';
@@ -34,7 +34,6 @@ export function terrainDenoise(m: MapDoc, fidelity: Fidelity = 'balanced'): numb
 // ------------------------------- the look of a map: kind, campaign style, camera -----------------
 
 const KIND_PHRASE = { battle: 'tabletop RPG battle map', region: 'overland map' } as const;
-export const STANDARD_CAMERA = 'seen from directly above, orthographic top-down view';
 
 /** How the campaign's style says maps look — the look only (the camera and the kind of map are the map's own). */
 export function styleLook(style: StyleConfig, kind: MapDoc['kind']): string {
@@ -44,17 +43,17 @@ export function styleLook(style: StyleConfig, kind: MapDoc['kind']): string {
 
 /** What every painting prompt says about the map as a whole: what kind of map it is, how the campaign makes maps look, and through which camera this map is seen. */
 export function mapLook(style: StyleConfig, m: MapDoc): string {
-  return [KIND_PHRASE[m.kind], styleLook(style, m.kind), cameraOr(m, STANDARD_CAMERA)].join(', ');
+  return [KIND_PHRASE[m.kind], styleLook(style, m.kind), cameraProfile(m).look].join(', ');
 }
 
 const TERRAIN_NEGATIVE_A = 'furniture, tables, chairs, barrels, crates, chests, objects, props, people, characters, text, letters, watermark, grid lines';
 const TERRAIN_NEGATIVE_B = '3d render, photograph';
 /** What the empty-terrain pass must not paint. "perspective view" is left out for a camera the GM described (it may well be one). */
-export const terrainNegative = (m: MapDoc): string => `${TERRAIN_NEGATIVE_A}${customCamera(m) ? '' : ', perspective view'}, ${TERRAIN_NEGATIVE_B}`;
+export const terrainNegative = (m: MapDoc): string => `${TERRAIN_NEGATIVE_A}${cameraProfile(m).negative ? `, ${cameraProfile(m).negative}` : ''}, ${TERRAIN_NEGATIVE_B}`;
 
 /** Every prop group is painted in this look (validated: bold outline + cast shadow make objects read at a glance). */
 const propStyle = (m: MapDoc): string =>
-  `Hand-painted fantasy RPG battlemap, ${cameraOr(m, 'top-down orthographic view from directly above')}. A bold, clearly readable game object with a thick dark ink outline, rich colour, high contrast and a strong cast shadow on the floor around it, painted in exactly the same art style and lighting as the rest of the map:`;
+  `Hand-painted fantasy RPG battlemap, ${cameraProfile(m).prop}. A bold, clearly readable game object with a thick dark ink outline, rich colour, high contrast and a strong cast shadow on the floor around it, painted in exactly the same art style and lighting as the rest of the map:`;
 const PROP_NEGATIVE = 'blurry, text, watermark';
 
 export { fallbackGroupPrompt };
@@ -74,7 +73,7 @@ function placeFacts(m: MapDoc): string {
 export function shellRequest(m: MapDoc, place: string): string {
   const facts = placeFacts(m);
   return [
-    `You prepare the FIRST of two painting steps for ${customCamera(m) ? `a tabletop battle map (its camera: ${customCamera(m)})` : 'a top-down tabletop battle map'}: the empty place only. Furniture and objects are painted in later, one by one.`,
+    `You prepare the FIRST of two painting steps for ${cameraProfile(m).kindNote}: the empty place only. Furniture and objects are painted in later, one by one.`,
     '',
     `The GM describes the place: "${place.trim()}"`,
     `Facts about the plan: ${facts}`,
@@ -85,15 +84,15 @@ export function shellRequest(m: MapDoc, place: string): string {
   ].join('\n');
 }
 
-/** `camera`: the GM's own words for the camera, when the map has one (else it is seen from directly above). */
-export function groupPromptRequest(place: string, infos: GroupInfo[], camera?: string): string {
-  const asSeen = camera ? `as seen in the map's own view (${camera})` : 'as seen from directly above';
+/** `camera`: the camera of the map (default: seen from directly above), so the AI writes objects as that camera sees them. */
+export function groupPromptRequest(place: string, infos: GroupInfo[], camera?: CameraProfile): string {
+  const asSeen = camera?.writerAs ?? 'as seen from directly above';
   return [
     'You write inpainting prompts for a tabletop battle-map generator.',
     '',
     `PLACE: ${place.trim()}`,
     '',
-    `The finished, EMPTY painted battle map (${camera ?? 'seen from directly above'}) is described above; you cannot see it. Each group below is a spot where an object (or a row/cluster of the same object, treated as ONE object) will now be painted in by an inpainting model.`,
+    `The finished, EMPTY painted battle map (${camera?.writerView ?? 'seen from directly above'}) is described above; you cannot see it. Each group below is a spot where an object (or a row/cluster of the same object, treated as ONE object) will now be painted in by an inpainting model.`,
     '',
     "For every group below, write ONE inpainting prompt (12-30 words) describing exactly what should be painted inside that box, " + asSeen + ": the object, its material, condition, notable details, and how it sits on the floor named in floorUnder. Rules: a group with count>1 is ONE continuous thing or an orderly row (e.g. 5 touching tables = one long banquet table, 5 barrels in a row = a row of barrels); respect extentCells (width x height) so the object fills the box; when count>1 and the items are individual things (chairs, stools, barrels, crates, trees, rocks) say exactly how many separate items stand in the row and that each is clearly distinct, and describe each from above as it really looks (a chair = square seat with a backrest bar on one side; a barrel = round lid with hoops; a tree = round leafy canopy); match the map's look and lighting; top-down only; no people, no text, no perspective words like 'front view'. CONTRAST IS ESSENTIAL: the object must stand out clearly from the floor named in floorUnder, so choose materials and colours that differ strongly from it (on pale marble or stone use dark basalt, black iron, bronze, rust-red, dark wood; on dark floors use paler materials; on grass or sand use dark wood, stone or metal) and mention a crisp dark outline and a distinct cast shadow falling to the lower right. Use natural, believable colours (leaves in ordinary greens and yellow-greens, never blue or teal; wood brown; stone grey) unless the place description says the place is magical or unnatural. Do not repeat the style words, only describe the object.",
     '',
@@ -171,7 +170,7 @@ export function propsRunner(images: ImageApi, m: MapDoc, terrainFile: Buffer, pl
       ctx.phase('Writing the painting prompts…');
       let r: Record<string, string>;
       try {
-        r = parseGroupPrompts(await images.ai(ai.backend, groupPromptRequest(place, open, customCamera(m) || undefined), ai.model), open).prompts;
+        r = parseGroupPrompts(await images.ai(ai.backend, groupPromptRequest(place, open, cameraProfile(m)), ai.model), open).prompts;
       } catch (e) {
         console.error('[mappaint] prompt writing failed, using plain prompts', e);
         r = parseGroupPrompts('', open).prompts;
@@ -208,13 +207,13 @@ const REGION_TERRAIN_DENOISE: Record<Fidelity, number> = { faithful: 0.62, balan
 export const regionTerrainDenoise = (fidelity: Fidelity = 'balanced') => REGION_TERRAIN_DENOISE[fidelity];
 
 /** What the region terrain pass must not paint; the words about the camera are left out for a camera the GM described (a side view has a horizon). */
-const regionTerrainNegative = (m: MapDoc): string =>
-  `buildings, houses, towns, villages, cities, castles, towers, tents, ships, boats, bridges, people, characters, text, letters, labels, watermark, grid lines${customCamera(m) ? '' : ', perspective, oblique view, tilted view, horizon, sky, aerial view from an angle'}, depth of field, 3d render, photograph`;
+const regionTerrainNegative = (m: Pick<MapDoc, 'kind' | 'view' | 'viewText'>): string =>
+  `buildings, houses, towns, villages, cities, castles, towers, tents, ships, boats, bridges, people, characters, text, letters, labels, watermark, grid lines${cameraProfile(m).negative ? `, ${cameraProfile(m).negative}` : ''}, depth of field, 3d render, photograph`;
 
 /** Every structure is painted in this look: small, readable, same scale and lighting as the land around it. */
 const regionPropStyle = (m: MapDoc): string =>
-  `Hand-painted overland map${customCamera(m) ? `, ${customCamera(m)}` : ' seen from high above, top-down'}. A small, clearly readable map feature with a crisp dark outline, rich colour and a short cast shadow to the lower right, painted at the scale of the land around it in exactly the same art style and lighting:`;
-const regionPropNegative = (m: MapDoc): string => `blurry, text, letters, labels, watermark, people${customCamera(m) ? '' : ', perspective view'}, giant, close-up`;
+  `Hand-painted overland map${cameraProfile(m).custom ? ',' : ''} ${cameraProfile(m).prop}. A small, clearly readable map feature with a crisp dark outline, rich colour and a short cast shadow to the lower right, painted at the scale of the land around it in exactly the same art style and lighting:`;
+const regionPropNegative = (m: MapDoc): string => `blurry, text, letters, labels, watermark, people${cameraProfile(m).propNegative ? `, ${cameraProfile(m).propNegative}` : ''}, giant, close-up`;
 
 /** What each terrain kind covers, roughly (shoelace / ellipse areas; lines and spots are named only). */
 function terrainFacts(m: MapDoc): string {
@@ -247,27 +246,27 @@ function terrainFacts(m: MapDoc): string {
 /** Ask the AI to turn the GM's description of the map into a description of the bare land (the model invents towns otherwise). */
 export function regionTerrainRequest(m: MapDoc, place: string): string {
   return [
-    `You prepare the FIRST of two painting steps for ${customCamera(m) ? `an overland (region) map (its camera: ${customCamera(m)})` : 'a top-down overland (region) map'}: the bare land only. Towns, buildings, camps, castles, ruins, bridges, harbours and other structures are painted in later, one by one, into exactly their places.`,
+    `You prepare the FIRST of two painting steps for ${cameraProfile(m).kindNote}: the bare land only. Towns, buildings, camps, castles, ruins, bridges, harbours and other structures are painted in later, one by one, into exactly their places.`,
     '',
     `The GM describes the map: "${place.trim()}"`,
     `Facts about the sketch: ${terrainFacts(m)}`,
     '',
-    'Rewrite it as ONE description (30-60 words, English) of the bare landscape: terrain types and where they lie, colours, vegetation, water, ground texture, light and mood. Rules: nothing built or inhabited — no towns, villages, houses, farms, camps, castles, ruins, ports, ships, bridges or people, and do not use words that imply them (kingdom, settlement, trade route, battlefield…); keep the terrain, climate, season and mood the GM wants; do NOT mention rivers, streams, roads, paths or railways at all: they are painted in later along their own lines, so the land must not contain any of its own. Begin with "Empty" or "Wild" and say "no buildings or settlements".',
+    'Rewrite it as ONE description (30-60 words, English) of the bare landscape: terrain types and where they lie, colours, vegetation, water, ground texture, light and mood. Rules: nothing built or inhabited — no towns, villages, houses, farms, camps, castles, ruins, ports, ships, bridges or people, and do not use words that imply them (kingdom, settlement, trade route, battlefield…); keep the terrain, climate, season and mood the GM wants; do NOT mention rivers, streams, roads, paths, railways or walls at all: they are painted in later along their own lines, so the land must not contain any of its own. Begin with "Empty" or "Wild" and say "no buildings or settlements".',
     '',
     'Answer with ONLY the description, no quotes, no commentary.',
   ].join('\n');
 }
 
-/** `camera`: the GM's own words for the camera, when the map has one (else it is seen from high above). */
-export function regionGroupRequest(place: string, style: StyleConfig, infos: RegionGroupInfo[], camera?: string): string {
-  const asSeen = camera ? `as seen in the map's own view (${camera}), on a map` : 'as seen from high above on a map';
+/** `camera`: the camera of the map (default: seen from high above), so the AI writes structures as that camera sees them. */
+export function regionGroupRequest(place: string, style: StyleConfig, infos: RegionGroupInfo[], camera?: CameraProfile): string {
+  const asSeen = camera?.writerAs ?? 'as seen from high above on a map';
   return [
     'You write inpainting prompts for an overland (region) map generator.',
     '',
     `PLACE / MAP: ${place.trim()}`,
     `WORLD LOOK: ${style.suffix.trim()}${style.regionSuffix ? `; map look: ${style.regionSuffix.trim()}` : ''}`,
     '',
-    `The finished painting of the EMPTY land (${camera ?? 'seen from high above'}) is described above; you cannot see it. Each group below is a spot where one structure or feature (or a few of the same kind, treated as ONE) will now be painted into the land by an inpainting model.`,
+    `The finished painting of the EMPTY land (${camera?.writerView ?? 'seen from high above'}) is described above; you cannot see it. Each group below is a spot where one structure or feature (or a few of the same kind, treated as ONE) will now be painted into the land by an inpainting model.`,
     '',
     'For every group below write ONE inpainting prompt (15-40 words) describing exactly what is painted inside that shape, ' + asSeen + '. Rules: use kindPrompt as the base meaning and shapePrompts (the GM\'s own words) as the truth when given; decide what things look like from the WORLD LOOK — its era, technology and culture (a camp is tipis, nomad yurts, canvas war tents or modern camping tents depending on the world; a house is a thatched cottage, a timber-frame house or a suburban home; a hospital is a field infirmary, a monastery hospice or a modern complex); the object is share of the map width, so paint a small, believable cluster in scale with the land, not a close-up, and when count>1 it is one group of that many close-together items; the object must stand out from the terrain named in under (crisp dark outline, a short cast shadow to the lower right, colours that contrast with it) and its edges meet the nearby terrain naturally (a port has water on the sea side, a bridge spans the water); use natural, believable colours unless the world is magical; top-down only; no people, no text, no labels, no perspective words. Do not repeat the style words, only describe the object.',
     '',
@@ -299,23 +298,13 @@ export function parseRegionPrompts(text: string, infos: RegionGroupInfo[]): { pr
   return { prompts, fromAi };
 }
 
-/**
- * How hard the terrain pass insists on a flat plan view. The model likes painting fantasy maps in an oblique "bird's-eye"
- * perspective (mountains as side-on icons, a horizon); `strict` / `plan` push it to a straight-down view. Natural (default)
- * rated best on the kingdom and the valley, strict on the snow pass: a per-map choice.
- */
+/** Region views as `render_map` takes them (the wording of each lives in camera.ts). */
 export type RegionView = 'default' | 'strict' | 'plan';
-const VIEW_TEXT: Record<RegionView, string> = {
-  default: 'A flat map, strictly straight down from above like a satellite image or a painted game map: no perspective, no horizon, no tilt, mountains and trees shown from above.',
-  strict:
-    'A plan view: the camera points straight down at 90 degrees, like an orthographic satellite image. No horizon, no sky, no tilt, no foreshortening. Mountains and hills are shown as top-down shaded relief with ridge lines, trees as round crowns seen from directly above, nothing is seen from the side.',
-  plan:
-    'A flat top-down topographic plan, drawn like a hillshaded survey map: strictly orthographic, camera straight down at 90 degrees, no horizon line, no sky, no clouds, no three-quarter or isometric view whatsoever. Relief is shown only by top-down hillshading and contour-like ridge lines; every tree is a round crown seen from directly above; coastlines and rivers are seen as plan outlines.',
-};
-const VIEW_NEGATIVE = 'three-quarter view, oblique view, isometric, side view, mountain icons seen from the side, horizon, sky, clouds, bird\'s-eye perspective, tilted camera, foreshortening';
-const LINES_NEGATIVE = 'rivers, streams, roads, paths, railways, bridges';
+const LINES_NEGATIVE = 'rivers, streams, roads, paths, railways, bridges, walls, fortifications';
 /** What the line passes and the consolidate pass must never add. */
 const NO_BUILD = 'buildings, houses, town, city, castle, tower, settlement';
+/** What the wall pass must not add: walls have towers and gates themselves. */
+const NO_BUILD_WALL = 'buildings, houses, town, city, settlement';
 
 export interface RegionTerrainOpts {
   /** override the denoise of the fidelity preset (experiments) */
@@ -346,22 +335,21 @@ export function regionTerrainRunner(images: ImageApi, m: MapDoc, place: string, 
     if (land.split(/\s+/).length < 6 || ctx.signal.aborted) land = `${place.trim().replace(/[.\s]+$/, '')}. Empty wild land, no buildings or settlements`;
     land = land.replace(/[.\s]+$/, '');
     const style = images.style();
-    // a camera the GM described is in mapLook already: it has no built-in flat-view wording of its own
-    const custom = !opts.view && !!customCamera(m);
-    const view: RegionView = opts.view ?? (m.view && m.view !== 'custom' ? m.view : 'default');
+    // the camera of the map (`opts.view` overrides it, for experiments); a camera the GM described is in mapLook already
+    const cam = cameraProfile(opts.view ? { ...m, view: opts.view } : m);
     const stages = lineStages(m);
     const total = 1 + stages.length;
-    const prompt = `${land}. ${mapLook(style, m)}, completely empty land, nothing built, no buildings, no settlements, no text. ${custom ? '' : `${VIEW_TEXT[view]} `}No rivers, no streams, no roads, no paths: bare ground only. ${regionLegend(m, true)}`;
+    const prompt = `${land}. ${mapLook(style, m)}, completely empty land, nothing built, no buildings, no settlements, no text. ${cam.terrain ? `${cam.terrain} ` : ''}No rivers, no streams, no roads, no paths, no walls: bare ground only. ${regionLegend(m, true)}`;
     ctx.phase('Painting the terrain…');
     const png = toPng(renderSvg(m, 'terrain'));
     const name = await images.comfy.uploadImage(png, `pnp-${m.id}-terrain.png`);
-    const negative = `${style.negative}, ${regionTerrainNegative(m)}, ${LINES_NEGATIVE}${!custom && view !== 'default' ? `, ${VIEW_NEGATIVE}` : ''}`;
+    const negative = `${style.negative}, ${regionTerrainNegative(opts.view ? { ...m, view: opts.view } : m)}, ${LINES_NEGATIVE}${cam.extraNegative ? `, ${cam.extraNegative}` : ''}`;
     const wf = images.comfy.buildImg2Img(prompt, negative, name, ctx.seed, opts.denoise ?? regionTerrainDenoise(fidelity));
     let current = await ctx.generate(wf, (w * h) / 1e6, [0, 1 / total]);
     for (let i = 0; i < stages.length; i++) {
       if (ctx.signal.aborted) throw new ComfyError('Cancelled.');
       const st = stages[i];
-      ctx.phase(st.group === 'water' ? 'Painting the rivers…' : 'Painting roads, rails and bridges…');
+      ctx.phase(st.group === 'water' ? 'Painting the rivers…' : st.group === 'wall' ? 'Painting the walls…' : 'Painting roads, rails and bridges…');
       const drawn = toPng(linesDrawnSvg(m, current.toString('base64'), st));
       const band = toPng(corridorSvg(m, st));
       const tag = `pnp-${m.id}-${ctx.seed}-l${i}`;
@@ -369,8 +357,9 @@ export function regionTerrainRunner(images: ImageApi, m: MapDoc, place: string, 
       const orig = await images.comfy.uploadImage(current, `${tag}-orig.png`);
       const mask = await images.comfy.uploadImage(band, `${tag}-band.png`);
       const w2 = lineStageWhat(st);
-      const text = `${land}. ${w2.what} Nothing is built anywhere. ${mapLook(style, m)}. One coherent painting, the same lighting and brush style everywhere.`;
-      const neg = `${style.negative}, text, letters, labels, ${NO_BUILD}, ${w2.not}, distorted, blurry${!custom && view !== 'default' ? `, ${VIEW_NEGATIVE}` : ''}`;
+      const wall = st.group === 'wall';
+      const text = `${land}. ${w2.what}${wall ? '' : ' Nothing is built anywhere.'} ${mapLook(style, m)}. One coherent painting, the same lighting and brush style everywhere.`;
+      const neg = `${style.negative}, text, letters, labels, ${wall ? NO_BUILD_WALL : NO_BUILD}, ${w2.not}, distorted, blurry${cam.extraNegative ? `, ${cam.extraNegative}` : ''}`;
       const rf = images.comfy.buildRefine(text, neg, { image: imgName, original: orig, mask }, ctx.seed + 1 + i, opts.lineDenoise ?? LINE_DENOISE);
       current = await ctx.generate(rf, (w * h) / 1e6, [(1 + i) / total, (2 + i) / total]);
     }
@@ -415,7 +404,7 @@ export function regionStructuresRunner(
       ctx.phase('Writing the painting prompts…');
       let r: Record<string, string>;
       try {
-        r = parseRegionPrompts(await images.ai(ai.backend, regionGroupRequest(place, style, open, customCamera(m) || undefined), ai.model), open).prompts;
+        r = parseRegionPrompts(await images.ai(ai.backend, regionGroupRequest(place, style, open, cameraProfile(m)), ai.model), open).prompts;
       } catch (e) {
         console.error('[mappaint] prompt writing failed, using plain prompts', e);
         r = parseRegionPrompts('', open).prompts;
@@ -480,10 +469,10 @@ export function repaintGroupRunner(
       try {
         if (region) {
           const infos = describeRegionGroups(m, [group as RegionGroup]);
-          prompt = parseRegionPrompts(await images.ai(ai.backend, regionGroupRequest(place, style, infos, customCamera(m) || undefined), ai.model), infos).prompts[groupId];
+          prompt = parseRegionPrompts(await images.ai(ai.backend, regionGroupRequest(place, style, infos, cameraProfile(m)), ai.model), infos).prompts[groupId];
         } else {
           const infos = describeGroups(m, [group as PropGroup]);
-          prompt = parseGroupPrompts(await images.ai(ai.backend, groupPromptRequest(place, infos, customCamera(m) || undefined), ai.model), infos).prompts[groupId];
+          prompt = parseGroupPrompts(await images.ai(ai.backend, groupPromptRequest(place, infos, cameraProfile(m)), ai.model), infos).prompts[groupId];
         }
       } catch (e) {
         console.error('[mappaint] prompt writing failed, using the plain prompt', e);

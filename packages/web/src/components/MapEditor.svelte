@@ -4,8 +4,8 @@
   // edit_map uses, so the GM and the AI can work on one map at the same time.
   import { onMount, untrack } from 'svelte';
   import {
-    DEFAULT_LABEL_STYLE, DOOR_KINDS, FIT_MODES, actorName, gridForPicture, sizeForPicture, FLOORS, LABEL_PLACES, LABEL_STYLES, NODE_TYPE_INFO, PROP_KINDS, REGION_KINDS, applyOps, canon, charactersOfPlace, cleanKind, derivedWalls, fallbackGroupPrompt, fallbackRegionPrompt, getLabelContext, groupProps, groupRegion, imageSize, isLineKind, lettersSvg, placedLabels, pointInShape, regionKind, renderSvg, strokeWidth, tokenKindOf,
-    type DoorKind, type FitMode, type LabelPlace, type LabelSize, type MapDoc, type MapOp, type Placed, type PropKind, type RegionKind,
+    DEFAULT_LABEL_STYLE, DOOR_KINDS, FIT_MODES, actorName, gridForPicture, groupWindow, groupsOfMap, lineGroupOf, paintPlan, sizeForPicture, variantsOf, FLOORS, LABEL_PLACES, LABEL_STYLES, NODE_TYPE_INFO, PROP_KINDS, REGION_KINDS, applyOps, canon, charactersOfPlace, cleanKind, derivedWalls, fallbackGroupPrompt, fallbackRegionPrompt, getLabelContext, groupProps, groupRegion, imageSize, isLineKind, lettersSvg, placedLabels, pointInShape, regionKind, renderSvg, strokeWidth, tokenKindOf,
+    type DoorKind, type FitMode, type LabelPlace, type LineGroup, type LabelSize, type MapDoc, type MapOp, type Placed, type PropKind, type RegionKind,
   } from '@pnp/shared';
   import { app, cmd, say, selectNode, sendChat } from '../lib/app.svelte';
   import { initLabels, labelState } from '../lib/labels.svelte';
@@ -209,6 +209,7 @@
         doc.lettered = ev.map.lettered;
         doc.terrains = ev.map.terrains;
         doc.terrainPick = ev.map.terrainPick;
+        doc.groupVariants = ev.map.groupVariants;
         doc.paintPrompt = ev.map.paintPrompt;
         // prompts the AI wrote for the prop groups arrive where the GM has no wording of their own
         for (const [id, e] of Object.entries(ev.map.propPrompts ?? {})) {
@@ -493,13 +494,13 @@
   }
   // ---- custom types (the campaign's library) ----
   let customOpen = $state(false);
-  let cf = $state({ id: '', name: '', cls: 'terrain' as 'terrain' | 'line' | 'structure', color: '#7cff3a', prompt: '', width: 10, size: 20, group: 'land' as 'water' | 'land' });
+  let cf = $state({ id: '', name: '', cls: 'terrain' as 'terrain' | 'line' | 'structure', color: '#7cff3a', prompt: '', width: 10, size: 20, group: 'land' as LineGroup });
   function newCustom() {
     cf = { id: '', name: '', cls: 'terrain', color: '#7cff3a', prompt: '', width: 10, size: 20, group: 'land' };
     customOpen = true;
   }
   function editCustom(k: RegionKind) {
-    cf = { id: k.id, name: k.name, cls: k.geometry === 'line' ? 'line' : k.layer === 'structure' ? 'structure' : 'terrain', color: k.color, prompt: k.prompt, width: k.width ?? 10, size: k.size ?? 20, group: k.lineGroup ?? 'land' };
+    cf = { id: k.id, name: k.name, cls: k.geometry === 'line' ? 'line' : k.layer === 'structure' ? 'structure' : 'terrain', color: k.color, prompt: k.prompt, width: k.width ?? 10, size: k.size ?? 20, group: lineGroupOf(k) };
     customOpen = true;
   }
   async function saveCustom() {
@@ -905,6 +906,26 @@
     const e = doc?.propPrompts?.[g.id];
     return e && e.kind === g.kind ? e : null;
   };
+  /** every group's earlier paintings and the part of the picture that shows it (for the preview strip) */
+  const variantInfo = $derived.by(() => {
+    if (!doc) return {} as Record<string, { v: ReturnType<typeof variantsOf>; win: ReturnType<typeof groupWindow> }>;
+    return Object.fromEntries(groupsOfMap(doc).map((g) => [g.id, { v: variantsOf(doc!, g), win: groupWindow(doc!, g) }]));
+  });
+  const PREVIEW = 76;
+  /** one painting of a group as a small picture: the window around the group cut out of the finished picture */
+  function thumbStyle(file: string, win: { x: number; y: number; w: number; h: number }) {
+    const k = PREVIEW / Math.max(win.w, win.h);
+    return `width:${Math.round(win.w * k)}px;height:${Math.round(win.h * k)}px;background-image:url(/api/images/${file}?w=720);background-size:${Math.round(dim.w * k)}px ${Math.round(dim.h * k)}px;background-position:${-Math.round(win.x * k)}px ${-Math.round(win.y * k)}px`;
+  }
+  const when = (iso: string) => (iso ? new Date(iso).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '');
+  async function pickVariant(g: { id: string; kind: string }, id: string) {
+    const r = await cmd<{ file?: string; note?: string }>('pick_group_variant', { mapId, group: g.id, variant: id });
+    if (!r) return;
+    if (r.file) { shownRender = r.file; view = 'painted'; }
+    say(r.note ?? `An earlier ${g.kind.replace(/_/g, ' ')} is back in the picture`, 'ok');
+  }
+  /** what each pass paints, and the shapes that no pass would ever paint */
+  const plan = $derived(doc ? paintPlan(doc) : null);
   const ownPrompts = $derived(groups.filter((g) => { const e = promptOf(g); return e && !e.ai && e.text.trim(); }).length);
   const defaultPrompt = (g: Group) => g.fallback;
   /** the GM's own wording (an empty text = "no wording of mine", the AI writes it) */
@@ -1429,6 +1450,17 @@
               </div>
             {/each}
           {/snippet}
+          {#snippet planView()}
+            {#if plan}
+              {#if plan.orphans.length}
+                <div class="warn" role="alert">
+                  ⚠ {plan.orphans.length === 1 ? 'One shape' : `${plan.orphans.length} shapes`} on this map will not be painted:
+                  <ul class="orph">{#each plan.orphans as o (o.id)}<li>{o.why}</li>{/each}</ul>
+                </div>
+              {/if}
+              <details class="plan"><summary>What gets painted</summary><ul>{#each plan.passes as line}<li class="dim">{line}</li>{/each}</ul></details>
+            {/if}
+          {/snippet}
           {#snippet cameraView()}
             <div class="label" data-tour="map-camera">Camera <span class="dim">— {staged && !battle ? 'how the land is painted' : 'where the map is seen from'}</span></div>
             <div class="cams" class:two={cameras.length === 2} role="radiogroup" aria-label="Camera">
@@ -1503,12 +1535,13 @@
             <div class="mode" data-tour="map-mode">Precise painting · 2 steps <button class="lnk" onclick={() => (app.settingsOpen = true)} title="Change in Settings → Map painting">change</button></div>
             <p class="warn">⏱ This takes a while — {dur(paint?.terrainSeconds ?? 0)} for the terrain, then {dur(paint?.propsSeconds ?? 0)} for {paint?.groups ?? 0} {battle ? 'prop' : 'structure'} group{paint?.groups === 1 ? '' : 's'}, on this computer{paint?.measured ? '' : ' (a rough guess until ComfyUI has made an image here)'}. You decide after each step, and you can stop at any time.</p>
 
-            <div class="step"><b>①</b> Terrain <span class="dim">{battle ? '— the empty place, no props' : '— the land, then rivers and roads along your lines; no structures'}</span></div>
+            <div class="step"><b>①</b> Terrain <span class="dim">{battle ? '— the empty place, no props' : '— the land, then rivers, roads and walls along your lines; no structures'}</span></div>
             <textarea class="field" data-tour="map-prompt" rows="3" placeholder="Materials, mood, lighting, setting… (the AI turns this into a description of the empty place)" bind:value={prompt_} oninput={promptInput}></textarea>
             <div class="seg w">
               {#each ['faithful', 'balanced', 'painterly'] as f}<button class:on={fidelity === f} onclick={() => (fidelity = f as typeof fidelity)}>{f}</button>{/each}
             </div>
             <div class="dim">{TERRAIN_HINT[fidelity]}</div>
+            {@render planView()}
             {@render cameraView()}
             <div class="row">
               <select class="field" bind:value={variants} title="How many terrains to paint to choose from">{#each [1, 2, 3, 4] as n}<option value={n}>{n}×</option>{/each}</select>
@@ -1539,6 +1572,7 @@
                 <p class="dim">Every group is painted from its own prompt. Leave one empty and the AI writes it when you paint — with no AI connected a plain default is used. Write your own to steer what appears: your wording is used exactly as it is. After a painting run, what the AI wrote is shown here so you can adjust it and paint again.</p>
                 {#each groups as g (g.id)}
                   {@const e = promptOf(g)}
+                  {@const vi = variantInfo[g.id]}
                   <div class="gp" class:hot={hotGroup === g.id}>
                     <div class="gh">
                       <b>{g.id.slice(1)}</b> {g.kind.replace(/_/g, ' ')}{g.count > 1 ? ` ×${g.count}` : ''}
@@ -1552,6 +1586,18 @@
                       {#if e?.text}<button class="lnk" onclick={() => setPrompt(g, '')}>clear</button>{/if}
                       {#if doc?.renders.length}<button class="lnk" disabled={busy} onclick={() => repaintGroup(g)} title="Paint only this group again on the finished picture, with a new seed — the rest of the picture is not touched">↻ paint this one again</button>{/if}
                     </div>
+                    {#if vi?.v && vi.v.variants.length > 1}
+                      <div class="vars">
+                        <span class="dim">Paintings of this group — click one to bring it back:</span>
+                        <div class="vstrip">
+                          {#each vi.v.variants as x, k (x.id)}
+                            <button class="vth" class:on={vi.v.pick === x.id} disabled={busy || vi.v.pick === x.id} title={`${k + 1}. painting · ${x.seed ? `seed ${x.seed} · ` : ''}${when(x.at)}${vi.v.pick === x.id ? ' — in the picture now' : ' — click to use it, double-click to see the whole picture'}${x.text ? `\n${x.text}` : ''}`} onclick={() => pickVariant(g, x.id)} ondblclick={() => nodeId && (app.lightbox = { nodeId, file: x.file })}>
+                              <span class="vimg" style={thumbStyle(x.file, vi.win)}></span><i>{k + 1}</i>
+                            </button>
+                          {/each}
+                        </div>
+                      </div>
+                    {/if}
                   </div>
                 {/each}
               </details>
@@ -1580,6 +1626,7 @@
               {#each ['faithful', 'balanced', 'painterly'] as f}<button class:on={fidelity === f} onclick={() => (fidelity = f as typeof fidelity)}>{f}</button>{/each}
             </div>
             <div class="dim">{FIDELITY_HINT[fidelity]}</div>
+            {@render planView()}
             {@render cameraView()}
             <div class="row">
               <select class="field" bind:value={variants} title="Variants">{#each [1, 2, 3, 4] as n}<option value={n}>{n}×</option>{/each}</select>
@@ -1644,7 +1691,7 @@
               {#if cf.cls === 'line'}
                 <div class="row">
                   <label class="num">usual width px <input class="field" type="number" min="1" max="120" bind:value={cf.width} /></label>
-                  <label class="num">painted with <select class="field" bind:value={cf.group}><option value="water">the rivers (water)</option><option value="land">roads &amp; rails (land)</option></select></label>
+                  <label class="num">painted with <select class="field" bind:value={cf.group}><option value="water">the rivers (water)</option><option value="land">roads &amp; rails (land)</option><option value="wall">walls &amp; fortifications (last)</option></select></label>
                 </div>
               {:else if cf.cls === 'structure'}
                 <label class="num">usual radius px <input class="field" type="number" min="3" max="200" bind:value={cf.size} /></label>
@@ -1810,6 +1857,18 @@
   .cam:hover { border-color: var(--accent); color: var(--text); }
   .cam.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
   .imp { display: grid; gap: 6px; margin-top: 6px; }
+  .plan { margin: 4px 0; font-size: 12px; }
+  .plan summary { cursor: pointer; color: var(--text-dim); }
+  .plan ul, .orph { margin: 4px 0 4px 16px; padding: 0; }
+  .vars { margin-top: 6px; display: grid; gap: 4px; }
+  .vstrip { display: flex; flex-wrap: wrap; gap: 6px; }
+  .vth { position: relative; padding: 0; border: 2px solid var(--line-2); border-radius: 8px; overflow: hidden; background: var(--bg); line-height: 0; }
+  .vth:hover:not(:disabled) { border-color: var(--accent); }
+  .vth.on { border-color: var(--ok, #7fe0a0); }
+  .vth:disabled { opacity: 1; cursor: default; }
+  .vth i { position: absolute; left: 3px; top: 3px; font-style: normal; font-size: 10px; line-height: 1; padding: 2px 5px; border-radius: 99px; background: rgba(10, 12, 17, 0.8); color: var(--text); }
+  .vth.on i { background: var(--ok, #7fe0a0); color: #0a0c11; }
+  .vimg { display: block; background-repeat: no-repeat; }
   .impview { width: 100%; height: auto; display: block; border: 1px solid var(--line-2); border-radius: 8px; background: #07080c; }
   label.btn { cursor: pointer; }
   label.btn.off { opacity: .6; pointer-events: none; }

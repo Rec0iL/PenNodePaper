@@ -108,6 +108,16 @@ export interface ComfyConfig {
   cfg: number;
   sampler: string;
   scheduler: string;
+  /**
+   * Negative prompts: at CFG 1 (the turbo models' setting) ComfyUI ignores the negative prompt completely, so every "no furniture /
+   * no buildings / no text" list was dead. With this on, a picture is made with `negativeCfg` instead of CFG 1 (a CFG you set above 1
+   * yourself is kept), which makes ComfyUI paint the negative prompt as its own pass: it works, at about twice the work per step.
+   * (ComfyUI's NAG node was tried: Krea 2 conditions on a different number of tokens for the positive and the negative prompt, so
+   * they never run in one batch and NAG then silently does nothing.)
+   */
+  negative: boolean;
+  /** the CFG used while the negative prompt is on: 2 clears the unwanted objects, 1.5 half-way, from about 3 turbo models burn out */
+  negativeCfg: number;
 }
 
 export const DEFAULT_COMFY: ComfyConfig = {
@@ -120,7 +130,13 @@ export const DEFAULT_COMFY: ComfyConfig = {
   cfg: 1,
   sampler: 'euler',
   scheduler: 'simple',
+  negative: true,
+  negativeCfg: 2,
 };
+
+/** The CFG a picture is made with: the negative prompt's own when it is on (and the CFG is the turbo 1), else the one in the settings. */
+export const effectiveCfg = (c: Pick<ComfyConfig, 'cfg' | 'negative' | 'negativeCfg'>): number =>
+  c.negative !== false && c.cfg <= 1 ? Math.max(1.1, Math.min(3, c.negativeCfg ?? 2)) : c.cfg;
 
 export interface StyleConfig {
   /** Appended to every image prompt (the campaign's look). */
@@ -423,6 +439,8 @@ export * from './vtt.js';
 export * from './sheet.js';
 export * from './actors.js';
 export * from './camera.js';
+export * from './paintplan.js';
+export * from './groupvariants.js';
 export * from './imagefit.js';
 export * from './story.js';
 export * from './wiki.js';

@@ -11,6 +11,27 @@ import { applyOps, imageSize, newMap, renderSvg, terrainLegend, toPng } from '..
 import { fallbackGroupPrompt, groupPromptRequest, parseGroupPrompts, shellRequest, terrainDenoise } from '../src/mappaint.js';
 import { Persistence } from '../src/persistence.js';
 import { Store } from '../src/store.js';
+import zlib from 'node:zlib';
+import { groupSig, groupsOfMap, variantsOf } from '@pnp/shared';
+
+/** one pixel of an 8-bit RGBA PNG as '#rrggbb' (enough of a decoder for the pictures the tests make) */
+function pixel(png: Buffer, x: number, y: number): string {
+  const w = png.readUInt32BE(16), bpp = 4;
+  const idat: Buffer[] = [];
+  for (let i = 8; i < png.length;) { const len = png.readUInt32BE(i); if (png.toString('ascii', i + 4, i + 8) === 'IDAT') idat.push(png.subarray(i + 8, i + 8 + len)); i += 12 + len; }
+  const raw = zlib.inflateSync(Buffer.concat(idat));
+  const stride = w * bpp, rows: Buffer[] = [];
+  for (let r = 0, o = 0; o < raw.length; r++, o += stride + 1) {
+    const f = raw[o], line = Buffer.from(raw.subarray(o + 1, o + 1 + stride)), up = rows[r - 1] ?? Buffer.alloc(stride);
+    for (let i = 0; i < stride; i++) {
+      const a = i >= bpp ? line[i - bpp] : 0, b = up[i], c = i >= bpp ? up[i - bpp] : 0;
+      line[i] = (line[i] + (f === 1 ? a : f === 2 ? b : f === 3 ? (a + b) >> 1 : f === 4 ? ((p) => (p.pa <= p.pb && p.pa <= p.pc ? a : p.pb <= p.pc ? b : c))({ pa: Math.abs(b - c), pb: Math.abs(a - c), pc: Math.abs(a + b - 2 * c) }) : 0)) & 255;
+    }
+    rows.push(line);
+  }
+  const p = rows[y].subarray(x * bpp, x * bpp + 3);
+  return `#${[...p].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
+}
 
 // ---- pure parts ------------------------------------------------------------------------------
 
@@ -188,6 +209,10 @@ let aiMode: 'ok' | 'down';
 let delay = 5;
 const run = (name: string, args: unknown = {}) => runCommand(store, name, args, 'claude') as any;
 
+/** set it to the size of the map's picture to get real PNGs (one solid colour per generation) instead of placeholder bytes */
+let realPng: { w: number; h: number } | null = null;
+const COLORS = ['#c0392b', '#2980b9', '#27ae60', '#f39c12', '#8e44ad', '#16a085', '#d35400', '#2c3e50'];
+
 class FakeComfy extends Comfy {
   uploaded = 0;
   async uploadImage(_b: Buffer, name: string) {
@@ -200,6 +225,7 @@ class FakeComfy extends Comfy {
     await new Promise((r) => setTimeout(r, delay));
     if (opts.signal?.aborted) throw new ComfyError('Cancelled.');
     if (fail) throw new ComfyError(fail);
+    if (realPng) return { bytes: toPng(`<svg xmlns="http://www.w3.org/2000/svg" width="${realPng.w}" height="${realPng.h}"><rect width="${realPng.w}" height="${realPng.h}" fill="${COLORS[(wfs.length - 1) % COLORS.length]}"/></svg>`), filename: 'x.png' };
     return { bytes: Buffer.from(`png-${wfs.length}`), filename: 'x.png' };
   }
 }
@@ -215,6 +241,7 @@ beforeEach(() => {
   wfs = [];
   fail = null;
   mode = 'staged';
+  realPng = null;
   aiCalls = [];
   aiMode = 'ok';
   delay = 5;
@@ -276,6 +303,19 @@ describe('precise painting (two steps)', () => {
     expect(fs.existsSync(path.join(dir, 'images', m.terrains![0]))).toBe(true);
     expect(seen.some((j) => j.phase === 'Describing the empty place…')).toBe(true);
     expect(seen.some((j) => j.phase === 'Painting the terrain…')).toBe(true);
+  });
+
+  it('the picture keeps what every step was told, and whether the negative prompt was in effect', async () => {
+    const mapId = setup();
+    run('render_map', { mapId, prompt: PLACE, seed: 7 });
+    await idle();
+    const file = store.maps.get(mapId).terrains![0];
+    const passes = svc.meta()[file].passes!;
+    expect(passes).toHaveLength(1);
+    expect(passes[0]).toMatchObject({ phase: 'Painting the terrain…', negativeOn: true });
+    expect(passes[0].positive).toContain('completely empty');
+    expect(passes[0].negative).toMatch(/furniture/);
+    expect(passes[0].denoise).toBeCloseTo(0.72, 2);
   });
 
   it('falls back to the GM text plus "completely empty" when the AI is not available', async () => {
@@ -503,6 +543,122 @@ describe('the camera of a battle map', () => {
     expect(wfs[0]['10'].inputs.text).toContain('seen from the side, like a cutaway');
     expect(wfs[0]['10'].inputs.text).not.toContain('top-down orthographic');
     expect(wfs[0]['11'].inputs.text).not.toContain('perspective view');
+  });
+});
+
+describe('every painting of a group is kept, and an older one can be brought back', () => {
+  async function painted() {
+    const mapId = setup();
+    realPng = imageSize(store.maps.get(mapId));
+    run('render_map', { mapId, prompt: PLACE });
+    await idle();
+    run('set_map_terrain', { mapId, file: store.maps.get(mapId).terrains![0] });
+    run('paint_map_props', { mapId, consolidate: false });
+    await idle();
+    const m = store.maps.get(mapId);
+    const barrels = groupsOfMap(m).find((g) => g.kind === 'barrel')!;
+    return { mapId, barrels };
+  }
+  const file = (id: string) => path.join(dir, 'images', id);
+
+  it('paint_map_props notes the painting of every group; every repaint adds one for its group only', async () => {
+    const { mapId, barrels } = await painted();
+    let m = store.maps.get(mapId);
+    expect(Object.keys(m.groupVariants!)).toHaveLength(3);
+    expect(variantsOf(m, barrels)!.variants).toHaveLength(1);
+    run('repaint_map_group', { mapId, group: barrels.id, seed: 11 });
+    await idle();
+    run('repaint_map_group', { mapId, group: barrels.id, seed: 12 });
+    await idle();
+    m = store.maps.get(mapId);
+    const v = variantsOf(m, barrels)!;
+    expect(v.variants.map((x) => x.seed)).toEqual([expect.any(Number), 11, 12]);
+    expect(v.pick).toBe(v.variants[2].id);
+    expect(v.variants.map((x) => x.file)).toEqual(m.renders); // three pictures, one painting of the barrels in each
+    const table = groupsOfMap(m).find((g) => g.kind === 'table')!;
+    expect(variantsOf(m, table)!.variants).toHaveLength(1); // the other groups were not painted again
+    // the AI sees them
+    const list = run('get_map', { mapId }).groupVariants[barrels.id];
+    expect(list.variants.map((x: any) => x.current)).toEqual([false, false, true]);
+  });
+
+  it('a map painted before the paintings were kept: the picture a group is painted on is its first painting', async () => {
+    const { mapId, barrels } = await painted();
+    const m0 = store.maps.get(mapId);
+    const first = m0.renders[0];
+    delete m0.groupVariants;
+    store.maps.save(m0, { backup: 'none' });
+    run('repaint_map_group', { mapId, group: barrels.id, seed: 5 });
+    await idle();
+    const v = variantsOf(store.maps.get(mapId), barrels)!;
+    expect(v.variants).toHaveLength(2);
+    expect(v.variants[0].file).toBe(first);
+  });
+
+  it('pick_group_variant puts an older painting into the latest picture: the group from the old one, everything else as it is', async () => {
+    const { mapId, barrels } = await painted();
+    const first = store.maps.get(mapId).renders[0];
+    run('repaint_map_group', { mapId, group: barrels.id, seed: 11 });
+    await idle();
+    let m = store.maps.get(mapId);
+    const latest = m.renders.at(-1)!;
+    const { cell } = imageSize(m);
+    const inBarrels = [Math.round(4 * cell), Math.round(7.5 * cell)] as const; // the two barrels at 3,7 and 4,7
+    const elsewhere = [imageSize(m).w - 40, 40] as const;
+    const colourOf = (f: string, at: readonly [number, number]) => pixel(fs.readFileSync(file(f)), at[0], at[1]);
+    expect(colourOf(first, inBarrels)).not.toBe(colourOf(latest, inBarrels)); // two different generations
+
+    const v = variantsOf(m, barrels)!;
+    const r = run('pick_group_variant', { mapId, group: barrels.id, variant: v.variants[0].id });
+    expect(r.ok).toBe(true);
+    m = store.maps.get(mapId);
+    const out = m.renders.at(-1)!;
+    expect(out).not.toBe(latest);
+    expect(out).toMatch(/-variant-/);
+    expect(colourOf(out, inBarrels)).toBe(colourOf(first, inBarrels)); // the older painting is back…
+    expect(colourOf(out, elsewhere)).toBe(colourOf(latest, elsewhere)); // …and nothing else changed
+    expect(variantsOf(m, barrels)!.pick).toBe(v.variants[0].id);
+    expect(store.state.nodes.inn.images).toContain(out);
+    expect(run('get_map', { mapId }).groupVariants[barrels.id].variants.map((x: any) => x.current)).toEqual([true, false]);
+    // asking for the painting that is in the picture already changes nothing
+    expect(run('pick_group_variant', { mapId, group: barrels.id, variant: v.variants[0].id }).note).toMatch(/already/);
+    expect(store.maps.get(mapId).renders.at(-1)).toBe(out);
+  });
+
+  it('clear messages: unknown painting, unknown group, a group that has moved, a map that was resized', async () => {
+    const { mapId, barrels } = await painted();
+    run('repaint_map_group', { mapId, group: barrels.id, seed: 11 });
+    await idle();
+    expect(() => run('pick_group_variant', { mapId, group: barrels.id, variant: 'nope' })).toThrow(/no painting "nope"/);
+    expect(() => run('pick_group_variant', { mapId, group: 'g99', variant: 'x' })).toThrow(/no group "g99"/);
+    const v = variantsOf(store.maps.get(mapId), barrels)!;
+    // the barrels are moved: it is a different group now, with no paintings yet
+    const m = store.maps.get(mapId);
+    for (const p of m.props.filter((x) => x.kind === 'barrel')) p.y -= 3;
+    store.maps.save(m, { backup: 'none' });
+    const moved = groupsOfMap(store.maps.get(mapId)).find((g) => g.kind === 'barrel')!;
+    expect(groupSig(m, moved)).not.toBe(groupSig(m, barrels));
+    expect(() => run('pick_group_variant', { mapId, group: moved.id, variant: v.variants[0].id })).toThrow(/no painting/);
+    expect(run('get_map', { mapId }).groupVariants[moved.id]).toBeUndefined();
+    // a picture of another size cannot be mixed in
+    const m2 = store.maps.get(mapId);
+    for (const p of m2.props.filter((x) => x.kind === 'barrel')) p.y += 3;
+    m2.grid.cols = 20;
+    m2.rows = m2.rows.map((r) => r.padEnd(20, '.'));
+    store.maps.save(m2, { backup: 'none' });
+    expect(() => run('pick_group_variant', { mapId, group: barrels.id, variant: v.variants[0].id })).toThrow(/px but the map's picture is|no painting/);
+  });
+
+  it('changing the camera drops what the AI wrote for the groups; the GM\'s own wording stays', async () => {
+    const { mapId, barrels } = await painted();
+    let m = store.maps.get(mapId);
+    expect(Object.values(m.propPrompts!).some((p) => p.ai)).toBe(true);
+    m.propPrompts![barrels.id] = { kind: 'barrel', text: 'my own barrels' };
+    store.maps.save(m, { backup: 'none' });
+    run('render_map', { mapId, prompt: PLACE, view: 'custom', cameraText: 'seen from the side' });
+    m = store.maps.get(mapId);
+    expect(Object.entries(m.propPrompts!).filter(([, p]) => p.ai)).toEqual([]);
+    expect(m.propPrompts![barrels.id].text).toBe('my own barrels');
   });
 });
 

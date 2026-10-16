@@ -259,6 +259,8 @@ ComfyUI should answer at **<http://127.0.0.1:8188>** (the default). PenNodePaper
 
 ### 2. Get an image model
 
+**Negative prompts:** the turbo models run at CFG 1, where ComfyUI ignores the negative prompt. PenNodePaper therefore paints with a CFG of 2 while *Negative prompt works* is on (⚙ Settings → ComfyUI, on by default), so the negative lists (no furniture, no text…) take effect. It costs about 1½× the time per picture; with it off, or with your own CFG above 1, nothing is changed behind your back.
+
 PenNodePaper builds a simple, standard ComfyUI graph: **diffusion model (UNET) + one text encoder (CLIP) + VAE → KSampler → image**. The settings are pre-filled for **Krea 2 (Turbo)**, which is what it was developed and tested with:
 
 | Setting | Default |

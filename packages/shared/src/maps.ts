@@ -4,7 +4,7 @@ import {
 } from './mapdata.js';
 import { estimateWidth, isLabelStyle, LABEL_STYLES, type LabelCtx } from './labelstyles.js';
 import { lettersSvg, placeLabels, type Placed } from './letters.js';
-import { cleanKind, isKnownKind, isLineKind, regionKind, REGION_KINDS, type RegionKind } from './regionkinds.js';
+import { cleanKind, inStep2, isKnownKind, isLineKind, regionKind, REGION_KINDS, type RegionKind } from './regionkinds.js';
 
 // ---------------------------------------------------------------------------
 // Map logic shared by the server (edit_map, renders) and the browser editor:
@@ -61,6 +61,16 @@ export function newMap(id: string, name: string, kind: MapDoc['kind'], cols = 24
     size: { w: 1344, h: 768 }, shapes: [], renders: [], updatedAt: new Date().toISOString(),
     background: 'land',
   };
+}
+
+/** The outline of an area as the points of a closed line (a polygon's corners and back to the first; an ellipse as 32 points). */
+function outlineOf(type: 'polygon' | 'ellipse' | 'path' | 'pin', points: [number, number][], r?: number): [number, number][] {
+  if (type === 'ellipse') {
+    const [cx, cy] = points[0] ?? [0, 0];
+    const [rx, ry] = points[1] ?? [r ?? 30, r ?? 30];
+    return Array.from({ length: 33 }, (_, i) => [Math.round(cx + rx * Math.cos((i / 32) * Math.PI * 2)), Math.round(cy + ry * Math.sin((i / 32) * Math.PI * 2))] as [number, number]);
+  }
+  return points.length && (points[0][0] !== points[points.length - 1][0] || points[0][1] !== points[points.length - 1][1]) ? [...points, points[0]] : points;
 }
 
 const clampInt = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, Math.round(n)));
@@ -364,7 +374,19 @@ export function applyOps(m: MapDoc, ops: MapOp[]): { ok: number; notes: string[]
         const prompt = o.prompt?.replace(/\s+/g, ' ').trim();
         // no dots: a place is an AREA (a round one is an ellipse). A pin from an old caller becomes a round area.
         const sh = o.type === 'pin' ? pinToEllipse({ id, type: 'pin', kind: o.kind, points: o.points, r: o.r }, m.kinds) : { type: o.type, points: o.points, r: o.r };
-        const ns: MapDoc['shapes'][number] = { id, type: sh.type, kind: o.kind, points: sh.points, ...(sh.r !== undefined ? { r: sh.r } : {}), width: o.width, label: o.label, ...(prompt ? { prompt } : {}) };
+        // every shape has to be painted by some pass: lines (rivers, roads, walls) are drawn as lines, places and structures as areas
+        const kd = regionKind(o.kind, m.kinds);
+        let type = sh.type, points = sh.points, r = sh.r;
+        if (isLineKind(kd) && (type === 'polygon' || type === 'ellipse')) {
+          // a line kind drawn as an area (a town wall as a polygon) becomes the closed line of its outline
+          points = outlineOf(type, points, r);
+          type = 'path';
+          r = undefined;
+          notes.push(`“${kd.name}” is a line: the outline of the area was drawn as a closed line`);
+        } else if (inStep2(kd) && type === 'path') {
+          throw new Error(`“${kd.name}” is painted into an area or a spot: draw it as a polygon / ellipse (or a pin), not as a line.`);
+        }
+        const ns: MapDoc['shapes'][number] = { id, type, kind: o.kind, points, ...(r !== undefined ? { r } : {}), width: o.width, label: o.label, ...(prompt ? { prompt } : {}) };
         // how the name is printed stays with the shape when it is redrawn (moved, reshaped) without saying anything about it
         const keep = <K extends 'labelPlace' | 'labelStyle' | 'labelSize' | 'labelShow'>(k: K, v: unknown) => {
           const val = v === undefined ? old?.[k] : v;
@@ -641,7 +663,21 @@ const FLOOR_WORDS: Record<string, string> = {
 export function terrainLegend(m: MapDoc): string {
   const used = new Set(m.rows.join('').replace(/\./g, ''));
   const words = [...used].map((c) => FLOOR_WORDS[c]).filter(Boolean);
-  return `The input is a flat colour-coded floor plan of an EMPTY, unfurnished place: near-black = outside, thick black lines = walls, small orange marks = doors${words.length ? `, ${words.join(', ')}` : ''}.`;
+  return `The input is a flat colour-coded floor plan of an EMPTY, unfurnished place: near-black = outside, thick black lines = walls, small orange marks = doors${doorWords(m).map((w) => `, ${w}`).join('')}${words.length ? `, ${words.join(', ')}` : ''}.`;
+}
+
+/** The marks of the other kinds of door the plan really has (they are drawn in their own colours: a window is light blue, like water). */
+const DOOR_WORDS: Partial<Record<string, string>> = {
+  window: 'light-blue marks in walls = windows', arch: 'tan arched marks = open archways', portcullis: 'grey bars = portcullis gates',
+};
+function doorWords(m: Pick<MapDoc, 'doors'>): string[] {
+  return [...new Set(m.doors.map((d) => d.kind))].map((k) => DOOR_WORDS[k]).filter((w): w is string => !!w);
+}
+
+/** The legend of the one-pass control image for this map: CONTROL_LEGEND plus the kinds of door it really uses. */
+export function controlLegend(m: MapDoc): string {
+  const extra = doorWords(m);
+  return extra.length ? CONTROL_LEGEND.replace('orange gaps in walls = wooden doors', `orange gaps in walls = wooden doors, ${extra.join(', ')}`) : CONTROL_LEGEND;
 }
 
 /** What each colour in the control image means — handed to the image model's prompt. */

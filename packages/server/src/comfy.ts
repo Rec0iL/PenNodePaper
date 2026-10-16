@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { WebSocket } from 'ws';
-import { DEFAULT_COMFY, type ComfyConfig, type Crop } from '@pnp/shared';
+import { DEFAULT_COMFY, effectiveCfg, type ComfyConfig, type Crop } from '@pnp/shared';
 
 // ---------------------------------------------------------------------------
 // ComfyUI client (REST + progress websocket). Ported from KINETIK's
@@ -86,7 +86,7 @@ export class Comfy {
         class_type: 'KSampler',
         inputs: {
           model: ['1', 0], positive: ['10', 0], negative: ['11', 0], latent_image: ['12', 0],
-          seed, steps: c.steps, cfg: c.cfg, sampler_name: c.sampler, scheduler: c.scheduler, denoise: 1.0,
+          seed, steps: c.steps, cfg: effectiveCfg(c), sampler_name: c.sampler, scheduler: c.scheduler, denoise: 1.0,
         },
       },
       '14': { class_type: 'VAEDecode', inputs: { samples: ['13', 0], vae: ['3', 0] } },

@@ -3,7 +3,8 @@
   import { app, cmd, say } from '../lib/app.svelte';
 
   let { nodeId, file, onclose }: { nodeId: string; file: string; onclose: () => void } = $props();
-  let meta = $state<{ prompt: string; seed: number; kind: string; w: number; h: number } | null>(null);
+  interface Pass { phase?: string; positive: string; negative: string; denoise?: number; negativeOn?: boolean }
+  let meta = $state<{ prompt: string; seed: number; kind: string; w: number; h: number; passes?: Pass[] } | null>(null);
   const node = $derived(app.nodes[nodeId]);
   const isCover = $derived(node?.images[0] === file);
 
@@ -23,6 +24,18 @@
       {#if meta}
         <p class="prompt">{meta.prompt}</p>
         <div class="dim">{meta.kind} · {meta.w}×{meta.h} · seed {meta.seed}</div>
+        {#if meta.passes?.length}
+          <details class="passes">
+            <summary>How it was painted · {meta.passes.length} step{meta.passes.length > 1 ? 's' : ''}</summary>
+            {#each meta.passes as p, i (i)}
+              <div class="pass">
+                <b>{i + 1}. {p.phase ?? 'Painting'}</b>{#if p.denoise !== undefined} <span class="dim">· strength {p.denoise}</span>{/if}{#if p.negativeOn} <span class="dim">· negative prompt on</span>{/if}
+                <div class="pl">Told to paint</div><p>{p.positive}</p>
+                <div class="pl">Told to avoid{p.negativeOn ? '' : ' (not in effect: the negative prompt was off, CFG 1)'}</div><p>{p.negative}</p>
+              </div>
+            {/each}
+          </details>
+        {/if}
       {:else}<p class="dim">No generation info (imported image).</p>{/if}
       <div class="acts">
         {#if meta}<button class="btn" onclick={copy}>Copy prompt</button>{/if}
@@ -42,4 +55,9 @@
   .prompt { font-size: 12.5px; line-height: 1.55; color: var(--text); margin: 4px 0 8px; max-height: 40vh; overflow: auto; }
   .dim { color: var(--text-faint); font-size: 11.5px; }
   .acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .passes { margin-top: 8px; font-size: 12px; }
+  .passes summary { cursor: pointer; color: var(--text-dim); }
+  .passes .pass { margin: 8px 0; padding-top: 6px; border-top: 1px solid var(--line-2); }
+  .passes .pl { margin-top: 4px; font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-faint); }
+  .passes p { margin: 2px 0 0; line-height: 1.45; color: var(--text-dim); max-height: 140px; overflow: auto; white-space: pre-wrap; }
 </style>

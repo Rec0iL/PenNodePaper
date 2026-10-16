@@ -158,7 +158,7 @@
           {#if genErr}<div class="err">⚠ {genErr}</div>{/if}
           <div class="label">Style</div>
           <textarea class="field" class:fresh={!!before} rows="4" bind:value={style.suffix}></textarea>
-          <div class="label">Negative <span class="dim">(Krea 2 turbo ignores it at cfg 1)</span></div>
+          <div class="label">Negative <span class="dim">(only works with “Negative prompt works” on in the ComfyUI settings: turbo models ignore it at CFG 1)</span></div>
           <textarea class="field" class:fresh={!!before} rows="2" bind:value={style.negative}></textarea>
           <div class="label">Map style <span class="dim">(used instead of “Style” when painting maps)</span></div>
           <textarea class="field" class:fresh={!!before} rows="3" bind:value={style.mapSuffix}></textarea>
@@ -194,6 +194,15 @@
               {#if opts?.schedulers.length}<select class="field" bind:value={comfy.scheduler}>{#each opts.schedulers as o}<option>{o}</option>{/each}</select>
               {:else}<input class="field" bind:value={comfy.scheduler} />{/if}</div>
           </div>
+          <label class="chk" title="Turbo models run at CFG 1, where ComfyUI ignores the negative prompt completely. With this on, pictures are made with the CFG below instead, so “no furniture / no buildings / no text” is obeyed. It makes every step about twice the work. A CFG you set above 1 yourself is kept as it is.">
+            <input type="checkbox" bind:checked={comfy.negative} /> Negative prompt works <span class="dim">— pictures use the CFG below instead of 1; about twice the time</span>
+          </label>
+          {#if comfy.negative}
+            <div class="r3">
+              <div><div class="label">CFG with negative prompt</div><input class="field" type="number" step="0.1" min="1.1" max="3" bind:value={comfy.negativeCfg} title="2 clears unwanted objects well; 1.5 only half-way; from about 3 turbo models burn out (white bands)" /></div>
+            </div>
+            {#if comfy.cfg > 1}<p class="hint">Your CFG above is more than 1, so it is used as it is.</p>{:else if comfy.negativeCfg > 2.5}<p class="err">⚠ Above about 2.5 turbo models start to burn out (white bands in the picture).</p>{/if}
+          {/if}
           <p class="hint">Defaults match your KINETIK setup: Krea 2 Turbo INT8, 8 steps, cfg 1. On a 16 GB card, start ComfyUI with <code>--reserve-vram 3</code>.</p>
         </section>
 
@@ -283,6 +292,7 @@
   .dot.off { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
   .sm { padding: 0 8px; font-size: 11.5px; }
   .r3 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .chk { display: flex; gap: 6px; align-items: baseline; font-size: 12.5px; margin-top: 8px; color: var(--text-dim); }
   .bad { border-color: #e0c36a; }
   .hint { color: var(--text-faint); font-size: 11.5px; line-height: 1.5; }
   code { font-family: var(--mono); font-size: 11px; background: var(--bg); padding: 0 4px; border-radius: 4px; }

@@ -27,7 +27,7 @@ export interface RegionKind {
   /** default radius of a spot (px) when it is stamped as a round area */
   size?: number;
   /** lines: painted in the water pass (rivers, canals…) or in the land pass (roads, rails, paths, bridges); default derived from the name */
-  lineGroup?: 'water' | 'land';
+  lineGroup?: LineGroup;
   /** made by the GM (not part of the built-in catalogue) */
   custom?: boolean;
 }
@@ -104,10 +104,18 @@ export const isLineKind = (k: RegionKind): boolean => k.geometry === 'line';
 /** Does this kind get inpainted into its shape in step 2 (a structure that is an area or a spot)? */
 export const inStep2 = (k: RegionKind): boolean => k.layer === 'structure' && k.geometry !== 'line';
 
+/** The line passes, in the order they are painted: water, then land lines (roads, rails, paths, bridges), then walls (so they cross the roads). */
+export const LINE_GROUPS = ['water', 'land', 'wall'] as const;
+export type LineGroup = (typeof LINE_GROUPS)[number];
+
 const WATER_WORDS = /\b(river|stream|creek|brook|canal|channel|water|tributary)\b/i;
-/** Which line pass a kind belongs to: water first, then land lines (roads, rails, paths, bridges). */
-export function lineGroupOf(k: RegionKind): 'water' | 'land' {
-  return k.lineGroup ?? (k.id === 'river' || WATER_WORDS.test(k.id.replace(/_/g, ' ')) || WATER_WORDS.test(k.name) ? 'water' : 'land');
+const WALL_WORDS = /\b(wall|walls|palisade|fence|rampart|fortification|barricade|dyke|dike)\b/i;
+/** Which line pass a kind belongs to (the GM's choice for their own kinds, else derived from the name). */
+export function lineGroupOf(k: RegionKind): LineGroup {
+  if (k.lineGroup) return k.lineGroup;
+  const id = k.id.replace(/_/g, ' ');
+  if (k.id === 'river' || WATER_WORDS.test(id) || WATER_WORDS.test(k.name)) return 'water';
+  return k.id === 'wall' || WALL_WORDS.test(id) || WALL_WORDS.test(k.name) ? 'wall' : 'land';
 }
 
 /** Validate and normalise a kind the GM or the AI defines. Throws a message fit for the AI. */
@@ -129,7 +137,7 @@ export function cleanKind(raw: Partial<RegionKind> & { id?: string }): RegionKin
     id, name, layer, geometry, color: color.toLowerCase(), prompt,
     ...(geometry === 'line' ? { width: width ?? 10 } : {}),
     ...(geometry === 'spot' ? { size: size ?? 16 } : {}),
-    ...(geometry === 'line' && (raw.lineGroup === 'water' || raw.lineGroup === 'land') ? { lineGroup: raw.lineGroup } : {}),
+    ...(geometry === 'line' && (raw.lineGroup === 'water' || raw.lineGroup === 'land' || raw.lineGroup === 'wall') ? { lineGroup: raw.lineGroup } : {}),
     custom: true,
   };
 }
