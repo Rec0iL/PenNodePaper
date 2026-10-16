@@ -127,7 +127,7 @@ export const tutorialAi: Runner = async (_backend, prompt) => {
     return JSON.stringify({
       suffix: 'moody painterly dark-fantasy illustration, damp fog and green lantern light, salt-weathered timber and black basalt, a muted teal and ochre palette, soft cinematic shadows',
       negative: 'text, watermark, signature, blurry, low quality, deformed, extra fingers, modern objects, bright cheerful colours',
-      mapSuffix: 'hand-painted tabletop RPG battle map of a fog-bound harbour town, weathered planks and wet stone, warm lantern light, seen from directly above, orthographic top-down view, no characters, no text, no grid lines',
+      mapSuffix: 'hand-painted in muted inks and washes, weathered planks and wet stone, warm lantern light, no characters, no text, no grid lines',
     });
   }
   return '{}'; // prop prompts: the app falls back to its plain ones

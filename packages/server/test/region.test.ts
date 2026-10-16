@@ -10,7 +10,7 @@ import {
   REGION_KINDS, REGION_MASK, applyOps, migratePins, cleanKind, colorWord, describeRegionGroups, fallbackRegionPrompt, groupRegion, inStep2, newMap, pointInShape,
   CONSOLIDATE_DENOISE, LINE_DENOISE, consolidatePrompt, corridorSvg, lineGroupOf, lineStageWhat, lineStages, linesDrawnSvg, imageSize, regionCrops, regionKind, regionLegend, regionMaskSvg, renderSvg, ringMaskSvg, strokeSvg, toPng, type MapDoc,
 } from '../src/maps.js';
-import { parseRegionPrompts, regionGroupRequest, regionLook, regionTerrainRequest } from '../src/mappaint.js';
+import { mapLook, parseRegionPrompts, regionGroupRequest, regionTerrainRequest } from '../src/mappaint.js';
 import { Persistence } from '../src/persistence.js';
 import { Store } from '../src/store.js';
 import { DEFAULT_STYLE } from '@pnp/shared';
@@ -389,11 +389,16 @@ describe('prompts for the AI (region)', () => {
     expect(parseRegionPrompts('nonsense', infos).fromAi).toBe(0);
   });
 
-  it('the look for region maps drops "battle map" from the campaign wording', () => {
-    expect(regionLook(DEFAULT_STYLE)).toContain('overland map');
-    expect(regionLook(DEFAULT_STYLE)).toContain('directly above');
-    expect(regionLook(DEFAULT_STYLE)).not.toContain('battle');
-    expect(regionLook({ ...DEFAULT_STYLE, regionSuffix: 'parchment cartography, ink and watercolour.' })).toBe('parchment cartography, ink and watercolour');
+  it('the look of a region map: its own kind, the campaign look without camera or kind, the camera of the map', () => {
+    const m = kingdom();
+    expect(mapLook(DEFAULT_STYLE, m)).toContain('overland map');
+    expect(mapLook(DEFAULT_STYLE, m)).toContain('directly above'); // the standard camera comes from the map, not from the style
+    expect(mapLook(DEFAULT_STYLE, m)).not.toContain('battle');
+    expect(mapLook({ ...DEFAULT_STYLE, regionSuffix: 'parchment cartography, ink and watercolour.' }, m)).toBe('overland map, parchment cartography, ink and watercolour, seen from directly above, orthographic top-down view');
+    // a style saved before the camera moved to the map: the camera and the kind in it are dropped
+    const old = { ...DEFAULT_STYLE, mapSuffix: 'hand-painted tabletop RPG battle map, seen from directly above, orthographic top-down view, detailed textures, no characters, no text, no grid lines' };
+    expect(mapLook(old, m)).toBe('overland map, hand-painted, detailed textures, no characters, no text, no grid lines, seen from directly above, orthographic top-down view');
+    expect(mapLook(old, { ...m, view: 'custom', viewText: 'a cross-section seen from the side' })).toBe('overland map, hand-painted, detailed textures, no characters, no text, no grid lines, a cross-section seen from the side');
   });
 });
 
@@ -514,6 +519,30 @@ describe('precise painting of a region map', () => {
     run('render_map', { mapId, prompt: PLACE, view: 'default' });
     await idle();
     expect(store.maps.get(mapId).view).toBeUndefined();
+  });
+
+  it('a camera the GM described replaces the built-in view wording in every pass, and its angle is not forbidden', async () => {
+    const mapId = setup();
+    expect(() => run('render_map', { mapId, prompt: PLACE, view: 'custom' })).toThrow(/needs cameraText/);
+    run('render_map', { mapId, prompt: PLACE, view: 'custom', cameraText: 'a vertical cross-section of the cliffs seen from the side.' });
+    await idle();
+    const m = store.maps.get(mapId);
+    expect(m).toMatchObject({ view: 'custom', viewText: 'a vertical cross-section of the cliffs seen from the side' });
+    for (const wf of wfs) {
+      expect(wf['10'].inputs.text).toContain('a vertical cross-section of the cliffs seen from the side');
+      expect(wf['10'].inputs.text).not.toMatch(/orthographic|straight down|directly above/);
+      expect(wf['11'].inputs.text).not.toMatch(/horizon|sky|oblique|tilted|three-quarter|side view|perspective/); // the GM may well want those
+      expect(wf['11'].inputs.text).toMatch(/buildings/); // the rest of what must not be painted stays
+    }
+    expect(aiCalls[0]).toContain('its camera: a vertical cross-section of the cliffs seen from the side');
+    expect(aiCalls[0]).not.toContain('a top-down overland');
+    expect(run('get_map', { mapId })).toMatchObject({ camera: 'custom', cameraText: 'a vertical cross-section of the cliffs seen from the side' });
+    // the words stay when the map goes back to a standard camera and comes back to the custom one
+    run('render_map', { mapId, prompt: PLACE, view: 'strict' });
+    expect(store.maps.get(mapId)).toMatchObject({ view: 'strict', viewText: 'a vertical cross-section of the cliffs seen from the side' });
+    run('render_map', { mapId, prompt: PLACE, view: 'custom' });
+    expect(store.maps.get(mapId).view).toBe('custom');
+    await idle();
   });
 
   it('a map without lines has no line passes', async () => {

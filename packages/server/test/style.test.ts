@@ -51,9 +51,28 @@ describe('generate style from world books', () => {
     expect(s.suffix).not.toMatch(/\.$/);
     expect(s.negative).toMatch(/watermark/); // essentials appended
     expect(s.negative).toMatch(/modern objects/);
-    expect(s.mapSuffix).toMatch(/top-down/); // map style forced to stay top-down
     expect(s.mapSuffix).toMatch(/vellum/);
+    expect(s.mapSuffix).not.toMatch(/top-down|from above/); // the camera is the map's own business
     expect(parseStyle('{"suffix":"a b c d e f g h","negative":"text, watermark, blurry"}').mapSuffix).toBe(DEFAULT_STYLE.mapSuffix);
+  });
+
+  it('the map style is only a look: a camera or a kind of map the AI wrote anyway is dropped', () => {
+    const wrote = (mapSuffix: string) => parseStyle(JSON.stringify({ suffix: 'Gritty ink-and-wash illustration of a fog-bound harbour, tarred timber', negative: 'text, watermark, blurry', mapSuffix })).mapSuffix;
+    expect(wrote('hand-painted tabletop RPG battle map, seen from directly above, orthographic top-down view, weathered stone and wet planks, warm lantern light, no characters, no text, no grid lines'))
+      .toBe('hand-painted, weathered stone and wet planks, warm lantern light, no characters, no text, no grid lines');
+    expect(wrote('aged parchment region map, bird\'s-eye view, isometric perspective, faded sepia ink')).toBe('aged parchment, faded sepia ink, no characters, no text, no grid lines');
+    expect(wrote('lit from above by a low sun, charcoal on grey paper, shot from the side')).toBe('lit from above by a low sun, charcoal on grey paper, no characters, no text, no grid lines'); // light is not a camera
+    expect(wrote('top-down, from above, battle map')).toBe(DEFAULT_STYLE.mapSuffix); // nothing left: the default look
+    expect(DEFAULT_STYLE.mapSuffix).not.toMatch(/top-down|from above|battle/);
+  });
+
+  it('tells the AI to describe only the look of maps, never the camera or the kind of map', () => {
+    store.rulebooks.setDigest('Gritty heists in a fog-bound harbour city.');
+    const p = stylePrompt(store, DEFAULT_STYLE);
+    expect(p).toMatch(/ONLY the look/);
+    expect(p).toMatch(/Do NOT say anything about the camera/);
+    expect(p).toMatch(/what KIND of map it is/);
+    expect(p).not.toMatch(/MUST end with: "seen from directly above/);
   });
 
   it('rejects unusable answers', () => {

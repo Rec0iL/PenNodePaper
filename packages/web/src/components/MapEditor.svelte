@@ -934,18 +934,45 @@
   }
   let fidelity = $state<'faithful' | 'balanced' | 'painterly'>('balanced');
   let variants = $state(1);
-  /** region maps: how flat the terrain is painted; both kinds: blend the objects in at the end */
-  let viewMode = $state<'default' | 'strict' | 'plan'>('default');
+  /** the camera of the map (a property of the map, not of the campaign style); both kinds: blend the objects in at the end */
+  type Cam = 'default' | 'strict' | 'plan' | 'custom';
+  let viewMode = $state<Cam>('default');
+  let viewText = $state('');
   let consolidate = $state(true);
-  /** the camera the land is painted with; top-down and survey map look from the same angle (straight down), the survey map is the satellite */
-  const CAMERAS: { id: 'default' | 'strict' | 'plan'; name: string; hint: string }[] = [
-    { id: 'default', name: 'natural', hint: 'looks at the land at an angle, like a painted game map (mountains as icons) — best for most maps' },
-    { id: 'strict', name: 'top-down', hint: 'looks straight down, like a photo from above — best for snow, mountains and plans' },
-    { id: 'plan', name: 'survey map', hint: 'a satellite survey: straight down like top-down, drawn as a hillshaded map with heavy relief, very flat' },
-  ];
+  /**
+   * The cameras to choose from. Region maps (precise painting) have three standard ones; top-down and survey map look from the same
+   * angle (straight down), the survey map is the satellite. Everything else has the standard camera (straight from above, stored as
+   * "default") and the GM's own.
+   */
+  interface CamChoice { id: Cam; icon: Cam; name: string; hint: string }
+  const CAM_CUSTOM: CamChoice = { id: 'custom', icon: 'custom', name: 'your own', hint: 'describe the camera yourself, e.g. a vertical cross-section seen from the side' };
+  const cameras = $derived<CamChoice[]>(staged && !battle
+    ? [
+        { id: 'default', icon: 'default', name: 'natural', hint: 'looks at the land at an angle, like a painted game map (mountains as icons) — best for most maps' },
+        { id: 'strict', icon: 'strict', name: 'top-down', hint: 'looks straight down, like a photo from above — best for snow, mountains and plans' },
+        { id: 'plan', icon: 'plan', name: 'survey map', hint: 'a satellite survey: straight down like top-down, drawn as a hillshaded map with heavy relief, very flat' },
+        CAM_CUSTOM,
+      ]
+    : [{ id: 'default', icon: 'strict', name: 'top-down', hint: `looks straight down from above — the standard for ${battle ? 'floor plans' : 'maps'}` }, CAM_CUSTOM]);
+  const camSelected = $derived<Cam>(cameras.some((c) => c.id === viewMode) ? viewMode : 'default');
+  /** "your own" without any words cannot be painted yet */
+  const camMissing = $derived(camSelected === 'custom' && !viewText.trim());
+  function pickCamera(id: Cam) {
+    viewMode = id;
+    if (!doc) return;
+    if (id === 'default') delete doc.view;
+    else doc.view = id;
+    touch();
+  }
+  function cameraTextInput() {
+    if (!doc) return;
+    doc.viewText = viewText;
+    touch();
+  }
   $effect(() => {
     if (doc && !untrack(() => promptTouched)) {
       viewMode = doc.view ?? 'default';
+      viewText = doc.viewText ?? '';
       consolidate = doc.consolidate !== false;
     }
   });
@@ -987,7 +1014,7 @@
   /** quick: the whole picture. precise: step 1, the empty terrain (the server decides by the setting). */
   async function renderNow() {
     await save();
-    const r = await cmd('render_map', { mapId, prompt: prompt_, fidelity, variants, ...(battle ? {} : { view: viewMode }), consolidate, ...aiArgs() });
+    const r = await cmd('render_map', { mapId, prompt: prompt_, fidelity, variants, view: camSelected, ...(camSelected === 'custom' ? { cameraText: viewText } : {}), consolidate, ...aiArgs() });
     if (r) promptTouched = true;
   }
   async function pickTerrain(f: string) {
@@ -1402,6 +1429,19 @@
               </div>
             {/each}
           {/snippet}
+          {#snippet cameraView()}
+            <div class="label" data-tour="map-camera">Camera <span class="dim">— {staged && !battle ? 'how the land is painted' : 'where the map is seen from'}</span></div>
+            <div class="cams" class:two={cameras.length === 2} role="radiogroup" aria-label="Camera">
+              {#each cameras as c (c.id)}
+                <button class="cam" class:on={camSelected === c.id} role="radio" aria-checked={camSelected === c.id} aria-label={c.name} title={`${c.name} — ${c.hint}`} onclick={() => pickCamera(c.id)}><CameraIcon kind={c.icon} /></button>
+              {/each}
+            </div>
+            {#each cameras.filter((c) => c.id === camSelected) as c (c.id)}<div class="dim"><b>{c.name}</b> — {c.hint}</div>{/each}
+            {#if camSelected === 'custom'}
+              <textarea class="field" rows="2" maxlength="300" placeholder="Describe the camera, e.g. a vertical cross-section of the tower seen from the side, one floor above the other" bind:value={viewText} oninput={cameraTextInput}></textarea>
+              <div class="dim">{camMissing ? 'Describe the camera to paint with it. ' : ''}The plan the model is given is drawn from above, so a very different angle follows it only loosely. How things look (materials, colours) is the image style's job, not the camera's.</div>
+            {/if}
+          {/snippet}
           {#snippet importView()}
             <div class="label">Your own picture</div>
             <label class="btn" class:off={impBusy} title="Use a picture you already have as this map's picture (PNG, JPEG, WebP…)">⬆ Import a picture…<input type="file" accept={PICTURE_ACCEPT} hidden disabled={impBusy} data-tour="map-import" onchange={pickImport} /></label>
@@ -1469,18 +1509,10 @@
               {#each ['faithful', 'balanced', 'painterly'] as f}<button class:on={fidelity === f} onclick={() => (fidelity = f as typeof fidelity)}>{f}</button>{/each}
             </div>
             <div class="dim">{TERRAIN_HINT[fidelity]}</div>
-            {#if !battle}
-              <div class="label">Camera <span class="dim">— how the land is painted</span></div>
-              <div class="cams" role="radiogroup" aria-label="Camera">
-                {#each CAMERAS as c (c.id)}
-                  <button class="cam" class:on={viewMode === c.id} role="radio" aria-checked={viewMode === c.id} aria-label={c.name} title={`${c.name} — ${c.hint}`} onclick={() => (viewMode = c.id)}><CameraIcon kind={c.id} /></button>
-                {/each}
-              </div>
-              {#each CAMERAS.filter((c) => c.id === viewMode) as c (c.id)}<div class="dim"><b>{c.name}</b> — {c.hint}</div>{/each}
-            {/if}
+            {@render cameraView()}
             <div class="row">
               <select class="field" bind:value={variants} title="How many terrains to paint to choose from">{#each [1, 2, 3, 4] as n}<option value={n}>{n}×</option>{/each}</select>
-              <button class="btn primary grow" data-tour="map-terrain-btn" onclick={renderNow} disabled={prompt_.trim().length < 8 || !nodeId || busy}>{doc?.terrains?.length ? 'Paint another terrain' : 'Paint the terrain'}</button>
+              <button class="btn primary grow" data-tour="map-terrain-btn" onclick={renderNow} disabled={prompt_.trim().length < 8 || !nodeId || busy || camMissing}>{doc?.terrains?.length ? 'Paint another terrain' : 'Paint the terrain'}</button>
             </div>
             <div class="row">
               <button class="btn grow" onclick={askAi} disabled={!nodeId}>✦ AI writes the description</button>
@@ -1548,9 +1580,10 @@
               {#each ['faithful', 'balanced', 'painterly'] as f}<button class:on={fidelity === f} onclick={() => (fidelity = f as typeof fidelity)}>{f}</button>{/each}
             </div>
             <div class="dim">{FIDELITY_HINT[fidelity]}</div>
+            {@render cameraView()}
             <div class="row">
               <select class="field" bind:value={variants} title="Variants">{#each [1, 2, 3, 4] as n}<option value={n}>{n}×</option>{/each}</select>
-              <button class="btn primary grow" onclick={renderNow} disabled={prompt_.trim().length < 8 || !nodeId}>Paint it</button>
+              <button class="btn primary grow" onclick={renderNow} disabled={prompt_.trim().length < 8 || !nodeId || camMissing}>Paint it</button>
             </div>
             <div class="row">
               <button class="btn grow" onclick={askAi} disabled={!nodeId}>✦ AI writes the prompt</button>
@@ -1771,7 +1804,8 @@
   .seg button.on { background: var(--accent); color: #0a0c11; font-weight: 600; }
   .seg button:disabled { opacity: 0.35; }
   .seg.w { width: 100%; }
-  .cams { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .cams { display: grid; grid-template-columns: repeat(auto-fit, minmax(54px, 1fr)); gap: 6px; }
+  .cams.two { grid-template-columns: repeat(2, 1fr); }
   .cam { display: grid; place-items: center; padding: 6px 0 4px; background: var(--bg-3); border: 1px solid var(--line-2); border-radius: 9px; color: var(--text-dim); }
   .cam:hover { border-color: var(--accent); color: var(--text); }
   .cam.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }

@@ -1,5 +1,5 @@
 import { spawnCli } from './cli.js';
-import { DEFAULT_STYLE, type Backend, type StyleConfig } from '@pnp/shared';
+import { DEFAULT_STYLE, lookOnly, type Backend, type StyleConfig } from '@pnp/shared';
 import type { Store } from './store.js';
 
 // ---------------------------------------------------------------------------
@@ -37,7 +37,7 @@ export function styleMaterial(store: Store): string {
 
 export function stylePrompt(store: Store, current: StyleConfig): string {
   return [
-    'You are the art director for a tabletop role-playing campaign. Read the campaign material below and define the VISUAL STYLE for AI-generated artwork (portraits, scenes, items, handouts) and for top-down maps. The image model (Krea 2) understands natural-language descriptions.',
+    'You are the art director for a tabletop role-playing campaign. Read the campaign material below and define the VISUAL STYLE for AI-generated artwork (portraits, scenes, items, handouts) and for maps. The image model (Krea 2) understands natural-language descriptions.',
     '',
     'Return ONLY one JSON object, no markdown fences, no commentary:',
     '{"suffix": "...", "negative": "...", "mapSuffix": "..."}',
@@ -45,7 +45,7 @@ export function stylePrompt(store: Store, current: StyleConfig): string {
     'Rules:',
     '- "suffix": 25-50 words, appended to every image prompt. Describe ONLY the look: medium/technique (e.g. oil painting, ink and wash, gritty photoreal), colour palette, lighting, mood, and the typical materials, architecture and costume of this world. Visual and evocative; NO character names, place names, plot or story.',
     '- "negative": a comma-separated list of things to avoid. Always include: text, watermark, signature, blurry, low quality, deformed, extra fingers. Add 3-6 elements that would BREAK this setting (e.g. modern objects, wrong technology level, wrong art style).',
-    '- "mapSuffix": how maps of this world look when painted, in the same visual language (surfaces, materials, lighting, ink/paint style). It MUST end with: "seen from directly above, orthographic top-down view, no characters, no text, no grid lines".',
+    '- "mapSuffix": how maps of this world look when painted, in the same visual language: ONLY the look — surfaces, materials, textures, ink / paint / brush style, colour palette, lighting. 15-35 words. Do NOT say anything about the camera or the viewing angle (top-down, from above, isometric, perspective, side view, bird\'s-eye…) and do NOT say what KIND of map it is (battle map, region map, dungeon map, world map…): every map has its own camera and its own kind, set elsewhere, and a camera or kind written here would fight it. End with: "no characters, no text, no grid lines".',
     '- Write in English regardless of the campaign language (the image model prefers it).',
     '',
     `Current style (improve on it, or replace it if it doesn't fit): ${JSON.stringify(current)}`,
@@ -73,8 +73,9 @@ export function parseStyle(text: string): StyleConfig {
   if (suffix.split(/\s+/).length < 6) throw new Error('The AI style was too short to be useful. Try again.');
   let negative = str('negative');
   for (const must of ['text', 'watermark', 'blurry']) if (!new RegExp(`\\b${must}\\b`, 'i').test(negative)) negative = negative ? `${negative}, ${must}` : must;
-  let mapSuffix = str('mapSuffix') || DEFAULT_STYLE.mapSuffix;
-  if (!/top-down/i.test(mapSuffix)) mapSuffix = `${mapSuffix.replace(/[.,\s]+$/, '')}, seen from directly above, orthographic top-down view, no characters, no text, no grid lines`;
+  // only the look: the camera and the kind of map belong to the map (see camera.ts), whatever the AI wrote
+  let mapSuffix = lookOnly(str('mapSuffix')) || DEFAULT_STYLE.mapSuffix;
+  for (const [re, add] of [[/\bno characters\b/i, 'no characters'], [/\bno text\b/i, 'no text'], [/\bno grid( lines)?\b/i, 'no grid lines']] as const) if (!re.test(mapSuffix)) mapSuffix += `, ${add}`;
   return { suffix: suffix.replace(/[.\s]+$/, ''), negative, mapSuffix };
 }
 

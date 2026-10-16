@@ -126,16 +126,16 @@ export interface StyleConfig {
   /** Appended to every image prompt (the campaign's look). */
   suffix: string;
   negative: string;
-  /** Appended to map render prompts instead of `suffix` (maps need a plan view, not cinematic lighting). */
+  /** Appended to map render prompts instead of `suffix` (maps need their own look, not cinematic lighting). Only the look: materials, brush, palette — no camera, no kind of map. */
   mapSuffix: string;
-  /** How region (overland) maps look; absent = derived from `mapSuffix`. */
+  /** How region (overland) maps look; absent = derived from `mapSuffix`. Both say only how maps LOOK: the camera and the kind of map come from the map itself. */
   regionSuffix?: string;
 }
 
 export const DEFAULT_STYLE: StyleConfig = {
   suffix: 'painterly dark-fantasy illustration, moody cinematic lighting, rich detail, muted colour palette',
   negative: 'text, watermark, signature, blurry, low quality, deformed, extra fingers',
-  mapSuffix: 'hand-painted tabletop RPG battle map, seen from directly above, orthographic top-down view, detailed textures, no characters, no text, no grid lines',
+  mapSuffix: 'hand-painted, detailed textures, no characters, no text, no grid lines',
 };
 
 /** How battle maps are painted. quick = one img2img pass from the plan (props in the model input);
@@ -422,6 +422,7 @@ export * from './consolidate.js';
 export * from './vtt.js';
 export * from './sheet.js';
 export * from './actors.js';
+export * from './camera.js';
 export * from './imagefit.js';
 export * from './story.js';
 export * from './wiki.js';

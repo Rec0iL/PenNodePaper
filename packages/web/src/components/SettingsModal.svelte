@@ -162,6 +162,7 @@
           <textarea class="field" class:fresh={!!before} rows="2" bind:value={style.negative}></textarea>
           <div class="label">Map style <span class="dim">(used instead of “Style” when painting maps)</span></div>
           <textarea class="field" class:fresh={!!before} rows="3" bind:value={style.mapSuffix}></textarea>
+          <div class="dim">Only how maps <b>look</b>: surfaces, materials, brush, palette. The camera angle and the kind of map (battle or region) are set on each map, in its Paint tab — camera wording written here is ignored.</div>
         </section>
 
         <section>

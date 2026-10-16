@@ -1,5 +1,5 @@
 import { z, type ZodRawShape } from 'zod';
-import { DEFAULT_GROUP, isAiActor, charactersOfPlace, isCharacterNode, tokenKindOf, dieLabel, soundsOf, entryLine, fragmentName, parseEntry, rollLog, rollTable, seeded, tableEntries, tableFaces, clockOf, lintStory, newSessionMark, nextPlayedSeq, parseScope, playedPath, playerWiki, sessionLabel, sessionOverview, sessionsOf, wikiMarkdown, slugify, storyStatus, validateSheet, visitsOf, type Visit } from '@pnp/shared';
+import { DEFAULT_GROUP, DEFAULT_STYLE, cleanCameraText, customCamera, isAiActor, lookOnly, charactersOfPlace, isCharacterNode, tokenKindOf, dieLabel, soundsOf, entryLine, fragmentName, parseEntry, rollLog, rollTable, seeded, tableEntries, tableFaces, clockOf, lintStory, newSessionMark, nextPlayedSeq, parseScope, playedPath, playerWiki, sessionLabel, sessionOverview, sessionsOf, wikiMarkdown, slugify, storyStatus, validateSheet, visitsOf, type Visit } from '@pnp/shared';
 import type { Actor, Backend, DoorKind, EdgeKind, EdgeSide, ImageKind, MapDoc, NodeStatus, NodeType, PropKind, StoryEdge, StoryNode } from '@pnp/shared';
 import { DEFAULT_LABEL_STYLE, DOOR_KINDS, EDGE_KINDS, FRAME_PALETTE, EDGE_SIDES, IMAGE_KINDS, LABEL_PLACES, LABEL_SIZES, LABEL_STYLES, NODE_STATUSES, NODE_TYPES, PROP_KINDS, REGION_KINDS, cleanKind, isKnownKind } from '@pnp/shared';
 import { createHash } from 'node:crypto';
@@ -8,7 +8,7 @@ import path from 'node:path';
 import { BINDER_SECTIONS, MAX_COPIES, binderParts, renderPdf } from './binder.js';
 import { buildBundle, characterFromNode, mapCast, handoutFromNode, illustrationsOf, kinetikSession, roleFor, sceneFromImage, sceneFromMap, sheetOf, wantsPlayerStarts } from './vtt.js';
 import { CONTROL_LEGEND, applyOps, groupProps, groupRegion, imageSize, lineStages, regionLegend, renderSvg, toPng, type MapOp } from './maps.js';
-import { propsRunner, readTerrain, regionGroupInfos, regionLook, regionStructuresRunner, regionTerrainRunner, repaintGroupRunner, terrainRunner, estimatePaint, type Fidelity } from './mappaint.js';
+import { propsRunner, readTerrain, mapLook, regionGroupInfos, regionStructuresRunner, regionTerrainRunner, repaintGroupRunner, terrainRunner, estimatePaint, type Fidelity } from './mappaint.js';
 import type { Store, Tx } from './store.js';
 import { printNames, printableCount } from './labels.js';
 
@@ -594,11 +594,11 @@ def({
 def({
   name: 'set_image_style',
   description:
-    'Set the campaign image style (only when the GM asks you to). suffix = look appended to every image prompt (medium, palette, lighting, mood, materials; 25-50 words, no names/plot); negative = things to avoid; mapSuffix = how painted maps look (must stay top-down). Base it on the world books (search_world / get_world_section). Replaces the given fields.',
+    'Set the campaign image style (only when the GM asks you to). suffix = look appended to every image prompt (medium, palette, lighting, mood, materials; 25-50 words, no names/plot); negative = things to avoid; mapSuffix = how painted maps LOOK (surfaces, materials, brush, palette) — never the camera angle or the kind of map (battle / region): each map has its own camera and kind, set in the map\'s Paint tab; camera wording here is dropped. Base it on the world books (search_world / get_world_section). Replaces the given fields.',
   shape: { suffix: z.string().optional(), negative: z.string().optional(), mapSuffix: z.string().optional() },
   run(tx, a) {
     const m = tx.state.meta;
-    m.style = { ...m.style, ...(a.suffix !== undefined ? { suffix: a.suffix.trim() } : {}), ...(a.negative !== undefined ? { negative: a.negative.trim() } : {}), ...(a.mapSuffix !== undefined ? { mapSuffix: a.mapSuffix.trim() } : {}) };
+    m.style = { ...m.style, ...(a.suffix !== undefined ? { suffix: a.suffix.trim() } : {}), ...(a.negative !== undefined ? { negative: a.negative.trim() } : {}), ...(a.mapSuffix !== undefined ? { mapSuffix: lookOnly(a.mapSuffix) || DEFAULT_STYLE.mapSuffix } : {}) };
     tx.store.persistence.writeMeta(m);
     tx.store.emitMeta();
     return { style: tx.store.images?.style() };
@@ -798,7 +798,8 @@ def({
       mapId: m.id, nodeId: mapNodeId(tx, m.id), view: tx.store.maps.describe(m), renders: m.renders,
       ...(m.kind === 'battle' ? { characters: charactersOfPlace(tx.state, m.id).map((n) => ({ nodeId: n.id, name: n.title, type: n.type, placedAt: m.tokens.filter((t) => t.node === n.id).map((t) => `${t.x},${t.y}`) })) } : {}),
       paintMode: tx.store.images?.mapMode() ?? 'quick', terrains: m.terrains ?? [], terrainPick: m.terrainPick ?? null,
-      ...(m.kind === 'battle' ? { propGroups: groupProps(m).length } : { structureGroups: regionGroupInfos(m), linePasses: lineStages(m).map((st) => `${st.group}: ${st.names.join(', ')}`), camera: m.view ?? 'default' }),
+      ...(m.kind === 'battle' ? { propGroups: groupProps(m).length } : { structureGroups: regionGroupInfos(m), linePasses: lineStages(m).map((st) => `${st.group}: ${st.names.join(', ')}`) }),
+      camera: m.view ?? 'default', ...(customCamera(m) ? { cameraText: customCamera(m) } : {}),
       consolidate: m.consolidate !== false,
       lettering: { style: m.lettering?.style ?? DEFAULT_LABEL_STYLE, namesToPrint: printableCount(m), printedPictures: m.lettered ?? {}, styles: LABEL_STYLES.map((x) => `${x.id} — ${x.name} (${x.setting})`) },
       ...(m.kind === 'region' && (tx.state.meta.regionKinds ?? []).length ? { libraryKinds: (tx.state.meta.regionKinds ?? []).map((k) => ({ id: k.id, name: k.name, layer: k.layer, geometry: k.geometry, inThisMap: !!m.kinds?.some((x) => x.id === k.id) })) } : {}),
@@ -864,7 +865,8 @@ def({
     seed: z.number().int().optional(),
     backend: z.enum(['claude', 'agy', 'codex']).optional().describe('precise way only: which AI writes the description of the empty place and, later, the prop prompts (default: whoever calls)'),
     model: z.string().optional(),
-    view: z.enum(['default', 'strict', 'plan']).optional().describe('region maps, precise way: how flat the terrain is painted. default = natural painted-map look (best for most maps), strict = straight top-down plan view (best for snow/mountain maps), plan = hillshaded survey map. Stored on the map.'),
+    view: z.enum(['default', 'strict', 'plan', 'custom']).optional().describe('the camera of the map, stored on it (the GM sets it in the map\'s Paint tab; the campaign\'s image style never says anything about it). default = the standard (battle maps: straight from above; region maps: the natural painted-map look, best for most maps). Region maps, precise way: strict = straight top-down plan view (best for snow/mountain maps), plan = hillshaded survey map. custom = the GM\'s own camera, described in cameraText (a side view, a vertical cross-section…; the plan the model is given is drawn from above, so a very different angle follows it only loosely).'),
+    cameraText: z.string().optional().describe('view "custom": the camera in a few words, e.g. "a vertical cross-section of the tower seen from the side, one floor above the other". Stored on the map.'),
     consolidate: z.boolean().optional().describe('precise way: after the objects are painted, blend them into the picture (a ring around every object is repainted; shadows appear). Default true; stored on the map.'),
   },
   run(tx, a) {
@@ -875,15 +877,23 @@ def({
     if (!nodeId) throw new Error(`Map "${m.id}" is not attached to any node. Create it with create_map (with nodeId to attach it to a location).`);
     const maps = tx.store.maps;
     const { w, h } = imageSize(m);
+    // the camera belongs to the map and counts in both ways of painting
+    if (a.view !== undefined || a.cameraText !== undefined) {
+      const view = a.view ?? m.view ?? 'default';
+      if (view === 'custom') {
+        const text = cleanCameraText(a.cameraText ?? m.viewText);
+        if (!text) throw new Error('view "custom" needs cameraText: describe the camera in a few words (e.g. "a vertical cross-section of the tower, seen from the side").');
+        m.view = 'custom';
+        m.viewText = text;
+      } else if (view === 'default') delete m.view;
+      else if (m.kind === 'region') m.view = view; // strict / plan are for region maps; a battle map is painted from above
+      maps.save(m, { backup: 'none' });
+    }
     if (images.mapMode() === 'staged') {
       // precise way, step 1: the empty terrain. Candidates stay with the map (not on the node) until the GM picks one.
       const place = a.prompt.trim();
       const fidelity: Fidelity = a.fidelity ?? 'balanced';
       m.paintPrompt = place;
-      if (m.kind === 'region' && a.view !== undefined) {
-        if (a.view === 'default') delete m.view;
-        else m.view = a.view;
-      }
       if (a.consolidate !== undefined) {
         if (a.consolidate) delete m.consolidate;
         else m.consolidate = false;
@@ -909,10 +919,8 @@ def({
     }
     const denoise = a.denoise ?? FIDELITY[a.fidelity ?? 'balanced'];
     const style = images.style();
-    const prompt = m.kind === 'battle'
-      ? `${a.prompt.trim().replace(/[.\s]+$/, '')}. ${style.mapSuffix}. ${CONTROL_LEGEND}`
-      : `${a.prompt.trim().replace(/[.\s]+$/, '')}. ${regionLook(style)}. ${regionLegend(m)}`;
-    const negative = `${style.negative}, characters, people, perspective view, 3d render, photograph`;
+    const prompt = `${a.prompt.trim().replace(/[.\s]+$/, '')}. ${mapLook(style, m)}. ${m.kind === 'battle' ? CONTROL_LEGEND : regionLegend(m)}`;
+    const negative = `${style.negative}, characters, people${customCamera(m) ? '' : ', perspective view'}, 3d render, photograph`;
     const png = toPng(renderSvg(m, 'control'));
     const jobs = images.enqueueCustom({
       nodeId, kind: 'map', prompt: a.prompt.trim(), w, h, variants: a.variants, seed: a.seed, actor: tx.actor,

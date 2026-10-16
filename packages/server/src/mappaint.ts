@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  CONSOLIDATE_DENOISE, FLOORS, LINE_DENOISE, consolidatePrompt, corridorSvg, derivedWalls, describeGroups, describeRegionGroups, fallbackGroupPrompt, fallbackRegionPrompt,
+  CONSOLIDATE_DENOISE, DEFAULT_STYLE, FLOORS, LINE_DENOISE, cameraOr, customCamera, lookOnly, consolidatePrompt, corridorSvg, derivedWalls, describeGroups, describeRegionGroups, fallbackGroupPrompt, fallbackRegionPrompt,
   groupMasks, groupProps, groupRegion, cropFor, imageSize, isLineKind, lineStageWhat, lineStages, linesDrawnSvg, regionCrops, regionKind, regionLegend, regionMasks,
   renderSvg, ringMaskSvg, terrainLegend, toPng, usedKinds,
   type Backend, type FloorChar, type GroupInfo, type MapDoc, type PropGroup, type RegionGroup, type RegionGroupInfo, type StyleConfig,
@@ -31,11 +31,30 @@ export function terrainDenoise(m: MapDoc, fidelity: Fidelity = 'balanced'): numb
   return Math.round((TERRAIN_DENOISE[fidelity] - (wallPoor ? 0.05 : 0)) * 100) / 100;
 }
 
-const TERRAIN_NEGATIVE = 'furniture, tables, chairs, barrels, crates, chests, objects, props, people, characters, text, letters, watermark, grid lines, perspective view, 3d render, photograph';
+// ------------------------------- the look of a map: kind, campaign style, camera -----------------
+
+const KIND_PHRASE = { battle: 'tabletop RPG battle map', region: 'overland map' } as const;
+export const STANDARD_CAMERA = 'seen from directly above, orthographic top-down view';
+
+/** How the campaign's style says maps look — the look only (the camera and the kind of map are the map's own). */
+export function styleLook(style: StyleConfig, kind: MapDoc['kind']): string {
+  const own = kind === 'region' ? style.regionSuffix?.trim() : '';
+  return lookOnly(own || style.mapSuffix) || lookOnly(DEFAULT_STYLE.mapSuffix);
+}
+
+/** What every painting prompt says about the map as a whole: what kind of map it is, how the campaign makes maps look, and through which camera this map is seen. */
+export function mapLook(style: StyleConfig, m: MapDoc): string {
+  return [KIND_PHRASE[m.kind], styleLook(style, m.kind), cameraOr(m, STANDARD_CAMERA)].join(', ');
+}
+
+const TERRAIN_NEGATIVE_A = 'furniture, tables, chairs, barrels, crates, chests, objects, props, people, characters, text, letters, watermark, grid lines';
+const TERRAIN_NEGATIVE_B = '3d render, photograph';
+/** What the empty-terrain pass must not paint. "perspective view" is left out for a camera the GM described (it may well be one). */
+export const terrainNegative = (m: MapDoc): string => `${TERRAIN_NEGATIVE_A}${customCamera(m) ? '' : ', perspective view'}, ${TERRAIN_NEGATIVE_B}`;
 
 /** Every prop group is painted in this look (validated: bold outline + cast shadow make objects read at a glance). */
-const PROP_STYLE =
-  'Hand-painted fantasy RPG battlemap, top-down orthographic view from directly above. A bold, clearly readable game object with a thick dark ink outline, rich colour, high contrast and a strong cast shadow on the floor around it, painted in exactly the same art style and lighting as the rest of the map:';
+const propStyle = (m: MapDoc): string =>
+  `Hand-painted fantasy RPG battlemap, ${cameraOr(m, 'top-down orthographic view from directly above')}. A bold, clearly readable game object with a thick dark ink outline, rich colour, high contrast and a strong cast shadow on the floor around it, painted in exactly the same art style and lighting as the rest of the map:`;
 const PROP_NEGATIVE = 'blurry, text, watermark';
 
 export { fallbackGroupPrompt };
@@ -55,7 +74,7 @@ function placeFacts(m: MapDoc): string {
 export function shellRequest(m: MapDoc, place: string): string {
   const facts = placeFacts(m);
   return [
-    'You prepare the FIRST of two painting steps for a top-down tabletop battle map: the empty place only. Furniture and objects are painted in later, one by one.',
+    `You prepare the FIRST of two painting steps for ${customCamera(m) ? `a tabletop battle map (its camera: ${customCamera(m)})` : 'a top-down tabletop battle map'}: the empty place only. Furniture and objects are painted in later, one by one.`,
     '',
     `The GM describes the place: "${place.trim()}"`,
     `Facts about the plan: ${facts}`,
@@ -66,15 +85,17 @@ export function shellRequest(m: MapDoc, place: string): string {
   ].join('\n');
 }
 
-export function groupPromptRequest(place: string, infos: GroupInfo[]): string {
+/** `camera`: the GM's own words for the camera, when the map has one (else it is seen from directly above). */
+export function groupPromptRequest(place: string, infos: GroupInfo[], camera?: string): string {
+  const asSeen = camera ? `as seen in the map's own view (${camera})` : 'as seen from directly above';
   return [
     'You write inpainting prompts for a tabletop battle-map generator.',
     '',
     `PLACE: ${place.trim()}`,
     '',
-    'The finished, EMPTY painted battle map (seen from directly above) is described above; you cannot see it. Each group below is a spot where an object (or a row/cluster of the same object, treated as ONE object) will now be painted in by an inpainting model.',
+    `The finished, EMPTY painted battle map (${camera ?? 'seen from directly above'}) is described above; you cannot see it. Each group below is a spot where an object (or a row/cluster of the same object, treated as ONE object) will now be painted in by an inpainting model.`,
     '',
-    "For every group below, write ONE inpainting prompt (12-30 words) describing exactly what should be painted inside that box, as seen from directly above: the object, its material, condition, notable details, and how it sits on the floor named in floorUnder. Rules: a group with count>1 is ONE continuous thing or an orderly row (e.g. 5 touching tables = one long banquet table, 5 barrels in a row = a row of barrels); respect extentCells (width x height) so the object fills the box; when count>1 and the items are individual things (chairs, stools, barrels, crates, trees, rocks) say exactly how many separate items stand in the row and that each is clearly distinct, and describe each from above as it really looks (a chair = square seat with a backrest bar on one side; a barrel = round lid with hoops; a tree = round leafy canopy); match the map's look and lighting; top-down only; no people, no text, no perspective words like 'front view'. CONTRAST IS ESSENTIAL: the object must stand out clearly from the floor named in floorUnder, so choose materials and colours that differ strongly from it (on pale marble or stone use dark basalt, black iron, bronze, rust-red, dark wood; on dark floors use paler materials; on grass or sand use dark wood, stone or metal) and mention a crisp dark outline and a distinct cast shadow falling to the lower right. Use natural, believable colours (leaves in ordinary greens and yellow-greens, never blue or teal; wood brown; stone grey) unless the place description says the place is magical or unnatural. Do not repeat the style words, only describe the object.",
+    "For every group below, write ONE inpainting prompt (12-30 words) describing exactly what should be painted inside that box, " + asSeen + ": the object, its material, condition, notable details, and how it sits on the floor named in floorUnder. Rules: a group with count>1 is ONE continuous thing or an orderly row (e.g. 5 touching tables = one long banquet table, 5 barrels in a row = a row of barrels); respect extentCells (width x height) so the object fills the box; when count>1 and the items are individual things (chairs, stools, barrels, crates, trees, rocks) say exactly how many separate items stand in the row and that each is clearly distinct, and describe each from above as it really looks (a chair = square seat with a backrest bar on one side; a barrel = round lid with hoops; a tree = round leafy canopy); match the map's look and lighting; top-down only; no people, no text, no perspective words like 'front view'. CONTRAST IS ESSENTIAL: the object must stand out clearly from the floor named in floorUnder, so choose materials and colours that differ strongly from it (on pale marble or stone use dark basalt, black iron, bronze, rust-red, dark wood; on dark floors use paler materials; on grass or sand use dark wood, stone or metal) and mention a crisp dark outline and a distinct cast shadow falling to the lower right. Use natural, believable colours (leaves in ordinary greens and yellow-greens, never blue or teal; wood brown; stone grey) unless the place description says the place is magical or unnatural. Do not repeat the style words, only describe the object.",
     '',
     'GROUPS (JSON):',
     JSON.stringify(infos),
@@ -121,11 +142,11 @@ export function terrainRunner(images: ImageApi, m: MapDoc, place: string, fideli
     }
     if (shell.split(/\s+/).length < 6 || ctx.signal.aborted) shell = `${place.trim().replace(/[.\s]+$/, '')}. Completely empty, bare floors, nothing inside`;
     const style = images.style();
-    const prompt = `${shell.replace(/[.\s]+$/, '')}. ${style.mapSuffix}, completely empty and unfurnished, bare floors, no furniture, no objects. ${terrainLegend(m)}`;
+    const prompt = `${shell.replace(/[.\s]+$/, '')}. ${mapLook(style, m)}, completely empty and unfurnished, bare floors, no furniture, no objects. ${terrainLegend(m)}`;
     ctx.phase('Painting the terrain…');
     const png = toPng(renderSvg(m, 'terrain'));
     const name = await images.comfy.uploadImage(png, `pnp-${m.id}-terrain.png`);
-    const wf = images.comfy.buildImg2Img(prompt, `${style.negative}, ${TERRAIN_NEGATIVE}`, name, ctx.seed, terrainDenoise(m, fidelity));
+    const wf = images.comfy.buildImg2Img(prompt, `${style.negative}, ${terrainNegative(m)}`, name, ctx.seed, terrainDenoise(m, fidelity));
     return ctx.generate(wf, (w * h) / 1e6);
   };
 }
@@ -150,7 +171,7 @@ export function propsRunner(images: ImageApi, m: MapDoc, terrainFile: Buffer, pl
       ctx.phase('Writing the painting prompts…');
       let r: Record<string, string>;
       try {
-        r = parseGroupPrompts(await images.ai(ai.backend, groupPromptRequest(place, open), ai.model), open).prompts;
+        r = parseGroupPrompts(await images.ai(ai.backend, groupPromptRequest(place, open, customCamera(m) || undefined), ai.model), open).prompts;
       } catch (e) {
         console.error('[mappaint] prompt writing failed, using plain prompts', e);
         r = parseGroupPrompts('', open).prompts;
@@ -172,10 +193,10 @@ export function propsRunner(images: ImageApi, m: MapDoc, terrainFile: Buffer, pl
       const base = await images.comfy.uploadImage(current, `pnp-${m.id}-${ctx.seed}-base.png`);
       const sample = await images.comfy.uploadImage(toPng(masks.sample), `pnp-${m.id}-${ctx.seed}-ms.png`);
       const compose = await images.comfy.uploadImage(toPng(masks.compose), `pnp-${m.id}-${ctx.seed}-mc.png`);
-      const wf = images.comfy.buildInpaint(`${PROP_STYLE} ${prompts[g.id].replace(/[.\s]+$/, '')}.`, `${style.negative}, ${PROP_NEGATIVE}`, { image: base, sampleMask: sample, composeMask: compose, crop }, ctx.seed + i + 1);
+      const wf = images.comfy.buildInpaint(`${propStyle(m)} ${prompts[g.id].replace(/[.\s]+$/, '')}.`, `${style.negative}, ${PROP_NEGATIVE}`, { image: base, sampleMask: sample, composeMask: compose, crop }, ctx.seed + i + 1);
       current = await ctx.generate(wf, (crop.tw * crop.th) / 1e6, [i / steps, (i + 1) / steps]);
     }
-    if (withRing && !ctx.signal.aborted) current = await consolidate(images, ctx, m, current, place, style.mapSuffix, [n / steps, 1]);
+    if (withRing && !ctx.signal.aborted) current = await consolidate(images, ctx, m, current, place, mapLook(style, m), [n / steps, 1]);
     return current;
   };
 }
@@ -186,20 +207,14 @@ export function propsRunner(images: ImageApi, m: MapDoc, terrainFile: Buffer, pl
 const REGION_TERRAIN_DENOISE: Record<Fidelity, number> = { faithful: 0.62, balanced: 0.72, painterly: 0.8 };
 export const regionTerrainDenoise = (fidelity: Fidelity = 'balanced') => REGION_TERRAIN_DENOISE[fidelity];
 
-const REGION_TERRAIN_NEGATIVE =
-  'buildings, houses, towns, villages, cities, castles, towers, tents, ships, boats, bridges, people, characters, text, letters, labels, watermark, grid lines, perspective, oblique view, tilted view, horizon, sky, aerial view from an angle, depth of field, 3d render, photograph';
-
-/** How region maps look: the campaign's own wording, else its battle-map look reworded for an overland map. */
-export function regionLook(style: StyleConfig): string {
-  const own = style.regionSuffix?.trim();
-  if (own) return own.replace(/[.\s]+$/, '');
-  return style.mapSuffix.replace(/[.\s]+$/, '').replace(/\b(?:tabletop\s+)?(?:RPG\s+)?battle\s*map\b/i, 'overland map');
-}
+/** What the region terrain pass must not paint; the words about the camera are left out for a camera the GM described (a side view has a horizon). */
+const regionTerrainNegative = (m: MapDoc): string =>
+  `buildings, houses, towns, villages, cities, castles, towers, tents, ships, boats, bridges, people, characters, text, letters, labels, watermark, grid lines${customCamera(m) ? '' : ', perspective, oblique view, tilted view, horizon, sky, aerial view from an angle'}, depth of field, 3d render, photograph`;
 
 /** Every structure is painted in this look: small, readable, same scale and lighting as the land around it. */
-const REGION_PROP_STYLE =
-  'Hand-painted overland map seen from high above, top-down. A small, clearly readable map feature with a crisp dark outline, rich colour and a short cast shadow to the lower right, painted at the scale of the land around it in exactly the same art style and lighting:';
-const REGION_PROP_NEGATIVE = 'blurry, text, letters, labels, watermark, people, perspective view, giant, close-up';
+const regionPropStyle = (m: MapDoc): string =>
+  `Hand-painted overland map${customCamera(m) ? `, ${customCamera(m)}` : ' seen from high above, top-down'}. A small, clearly readable map feature with a crisp dark outline, rich colour and a short cast shadow to the lower right, painted at the scale of the land around it in exactly the same art style and lighting:`;
+const regionPropNegative = (m: MapDoc): string => `blurry, text, letters, labels, watermark, people${customCamera(m) ? '' : ', perspective view'}, giant, close-up`;
 
 /** What each terrain kind covers, roughly (shoelace / ellipse areas; lines and spots are named only). */
 function terrainFacts(m: MapDoc): string {
@@ -232,7 +247,7 @@ function terrainFacts(m: MapDoc): string {
 /** Ask the AI to turn the GM's description of the map into a description of the bare land (the model invents towns otherwise). */
 export function regionTerrainRequest(m: MapDoc, place: string): string {
   return [
-    'You prepare the FIRST of two painting steps for a top-down overland (region) map: the bare land only. Towns, buildings, camps, castles, ruins, bridges, harbours and other structures are painted in later, one by one, into exactly their places.',
+    `You prepare the FIRST of two painting steps for ${customCamera(m) ? `an overland (region) map (its camera: ${customCamera(m)})` : 'a top-down overland (region) map'}: the bare land only. Towns, buildings, camps, castles, ruins, bridges, harbours and other structures are painted in later, one by one, into exactly their places.`,
     '',
     `The GM describes the map: "${place.trim()}"`,
     `Facts about the sketch: ${terrainFacts(m)}`,
@@ -243,16 +258,18 @@ export function regionTerrainRequest(m: MapDoc, place: string): string {
   ].join('\n');
 }
 
-export function regionGroupRequest(place: string, style: StyleConfig, infos: RegionGroupInfo[]): string {
+/** `camera`: the GM's own words for the camera, when the map has one (else it is seen from high above). */
+export function regionGroupRequest(place: string, style: StyleConfig, infos: RegionGroupInfo[], camera?: string): string {
+  const asSeen = camera ? `as seen in the map's own view (${camera}), on a map` : 'as seen from high above on a map';
   return [
     'You write inpainting prompts for an overland (region) map generator.',
     '',
     `PLACE / MAP: ${place.trim()}`,
     `WORLD LOOK: ${style.suffix.trim()}${style.regionSuffix ? `; map look: ${style.regionSuffix.trim()}` : ''}`,
     '',
-    'The finished painting of the EMPTY land (seen from high above) is described above; you cannot see it. Each group below is a spot where one structure or feature (or a few of the same kind, treated as ONE) will now be painted into the land by an inpainting model.',
+    `The finished painting of the EMPTY land (${camera ?? 'seen from high above'}) is described above; you cannot see it. Each group below is a spot where one structure or feature (or a few of the same kind, treated as ONE) will now be painted into the land by an inpainting model.`,
     '',
-    'For every group below write ONE inpainting prompt (15-40 words) describing exactly what is painted inside that shape, as seen from high above on a map. Rules: use kindPrompt as the base meaning and shapePrompts (the GM\'s own words) as the truth when given; decide what things look like from the WORLD LOOK — its era, technology and culture (a camp is tipis, nomad yurts, canvas war tents or modern camping tents depending on the world; a house is a thatched cottage, a timber-frame house or a suburban home; a hospital is a field infirmary, a monastery hospice or a modern complex); the object is share of the map width, so paint a small, believable cluster in scale with the land, not a close-up, and when count>1 it is one group of that many close-together items; the object must stand out from the terrain named in under (crisp dark outline, a short cast shadow to the lower right, colours that contrast with it) and its edges meet the nearby terrain naturally (a port has water on the sea side, a bridge spans the water); use natural, believable colours unless the world is magical; top-down only; no people, no text, no labels, no perspective words. Do not repeat the style words, only describe the object.',
+    'For every group below write ONE inpainting prompt (15-40 words) describing exactly what is painted inside that shape, ' + asSeen + '. Rules: use kindPrompt as the base meaning and shapePrompts (the GM\'s own words) as the truth when given; decide what things look like from the WORLD LOOK — its era, technology and culture (a camp is tipis, nomad yurts, canvas war tents or modern camping tents depending on the world; a house is a thatched cottage, a timber-frame house or a suburban home; a hospital is a field infirmary, a monastery hospice or a modern complex); the object is share of the map width, so paint a small, believable cluster in scale with the land, not a close-up, and when count>1 it is one group of that many close-together items; the object must stand out from the terrain named in under (crisp dark outline, a short cast shadow to the lower right, colours that contrast with it) and its edges meet the nearby terrain naturally (a port has water on the sea side, a bridge spans the water); use natural, believable colours unless the world is magical; top-down only; no people, no text, no labels, no perspective words. Do not repeat the style words, only describe the object.',
     '',
     'GROUPS (JSON):',
     JSON.stringify(infos),
@@ -329,14 +346,16 @@ export function regionTerrainRunner(images: ImageApi, m: MapDoc, place: string, 
     if (land.split(/\s+/).length < 6 || ctx.signal.aborted) land = `${place.trim().replace(/[.\s]+$/, '')}. Empty wild land, no buildings or settlements`;
     land = land.replace(/[.\s]+$/, '');
     const style = images.style();
-    const view = opts.view ?? m.view ?? 'default';
+    // a camera the GM described is in mapLook already: it has no built-in flat-view wording of its own
+    const custom = !opts.view && !!customCamera(m);
+    const view: RegionView = opts.view ?? (m.view && m.view !== 'custom' ? m.view : 'default');
     const stages = lineStages(m);
     const total = 1 + stages.length;
-    const prompt = `${land}. ${regionLook(style)}, completely empty land, nothing built, no buildings, no settlements, no text. ${VIEW_TEXT[view]} No rivers, no streams, no roads, no paths: bare ground only. ${regionLegend(m, true)}`;
+    const prompt = `${land}. ${mapLook(style, m)}, completely empty land, nothing built, no buildings, no settlements, no text. ${custom ? '' : `${VIEW_TEXT[view]} `}No rivers, no streams, no roads, no paths: bare ground only. ${regionLegend(m, true)}`;
     ctx.phase('Painting the terrain…');
     const png = toPng(renderSvg(m, 'terrain'));
     const name = await images.comfy.uploadImage(png, `pnp-${m.id}-terrain.png`);
-    const negative = `${style.negative}, ${REGION_TERRAIN_NEGATIVE}, ${LINES_NEGATIVE}${view !== 'default' ? `, ${VIEW_NEGATIVE}` : ''}`;
+    const negative = `${style.negative}, ${regionTerrainNegative(m)}, ${LINES_NEGATIVE}${!custom && view !== 'default' ? `, ${VIEW_NEGATIVE}` : ''}`;
     const wf = images.comfy.buildImg2Img(prompt, negative, name, ctx.seed, opts.denoise ?? regionTerrainDenoise(fidelity));
     let current = await ctx.generate(wf, (w * h) / 1e6, [0, 1 / total]);
     for (let i = 0; i < stages.length; i++) {
@@ -350,8 +369,8 @@ export function regionTerrainRunner(images: ImageApi, m: MapDoc, place: string, 
       const orig = await images.comfy.uploadImage(current, `${tag}-orig.png`);
       const mask = await images.comfy.uploadImage(band, `${tag}-band.png`);
       const w2 = lineStageWhat(st);
-      const text = `${land}. ${w2.what} Nothing is built anywhere. ${regionLook(style)}. One coherent painting, the same lighting and brush style everywhere.`;
-      const neg = `${style.negative}, text, letters, labels, ${NO_BUILD}, ${w2.not}, distorted, blurry${view !== 'default' ? `, ${VIEW_NEGATIVE}` : ''}`;
+      const text = `${land}. ${w2.what} Nothing is built anywhere. ${mapLook(style, m)}. One coherent painting, the same lighting and brush style everywhere.`;
+      const neg = `${style.negative}, text, letters, labels, ${NO_BUILD}, ${w2.not}, distorted, blurry${!custom && view !== 'default' ? `, ${VIEW_NEGATIVE}` : ''}`;
       const rf = images.comfy.buildRefine(text, neg, { image: imgName, original: orig, mask }, ctx.seed + 1 + i, opts.lineDenoise ?? LINE_DENOISE);
       current = await ctx.generate(rf, (w * h) / 1e6, [(1 + i) / total, (2 + i) / total]);
     }
@@ -396,7 +415,7 @@ export function regionStructuresRunner(
       ctx.phase('Writing the painting prompts…');
       let r: Record<string, string>;
       try {
-        r = parseRegionPrompts(await images.ai(ai.backend, regionGroupRequest(place, style, open), ai.model), open).prompts;
+        r = parseRegionPrompts(await images.ai(ai.backend, regionGroupRequest(place, style, open, customCamera(m) || undefined), ai.model), open).prompts;
       } catch (e) {
         console.error('[mappaint] prompt writing failed, using plain prompts', e);
         r = parseRegionPrompts('', open).prompts;
@@ -419,13 +438,13 @@ export function regionStructuresRunner(
         const base = await images.comfy.uploadImage(current, `pnp-${m.id}-${ctx.seed}-base.png`);
         const sample = await images.comfy.uploadImage(toPng(masks.sample), `pnp-${m.id}-${ctx.seed}-ms.png`);
         const compose = await images.comfy.uploadImage(toPng(masks.compose), `pnp-${m.id}-${ctx.seed}-mc.png`);
-        const text = `${REGION_PROP_STYLE} ${prompts[g.id].replace(/[.\s]+$/, '')}.`;
-        const wf = images.comfy.buildInpaint(text, `${style.negative}, ${REGION_PROP_NEGATIVE}`, { image: base, sampleMask: sample, composeMask: compose, crop }, ctx.seed + done + 1);
+        const text = `${regionPropStyle(m)} ${prompts[g.id].replace(/[.\s]+$/, '')}.`;
+        const wf = images.comfy.buildInpaint(text, `${style.negative}, ${regionPropNegative(m)}`, { image: base, sampleMask: sample, composeMask: compose, crop }, ctx.seed + done + 1);
         current = await ctx.generate(wf, (crop.tw * crop.th) / 1e6, [done / total, (done + 1) / total]);
         done++;
       }
     }
-    if (withRing && !ctx.signal.aborted) current = await consolidate(images, ctx, m, current, place, regionLook(style), [done / total, 1]);
+    if (withRing && !ctx.signal.aborted) current = await consolidate(images, ctx, m, current, place, mapLook(style, m), [done / total, 1]);
     return current;
   };
 }
@@ -461,10 +480,10 @@ export function repaintGroupRunner(
       try {
         if (region) {
           const infos = describeRegionGroups(m, [group as RegionGroup]);
-          prompt = parseRegionPrompts(await images.ai(ai.backend, regionGroupRequest(place, style, infos), ai.model), infos).prompts[groupId];
+          prompt = parseRegionPrompts(await images.ai(ai.backend, regionGroupRequest(place, style, infos, customCamera(m) || undefined), ai.model), infos).prompts[groupId];
         } else {
           const infos = describeGroups(m, [group as PropGroup]);
-          prompt = parseGroupPrompts(await images.ai(ai.backend, groupPromptRequest(place, infos), ai.model), infos).prompts[groupId];
+          prompt = parseGroupPrompts(await images.ai(ai.backend, groupPromptRequest(place, infos, customCamera(m) || undefined), ai.model), infos).prompts[groupId];
         }
       } catch (e) {
         console.error('[mappaint] prompt writing failed, using the plain prompt', e);
@@ -486,12 +505,12 @@ export function repaintGroupRunner(
       const base = await images.comfy.uploadImage(current, `pnp-${m.id}-${ctx.seed}-base.png`);
       const sample = await images.comfy.uploadImage(toPng(masks.sample), `pnp-${m.id}-${ctx.seed}-ms.png`);
       const compose = await images.comfy.uploadImage(toPng(masks.compose), `pnp-${m.id}-${ctx.seed}-mc.png`);
-      const styleText = region ? REGION_PROP_STYLE : PROP_STYLE;
-      const neg = region ? REGION_PROP_NEGATIVE : PROP_NEGATIVE;
+      const styleText = region ? regionPropStyle(m) : propStyle(m);
+      const neg = region ? regionPropNegative(m) : PROP_NEGATIVE;
       const wf = images.comfy.buildInpaint(`${styleText} ${prompt.replace(/[.\s]+$/, '')}.`, `${style.negative}, ${neg}`, { image: base, sampleMask: sample, composeMask: compose, crop }, ctx.seed + j + 1);
       current = await ctx.generate(wf, (crop.tw * crop.th) / 1e6, [j / total, (j + 1) / total]);
     }
-    if (withRing && !ctx.signal.aborted) current = await consolidate(images, ctx, m, current, place, region ? regionLook(style) : style.mapSuffix, [crops.length / total, 1], [groupId]);
+    if (withRing && !ctx.signal.aborted) current = await consolidate(images, ctx, m, current, place, mapLook(style, m), [crops.length / total, 1], [groupId]);
     return current;
   };
 }

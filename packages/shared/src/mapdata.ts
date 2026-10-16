@@ -102,8 +102,14 @@ export interface MapDoc {
    * The GM's own wording (`ai` absent) is used as it is; `ai: true` is only what the AI wrote last time, shown for editing.
    */
   propPrompts?: Record<string, { kind: string; text: string; ai?: boolean }>;
-  /** region maps: how strictly the terrain is painted as a flat plan view (default = natural painted-map look) */
-  view?: 'default' | 'strict' | 'plan';
+  /**
+   * The camera the map is painted with (see camera.ts). Absent = the standard: battle maps straight from above, region maps the
+   * natural painted-map look. `strict` / `plan` (region maps): a flat plan view / a hillshaded survey map. `custom`: the GM's
+   * own words in `viewText` (a side view, a cross-section of a tower…).
+   */
+  view?: 'default' | 'strict' | 'plan' | 'custom';
+  /** the GM's description of the camera, used when `view` is `custom` */
+  viewText?: string;
   /** names printed on top of the picture: the lettering style used when a label names none of its own */
   lettering?: { style: string };
   /** finished pictures that have the names printed on them -> the painted render they were made from */

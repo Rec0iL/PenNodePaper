@@ -5,7 +5,7 @@ import path from 'node:path';
 import { getRequestListener } from '@hono/node-server';
 import { Hono, type Context } from 'hono';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { DEFAULT_COMFY, type Actor, type Backend, type CommandResult, type MapPaintMode, type ServerMsg } from '@pnp/shared';
+import { DEFAULT_COMFY, MAP_VIEWS, cleanCameraText, type Actor, type Backend, type CommandResult, type MapPaintMode, type ServerMsg } from '@pnp/shared';
 import { spawnCliSync } from './cli.js';
 import { Chat, listModels } from './chat.js';
 import { imageSize, renderSvg } from './maps.js';
@@ -713,6 +713,11 @@ app.put('/api/maps/:id', async (c) => {
   doc.lettered = cur.lettered;
   doc.terrains = cur.terrains;
   doc.terrainPick = cur.terrainPick;
+  // the camera is chosen in the editor: only the known ones, and the GM's own words kept short
+  if (doc.view && !(MAP_VIEWS as string[]).includes(doc.view)) delete doc.view;
+  if (doc.view === 'default') delete doc.view;
+  if (typeof doc.viewText === 'string' && cleanCameraText(doc.viewText)) doc.viewText = cleanCameraText(doc.viewText);
+  else delete doc.viewText;
   // the description of the place is typed in the editor and saved with the map; without one the stored one stays
   if (typeof doc.paintPrompt === 'string' && doc.paintPrompt.trim()) doc.paintPrompt = doc.paintPrompt.slice(0, 2000);
   else if (cur.paintPrompt) doc.paintPrompt = cur.paintPrompt;

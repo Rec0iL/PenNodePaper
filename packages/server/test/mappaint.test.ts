@@ -461,6 +461,51 @@ describe('repainting one prop group', () => {
   });
 });
 
+describe('the camera of a battle map', () => {
+  it('is straight from above unless the GM describes another one; then every prompt follows it', async () => {
+    const mapId = setup();
+    run('render_map', { mapId, prompt: PLACE });
+    await idle();
+    const std = wfs[0]['10'].inputs.text as string;
+    expect(std).toContain('tabletop RPG battle map');
+    expect(std).toContain('seen from directly above, orthographic top-down view'); // from the map, not from the campaign style
+    expect(wfs[0]['11'].inputs.text).toContain('perspective view');
+    // strict / plan are region settings: a battle map keeps its standard camera
+    run('render_map', { mapId, prompt: PLACE, view: 'plan' });
+    expect(store.maps.get(mapId).view).toBeUndefined();
+    await idle();
+
+    wfs.length = 0;
+    aiCalls.length = 0;
+    run('render_map', { mapId, prompt: PLACE, view: 'custom', cameraText: 'a vertical section of the tavern seen from the front, floor above floor' });
+    await idle();
+    const text = wfs[0]['10'].inputs.text as string;
+    expect(text).toContain('a vertical section of the tavern seen from the front, floor above floor');
+    expect(text).not.toMatch(/directly above|top-down/);
+    expect(wfs[0]['11'].inputs.text).not.toContain('perspective view');
+    expect(aiCalls[0]).toContain('its camera: a vertical section of the tavern');
+    // step 2 keeps to it, too
+    run('set_map_terrain', { mapId, file: store.maps.get(mapId).terrains!.at(-1)! });
+    wfs.length = 0;
+    aiCalls.length = 0;
+    run('paint_map_props', { mapId });
+    await idle();
+    expect(wfs[0]['10'].inputs.text).toContain('a vertical section of the tavern');
+    expect(wfs[0]['10'].inputs.text).not.toMatch(/top-down orthographic/);
+    expect(aiCalls.find((c) => c.includes('GROUPS (JSON)'))).toContain("the map's own view (a vertical section of the tavern");
+  });
+
+  it('counts in quick painting, too', async () => {
+    mode = 'quick';
+    const mapId = setup();
+    run('render_map', { mapId, prompt: PLACE, view: 'custom', cameraText: 'seen from the side, like a cutaway' });
+    await idle();
+    expect(wfs[0]['10'].inputs.text).toContain('seen from the side, like a cutaway');
+    expect(wfs[0]['10'].inputs.text).not.toContain('top-down orthographic');
+    expect(wfs[0]['11'].inputs.text).not.toContain('perspective view');
+  });
+});
+
 describe('quick painting is unchanged', () => {
   it('one img2img pass from the control picture with props, attached like before; no terrain steps', async () => {
     mode = 'quick';

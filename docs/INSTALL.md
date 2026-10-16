@@ -290,7 +290,7 @@ Open **⚙ Settings → ComfyUI**:
 
 Then open any node → **Inspector → Images → Generate**, or ask the AI.
 
-**Painted maps** (the **Paint** tab of the map editor) reuse the same model through image-to-image. They need nothing extra, only a model good at top-down maps; the *map style* text in the settings steers it.
+**Painted maps** (the **Paint** tab of the map editor) reuse the same model through image-to-image. They need nothing extra, only a model good at top-down maps. The *map style* text in the settings steers how maps **look** (materials, brush, palette); the camera angle (top-down by default, or your own words, e.g. a side view) is chosen per map in its Paint tab.
 
 ---
 
