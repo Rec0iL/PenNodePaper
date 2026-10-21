@@ -13,6 +13,7 @@ import { generateStyle, runOnce } from './style.js';
 import { ImageService } from './images.js';
 import { listCommands, runCommand } from './commands.js';
 import { CONFIG_PATH, REPO_ROOT, loadConfig, loadMapPaintMode, loadSaved, saveConfig } from './config.js';
+import { findModelsDir, isLocalUrl, scanModels } from './comfymodels.js';
 import { estimatePaint } from './mappaint.js';
 import { FONT_DIR, LABEL_ASSET_DIR, installLabelContext } from './labels.js';
 import { importArchive } from './backup.js';
@@ -781,12 +782,24 @@ app.get('/api/settings', async (c) => {
     mapPaintMode: practice ? tutorialMapMode : mapPaintMode,
     alive,
     options: alive ? await (practice ? images.comfy.options().catch(() => null) : images.comfy.options()) : null,
+    comfyModelsDir: loadSaved().comfyModelsDir ?? '',
   });
 });
 
+// The image models ComfyUI has, each with the family it belongs to (read from the file when ComfyUI's models folder is on this computer).
+app.get('/api/comfy/models', async (c) => {
+  if (store.state.meta.tutorial?.on || !(await images.comfy.alive())) return c.json({ modelsDir: '', models: [] });
+  const o = await images.comfy.options();
+  const local = isLocalUrl(images.comfyConfig().url);
+  const saved = loadSaved().comfyModelsDir ?? '';
+  const modelsDir = local ? findModelsDir(saved) : '';
+  return c.json({ modelsDir, local, models: scanModels(modelsDir, o) });
+});
+
 app.put('/api/settings', async (c) => {
-  const b = (await c.req.json()) as { comfy?: Record<string, unknown>; style?: Record<string, unknown>; language?: string; aiMode?: string; aiCreativity?: number; mapPaintMode?: string };
+  const b = (await c.req.json()) as { comfy?: Record<string, unknown>; style?: Record<string, unknown>; language?: string; aiMode?: string; aiCreativity?: number; mapPaintMode?: string; comfyModelsDir?: string };
   const m = store.state.meta;
+  if (typeof b.comfyModelsDir === 'string' && b.comfyModelsDir.trim() !== (loadSaved().comfyModelsDir ?? '')) saveConfig({ comfyModelsDir: b.comfyModelsDir.trim() }); // this computer's folder, not part of the campaign
   if (b.mapPaintMode === 'quick' || b.mapPaintMode === 'staged') {
     if (store.state.meta.tutorial?.on) tutorialMapMode = b.mapPaintMode; // the tour must not change this computer's real setting
     else {

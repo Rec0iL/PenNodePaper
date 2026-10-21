@@ -1,3 +1,4 @@
+import type { ComfyWorkflow } from './comfymodels.js';
 import type { MapDoc } from './mapdata.js';
 import type { RegionKind } from './regionkinds.js';
 
@@ -99,7 +100,17 @@ export interface GraphFile {
 
 export interface ComfyConfig {
   url: string;
-  /** Krea 2 turbo graph: separate UNET / CLIP / VAE loaders (as in KINETIK's rulebook-pdf). */
+  /**
+   * Which graph a picture is made with: `diffusion` = separate UNET / CLIP / VAE loaders (Krea 2, Anima; as in KINETIK's
+   * rulebook-pdf), `checkpoint` = one file with everything in it (SD 1.5, SDXL, Illustrious, Pony, Flux checkpoints).
+   * Absent in older campaigns = diffusion.
+   */
+  workflow: ComfyWorkflow;
+  /** The model family (see comfymodels.ts): its settings were applied with the model, and some of them (SD 1.5's working size) are used on every picture. */
+  family: string;
+  /** workflow `checkpoint`: the checkpoint file */
+  checkpoint: string;
+  /** workflow `diffusion`: the UNET file; text encoder and VAE below. */
   unet: string;
   clip: string;
   clipType: string;
@@ -122,6 +133,9 @@ export interface ComfyConfig {
 
 export const DEFAULT_COMFY: ComfyConfig = {
   url: 'http://127.0.0.1:8188',
+  workflow: 'diffusion',
+  family: 'krea2',
+  checkpoint: '',
   unet: 'krea2TurboOfficialComfy_krea2TurboInt8.safetensors',
   clip: 'qwen3vl_4b_fp8_scaled.safetensors',
   clipType: 'krea2',
@@ -426,6 +440,7 @@ export function slugify(input: string): string {
   return s || 'node';
 }
 
+export * from './comfymodels.js';
 export * from './mapdata.js';
 export * from './maps.js';
 export * from './labelstyles.js';

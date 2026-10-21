@@ -188,6 +188,18 @@ Two kinds of stable reference documents live in the **Library** tab (not on the 
 
 Per node: **Inspector → Images**. Pick a kind (portrait / scene / item / handout / banner), write a prompt or let the AI write it (**✦ AI writes it**), generate 1–4 variants, choose the cover, click for the lightbox. Jobs run one at a time with live progress; finished images attach to the node as undoable edits. Settings (⚙): ComfyUI URL + model pickers (defaults = your KINETIK Krea 2 Turbo setup), campaign image style, campaign language. The AI can do all of it through `generate_image`, `image_queue`, `set_cover_image`, `remove_image`.
 
+**Image models (⚙ Settings → ComfyUI → *Image model*).** Every model family runs with its own graph, text encoder, VAE and sampler, and the wrong mix fails with errors like *"mat1 and mat2 shapes cannot be multiplied"* (an SD 1.5 model fed with a Krea 2 text encoder). So pick the model from the list: PenNodePaper works out what it is and sets everything it needs — the graph (a **checkpoint** for SD 1.5, SDXL / Illustrious / Pony and Flux checkpoints, separate UNET + text encoder + VAE for Krea 2 and Anima), the text encoder and VAE, steps, CFG, sampler and scheduler (distilled *Lightning / Turbo / LCM* variants get the short settings). A text encoder or VAE that ComfyUI does not have is named, with a download link. *Model type* sets the same thing by hand for a file that was not recognised, *Recommended values* resets it, and everything stays editable.
+
+| Model type | Graph | Steps / CFG / sampler | Note |
+|---|---|---|---|
+| Krea 2 | diffusion model | 8 / 1 / euler, simple | turbo; the negative prompt needs *Negative prompt works* |
+| Anima | diffusion model | 28 / 4 / euler, simple | |
+| SDXL, Illustrious, Pony | checkpoint | 28 / 6 / dpmpp_2m, karras | lightning variants: 8 / 2 |
+| SD 1.5 | checkpoint | 25 / 7 / dpmpp_2m, karras | trained at about 512 px: pictures are made at that size and scaled up to what was asked for, so faces and bodies are not doubled |
+| Flux (checkpoint) | checkpoint | 20 / 1 / euler, simple | |
+
+Models are recognised by the **tensor names inside the file** (not by what it is called) when ComfyUI's `models` folder is on this computer — found by itself for comfy-cli / ComfyUI Desktop / Pinokio / a checkout in your home folder, or named in the *ComfyUI models folder* field. Without it the name is the only hint and you pick the type. Map painting (img2img, props) works with every usable family, but its strengths were tuned with Krea 2.
+
 **Pictures you already have:** the **⬆ Import** button next to *Generate* adds PNG, JPEG, WebP (or GIF / AVIF / BMP, converted) files to the node's gallery — several at once. They behave like generated ones: cover, lightbox, VTT handout, one undo step.
 
 ## 🗺️ Maps

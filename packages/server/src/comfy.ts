@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { WebSocket } from 'ws';
-import { DEFAULT_COMFY, effectiveCfg, type ComfyConfig, type Crop } from '@pnp/shared';
+import { DEFAULT_COMFY, effectiveCfg, familyMegapixels, workSize, type ComfyConfig, type Crop } from '@pnp/shared';
 
 // ---------------------------------------------------------------------------
 // ComfyUI client (REST + progress websocket). Ported from KINETIK's
@@ -11,6 +11,7 @@ export class ComfyError extends Error {}
 
 export interface ComfyOptions {
   unet: string[];
+  checkpoint: string[];
   clip: string[];
   clipType: string[];
   vae: string[];
@@ -19,6 +20,7 @@ export interface ComfyOptions {
 }
 
 type Workflow = Record<string, { class_type: string; inputs: Record<string, unknown> }>;
+type Ref = [string, number];
 
 /** What the image queue is making (ComfyUI itself does not care; the tutorial's stand-in uses it to pick a picture). */
 export interface GenerateJob { nodeId: string; kind: string; seed: number }
@@ -61,37 +63,80 @@ export class Comfy {
         return [];
       }
     };
-    const [unet, clip, clipType, vae, samplers, schedulers] = await Promise.all([
+    const [unet, checkpoint, clip, clipType, vae, samplers, schedulers] = await Promise.all([
       get('UNETLoader', 'unet_name'),
+      get('CheckpointLoaderSimple', 'ckpt_name'),
       get('CLIPLoader', 'clip_name'),
       get('CLIPLoader', 'type'),
       get('VAELoader', 'vae_name'),
       get('KSampler', 'sampler_name'),
       get('KSampler', 'scheduler'),
     ]);
-    return { unet, clip, clipType, vae, samplers, schedulers };
+    return { unet, checkpoint, clip, clipType, vae, samplers, schedulers };
   }
 
-  /** Krea 2 turbo ("anima") graph: UNET + CLIP + VAE loaders -> KSampler -> SaveImage. */
+  /**
+   * The model loaders of the configured workflow and where the graph takes its model, text encoder and VAE from:
+   * `diffusion` = UNET + CLIP + VAE loaded separately (Krea 2, Anima), `checkpoint` = one file that has all three (SD 1.5, SDXL, …).
+   */
+  private loaders(c: ComfyConfig): { nodes: Workflow; model: Ref; clip: Ref; vae: Ref } {
+    if (c.workflow === 'checkpoint') {
+      if (!c.checkpoint) throw new ComfyError('No checkpoint is chosen: pick one under Settings → ComfyUI → Image model.');
+      return {
+        nodes: { '1': { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: c.checkpoint } } },
+        model: ['1', 0], clip: ['1', 1], vae: ['1', 2],
+      };
+    }
+    return {
+      nodes: {
+        '1': { class_type: 'UNETLoader', inputs: { unet_name: c.unet, weight_dtype: 'default' } },
+        '2': { class_type: 'CLIPLoader', inputs: { clip_name: c.clip, type: c.clipType, device: 'default' } },
+        '3': { class_type: 'VAELoader', inputs: { vae_name: c.vae } },
+      },
+      model: ['1', 0], clip: ['2', 0], vae: ['3', 0],
+    };
+  }
+
+  /**
+   * The graph for one picture: loaders -> KSampler -> SaveImage. Node '14' is always the finished picture at the size asked for:
+   * a model that works at a smaller size (SD 1.5, see comfymodels.ts) is sampled at that size ('9' decodes) and scaled up in '14'.
+   */
   buildWorkflow(prompt: string, negative: string, w: number, h: number, seed: number): Workflow {
     const c = this.cfg();
-    return {
-      '1': { class_type: 'UNETLoader', inputs: { unet_name: c.unet, weight_dtype: 'default' } },
-      '2': { class_type: 'CLIPLoader', inputs: { clip_name: c.clip, type: c.clipType, device: 'default' } },
-      '3': { class_type: 'VAELoader', inputs: { vae_name: c.vae } },
-      '10': { class_type: 'CLIPTextEncode', inputs: { clip: ['2', 0], text: prompt } },
-      '11': { class_type: 'CLIPTextEncode', inputs: { clip: ['2', 0], text: negative } },
-      '12': { class_type: 'EmptyLatentImage', inputs: { width: w, height: h, batch_size: 1 } },
+    const { nodes, model, clip, vae } = this.loaders(c);
+    const ws = workSize(c.family, w, h);
+    const decode = ws.scaled ? '9' : '14';
+    const wf: Workflow = {
+      ...nodes,
+      '10': { class_type: 'CLIPTextEncode', inputs: { clip, text: prompt } },
+      '11': { class_type: 'CLIPTextEncode', inputs: { clip, text: negative } },
+      '12': { class_type: 'EmptyLatentImage', inputs: { width: ws.w, height: ws.h, batch_size: 1 } },
       '13': {
         class_type: 'KSampler',
         inputs: {
-          model: ['1', 0], positive: ['10', 0], negative: ['11', 0], latent_image: ['12', 0],
+          model, positive: ['10', 0], negative: ['11', 0], latent_image: ['12', 0],
           seed, steps: c.steps, cfg: effectiveCfg(c), sampler_name: c.sampler, scheduler: c.scheduler, denoise: 1.0,
         },
       },
-      '14': { class_type: 'VAEDecode', inputs: { samples: ['13', 0], vae: ['3', 0] } },
+      [decode]: { class_type: 'VAEDecode', inputs: { samples: ['13', 0], vae } },
       '15': { class_type: 'SaveImage', inputs: { filename_prefix: 'pennodepaper', images: ['14', 0] } },
     };
+    if (ws.scaled) wf['14'] = { class_type: 'ImageScale', inputs: { image: ['9', 0], upscale_method: 'lanczos', width: w, height: h, crop: 'disabled' } };
+    return wf;
+  }
+
+  /**
+   * A picture of a size we do not know (an uploaded plan) for a model that works smaller: scaled down to the model's area before it is
+   * encoded, and the result scaled back to the picture's own size ('16' reads it), so everything after node '14' sees full size again.
+   */
+  private fitToModel(wf: Workflow, image: Ref): Ref {
+    const mp = familyMegapixels(this.cfg().family);
+    if (!mp) return image;
+    wf['19'] = { class_type: 'ImageScaleToTotalPixels', inputs: { image, upscale_method: 'lanczos', megapixels: mp } };
+    wf['9'] = wf['14'];
+    wf['16'] = { class_type: 'GetImageSize', inputs: { image } };
+    wf['14'] = { class_type: 'ImageScale', inputs: { image: ['9', 0], upscale_method: 'lanczos', width: ['16', 0], height: ['16', 1], crop: 'disabled' } };
+    return ['19', 0];
   }
 
   /** Upload an image into ComfyUI's input folder (for LoadImage). Returns the stored file name. */
@@ -109,7 +154,8 @@ export class Comfy {
     const wf = this.buildWorkflow(prompt, negative, 64, 64, seed);
     delete wf['12'];
     wf['20'] = { class_type: 'LoadImage', inputs: { image } };
-    wf['21'] = { class_type: 'VAEEncode', inputs: { pixels: ['20', 0], vae: ['3', 0] } };
+    const pixels = this.fitToModel(wf, ['20', 0]);
+    wf['21'] = { class_type: 'VAEEncode', inputs: { pixels, vae: this.loaders(this.cfg()).vae } };
     wf['13'].inputs.latent_image = ['21', 0];
     wf['13'].inputs.denoise = denoise;
     return wf;
@@ -125,11 +171,12 @@ export class Comfy {
     const c = o.crop;
     const wf = this.buildWorkflow(prompt, negative, 64, 64, seed);
     delete wf['12'];
+    const work = workSize(this.cfg().family, c.tw, c.th); // a model that works smaller samples the window smaller; node 26 scales it back to the window
     wf['20'] = { class_type: 'LoadImage', inputs: { image: o.image } };
     wf['21'] = { class_type: 'ImageCrop', inputs: { image: ['20', 0], width: c.w, height: c.h, x: c.x, y: c.y } };
-    wf['22'] = { class_type: 'ImageScale', inputs: { image: ['21', 0], upscale_method: 'lanczos', width: c.tw, height: c.th, crop: 'disabled' } };
-    const pixels: [string, number] = ['22', 0];
-    wf['23'] = { class_type: 'VAEEncode', inputs: { pixels, vae: ['3', 0] } };
+    wf['22'] = { class_type: 'ImageScale', inputs: { image: ['21', 0], upscale_method: 'lanczos', width: work.w, height: work.h, crop: 'disabled' } };
+    const pixels: Ref = ['22', 0];
+    wf['23'] = { class_type: 'VAEEncode', inputs: { pixels, vae: this.loaders(this.cfg()).vae } };
     wf['24'] = { class_type: 'LoadImageMask', inputs: { image: o.sampleMask, channel: 'red' } };
     wf['25'] = { class_type: 'SetLatentNoiseMask', inputs: { samples: ['23', 0], mask: ['24', 0] } };
     wf['13'].inputs.latent_image = ['25', 0];

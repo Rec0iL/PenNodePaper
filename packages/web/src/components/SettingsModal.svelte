@@ -1,11 +1,13 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
-  import { actorName, type ComfyConfig, type MapPaintMode, type StyleConfig } from '@pnp/shared';
+  import { MODEL_FAMILIES, PICKABLE_FAMILIES, actorName, missingComponents, recommendedSettings, type ComfyConfig, type FamilyKey, type MapPaintMode, type ModelSettings, type StyleConfig } from '@pnp/shared';
   import { app, cmd, say } from '../lib/app.svelte';
 
   let { onclose }: { onclose: () => void } = $props();
 
-  interface Opts { unet: string[]; clip: string[]; clipType: string[]; vae: string[]; samplers: string[]; schedulers: string[] }
+  interface Opts { unet: string[]; checkpoint: string[]; clip: string[]; clipType: string[]; vae: string[]; samplers: string[]; schedulers: string[] }
+  /** one image model ComfyUI has, with the family it belongs to (server/src/comfymodels.ts) */
+  interface Model { name: string; loader: 'unet' | 'checkpoint'; family: FamilyKey; detected: 'header' | 'name' | 'none'; usable: boolean; fast: boolean; settings: ModelSettings | null; needsLink?: boolean }
   let comfy = $state<ComfyConfig | null>(null);
   let style = $state<StyleConfig | null>(null);
   let language = $state('de');
@@ -13,10 +15,15 @@
   let alive = $state<boolean | null>(null);
   let practice = $state(false);
   let opts = $state<Opts | null>(null);
+  let models = $state<Model[]>([]);
+  let modelsDir = $state(''); // the folder the models were read from ('' = none found)
+  let modelsLocal = $state(true); // ComfyUI runs on this computer, so its files can be read
+  let modelsDirInput = $state(''); // the folder the GM named (saved for this computer)
   let loaded = $state(false);
   let baseline = ''; // what the server has: only real changes are saved
-  const snapshot = () => JSON.stringify([comfy, style, language, mapMode]);
+  const snapshot = () => JSON.stringify([comfy, style, language, mapMode, modelsDirInput]);
   let status = $state('');
+  let lastDir = ''; // the models folder the list was last read with
 
   async function load() {
     alive = null;
@@ -28,8 +35,19 @@
     alive = j.alive;
     practice = !!j.practice;
     opts = j.options;
+    modelsDirInput = j.comfyModelsDir ?? '';
+    lastDir = modelsDirInput;
     baseline = snapshot();
     loaded = true;
+    void loadModels();
+  }
+  async function loadModels() {
+    try {
+      const m = (await (await fetch('/api/comfy/models')).json()) as { modelsDir: string; local?: boolean; models: Model[] };
+      models = m.models;
+      modelsDir = m.modelsDir;
+      modelsLocal = m.local !== false;
+    } catch { models = []; }
   }
   onMount(load);
 
@@ -42,8 +60,9 @@
     clearTimeout(timer);
     status = 'Saving…';
     timer = setTimeout(async () => {
-      const r = await fetch('/api/settings', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ comfy, style, language, mapPaintMode: mapMode }) });
+      const r = await fetch('/api/settings', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ comfy, style, language, mapPaintMode: mapMode, comfyModelsDir: modelsDirInput }) });
       if (r.ok) baseline = now;
+      if (r.ok && modelsDirInput !== lastDir) { lastDir = modelsDirInput; void loadModels(); } // a new models folder: read the models again
       status = r.ok ? '✓ Saved automatically' : '⚠ save failed';
       if (!r.ok) say('Could not save settings');
     }, 600);
@@ -127,6 +146,36 @@
   }
 
   const missing = (list: string[] | undefined, v: string) => !!list?.length && !list.includes(v);
+
+  // ---- image models: picking one (or its type) sets what it needs ---------------------------
+  const modelKey = (m: { loader: string; name: string }) => `${m.loader}|${m.name}`;
+  const currentName = $derived(comfy ? (comfy.workflow === 'checkpoint' ? comfy.checkpoint : comfy.unet) : '');
+  const currentKey = $derived(comfy ? modelKey({ loader: comfy.workflow === 'checkpoint' ? 'checkpoint' : 'unet', name: currentName }) : '');
+  const family = $derived(MODEL_FAMILIES[(comfy?.family as FamilyKey) in MODEL_FAMILIES ? (comfy!.family as FamilyKey) : 'unknown']);
+  const absent = $derived(comfy && opts && family.key !== 'unknown' ? missingComponents(family.key, { clip: opts.clip, vae: opts.vae }) : []);
+
+  /** The family's own graph, text encoder, VAE, steps, CFG and sampler (a sampler / scheduler ComfyUI does not have is left as it is). */
+  function applyFamily(key: string, name = currentName) {
+    if (!comfy) return;
+    comfy.family = key;
+    const s = recommendedSettings(key as FamilyKey, name);
+    if (!s) return;
+    comfy.workflow = s.workflow;
+    comfy.steps = s.steps;
+    comfy.cfg = s.cfg;
+    if (!opts?.samplers.length || opts.samplers.includes(s.sampler)) comfy.sampler = s.sampler;
+    if (!opts?.schedulers.length || opts.schedulers.includes(s.scheduler)) comfy.scheduler = s.scheduler;
+    if (s.clip) comfy.clip = s.clip;
+    if (s.clipType) comfy.clipType = s.clipType;
+    if (s.vae) comfy.vae = s.vae;
+  }
+  function pickModel(key: string) {
+    const m = models.find((x) => modelKey(x) === key);
+    if (!m || !comfy) return;
+    if (m.loader === 'checkpoint') comfy.checkpoint = m.name; else comfy.unet = m.name;
+    comfy.workflow = m.loader === 'checkpoint' ? 'checkpoint' : 'diffusion';
+    applyFamily(m.family, m.name);
+  }
 </script>
 
 <svelte:window onkeydown={(e) => e.key === 'Escape' && onclose()} />
@@ -172,17 +221,51 @@
           <div class="label">URL</div>
           <input class="field" bind:value={comfy.url} />
 
-          {#each [['UNET (diffusion model)', 'unet', 'unet'], ['CLIP / text encoder', 'clip', 'clip'], ['CLIP type', 'clipType', 'clipType'], ['VAE', 'vae', 'vae']] as [label, key, optKey]}
-            <div class="label">{label}</div>
-            {#if opts?.[optKey as keyof Opts]?.length}
-              <select class="field" class:bad={missing(opts[optKey as keyof Opts], comfy[key as 'unet'])} bind:value={comfy[key as 'unet']}>
-                {#if missing(opts[optKey as keyof Opts], comfy[key as 'unet'])}<option value={comfy[key as 'unet']}>⚠ {comfy[key as 'unet']} (not installed)</option>{/if}
-                {#each opts[optKey as keyof Opts] as o}<option value={o}>{o}</option>{/each}
+          <div class="label">Image model <span class="dim">— pick one and its graph, text encoder, VAE and sampler are set for you</span></div>
+          {#if models.length}
+            <select class="field" data-tour="settings-model" value={currentKey} onchange={(e) => pickModel(e.currentTarget.value)}>
+              {#if !models.some((m) => modelKey(m) === currentKey)}<option value={currentKey}>{currentName || '—'} (current)</option>{/if}
+              {#each models as m}
+                <option value={modelKey(m)} disabled={!m.usable}>{m.name} — {MODEL_FAMILIES[m.family].label}{m.fast ? ' · fast' : ''}{m.detected === 'name' ? ' (guessed from its name)' : ''}{m.needsLink ? ' ⚠ not in diffusion_models' : ''}</option>
+              {/each}
+            </select>
+          {:else if alive}
+            <p class="hint">ComfyUI lists no image models yet.</p>
+          {:else}
+            <p class="hint">Connect to ComfyUI to list its models; until then the settings below are used as they are.</p>
+          {/if}
+          <div class="label">Model type <span class="dim">— what the model was made for; set by itself when it can be told from the file</span></div>
+          <select class="field" value={family.key} onchange={(e) => applyFamily(e.currentTarget.value)}>
+            {#each [...PICKABLE_FAMILIES, ...(PICKABLE_FAMILIES.includes(family.key) ? [] : [family.key])] as k}<option value={k}>{MODEL_FAMILIES[k].label}</option>{/each}
+          </select>
+          {#if family.note}<p class="hint">{family.note}</p>{/if}
+          {#each models.filter((m) => modelKey(m) === currentKey && m.needsLink) as _}<p class="err">⚠ This model only lies in <code>checkpoints/</code>, where ComfyUI's diffusion-model loader does not look. Copy or link it into <code>models/diffusion_models/</code>.</p>{/each}
+          {#each absent as a}<p class="err">⚠ Not installed in ComfyUI: <code>{a.file}</code>{#if a.url} — <a href={a.url} target="_blank" rel="noreferrer">download</a> (text encoders go in <code>models/text_encoders/</code>, VAEs in <code>models/vae/</code>), then ↻ test{/if}</p>{/each}
+          <button class="btn ghost sm" disabled={!recommendedSettings(family.key, currentName)} onclick={() => applyFamily(family.key)} title="Set this model type's own graph, text encoder, VAE, steps, CFG and sampler again">↺ Recommended values</button>
+
+          {#if comfy.workflow === 'checkpoint'}
+            <div class="label">Checkpoint <span class="dim">— one file with the model, text encoder and VAE inside</span></div>
+            {#if opts?.checkpoint?.length}
+              <select class="field" class:bad={missing(opts.checkpoint, comfy.checkpoint)} bind:value={comfy.checkpoint}>
+                {#if missing(opts.checkpoint, comfy.checkpoint)}<option value={comfy.checkpoint}>⚠ {comfy.checkpoint || 'none chosen'} (not installed)</option>{/if}
+                {#each opts.checkpoint as o}<option value={o}>{o}</option>{/each}
               </select>
             {:else}
-              <input class="field" bind:value={comfy[key as 'unet']} />
+              <input class="field" bind:value={comfy.checkpoint} />
             {/if}
-          {/each}
+          {:else}
+            {#each [['UNET (diffusion model)', 'unet', 'unet'], ['CLIP / text encoder', 'clip', 'clip'], ['CLIP type', 'clipType', 'clipType'], ['VAE', 'vae', 'vae']] as [label, key, optKey]}
+              <div class="label">{label}</div>
+              {#if opts?.[optKey as keyof Opts]?.length}
+                <select class="field" class:bad={missing(opts[optKey as keyof Opts], comfy[key as 'unet'])} bind:value={comfy[key as 'unet']}>
+                  {#if missing(opts[optKey as keyof Opts], comfy[key as 'unet'])}<option value={comfy[key as 'unet']}>⚠ {comfy[key as 'unet']} (not installed)</option>{/if}
+                  {#each opts[optKey as keyof Opts] as o}<option value={o}>{o}</option>{/each}
+                </select>
+              {:else}
+                <input class="field" bind:value={comfy[key as 'unet']} />
+              {/if}
+            {/each}
+          {/if}
 
           <div class="r3">
             <div><div class="label">Steps</div><input class="field" type="number" min="1" max="100" bind:value={comfy.steps} /></div>
@@ -203,7 +286,12 @@
             </div>
             {#if comfy.cfg > 1}<p class="hint">Your CFG above is more than 1, so it is used as it is.</p>{:else if comfy.negativeCfg > 2.5}<p class="err">⚠ Above about 2.5 turbo models start to burn out (white bands in the picture).</p>{/if}
           {/if}
-          <p class="hint">Defaults match your KINETIK setup: Krea 2 Turbo INT8, 8 steps, cfg 1. On a 16 GB card, start ComfyUI with <code>--reserve-vram 3</code>.</p>
+          {#if modelsLocal}
+            <div class="label">ComfyUI models folder <span class="dim">— optional: lets PenNodePaper tell models apart by what is inside the files, not by their names{modelsDir ? ` (reading ${modelsDir})` : ' (none found by itself)'}</span></div>
+            <input class="field" bind:value={modelsDirInput} placeholder={modelsDir || 'e.g. C:\\ComfyUI\\models or ~/ComfyUI/models'} />
+          {/if}
+          {#if comfy.family === 'krea2'}<p class="hint">Defaults match your KINETIK setup: Krea 2 Turbo INT8, 8 steps, cfg 1. On a 16 GB card, start ComfyUI with <code>--reserve-vram 3</code>.</p>{/if}
+          <p class="hint">Map painting was tuned with Krea 2: other models paint maps and pictures too, but the strengths it uses (how far a map may be repainted) were chosen for Krea 2.</p>
         </section>
 
         {#if practice}

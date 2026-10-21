@@ -25,7 +25,7 @@ export interface AppConfig {
 const CONFIG_DIR = path.join(process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), '.config'), 'pennodepaper');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 
-type Saved = Partial<AppConfig> & { lastCampaign?: string; recent?: RecentCampaign[]; mapPaintMode?: MapPaintMode };
+type Saved = Partial<AppConfig> & { lastCampaign?: string; recent?: RecentCampaign[]; mapPaintMode?: MapPaintMode; /** where ComfyUI's models folder is on this computer (named by the GM; found by itself when empty) */ comfyModelsDir?: string };
 
 export function loadSaved(): Saved {
   try {
