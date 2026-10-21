@@ -11,6 +11,7 @@ import { Store } from '../src/store.js';
 let dir: string;
 let oldPath: string | undefined;
 let chat: Chat;
+let version: [number, number, number] | null = [0, 160, 0];
 const messages: ChatMsg[] = [];
 
 const line = (o: unknown) => JSON.stringify(o);
@@ -41,8 +42,10 @@ beforeEach(() => {
   oldPath = process.env.PATH;
   process.env.PATH = `${path.join(dir, 'bin')}:${oldPath}`;
   messages.length = 0;
+  version = [0, 160, 0];
   const store = new Store(new Persistence(path.join(dir, 'camp')));
-  chat = new Chat({ store, port: 4317, token: 'sekret', campaignDir: dir, broadcast: (m) => m.t === 'chat' && (messages.push({ ...m.msg }), undefined) });
+  // the stand-in `codex` records every call, so the version is given here instead of asked with `codex --version`
+  chat = new Chat({ store, port: 4317, token: 'sekret', campaignDir: dir, codexVersion: () => version, broadcast: (m) => m.t === 'chat' && (messages.push({ ...m.msg }), undefined) });
 });
 afterEach(() => {
   process.env.PATH = oldPath;
@@ -99,6 +102,36 @@ describe('codex backend', () => {
     expect(tool.tool?.status).toBe('error');
     expect(tool.text).toBe('Node "b" not found');
     expect(system()).toEqual(['Codex: You exceeded your current quota.']);
+  });
+
+  it('hands over the settings the installed Codex version understands', async () => {
+    fakeCodex([line({ type: 'thread.started', thread_id: 't-3' })]);
+    await chat.send({ text: 'x', backend: 'codex' });
+    const modern = calls()[0].args.filter((a) => a.startsWith('mcp_servers.') || a.startsWith('experimental_'));
+    expect(modern).toContain('mcp_servers.pennodepaper.default_tools_approval_mode="approve"');
+    expect(modern.some((a) => a.startsWith('mcp_servers.pennodepaper.tools={') && a.includes('"get_graph"={approval_mode="approve"}'))).toBe(true);
+    expect(modern).not.toContain('experimental_use_rmcp_client=true'); // gone in this Codex: it would only warn
+
+    version = [0, 60, 0];
+    fakeCodex([line({ type: 'thread.started', thread_id: 't-4' })]);
+    await chat.send({ text: 'y', backend: 'codex' });
+    const old = calls()[1].args.filter((a) => a.startsWith('mcp_servers.') || a.startsWith('experimental_'));
+    expect(old).toContain('experimental_use_rmcp_client=true');
+    expect(old.some((a) => /approval_mode|\.tools=/.test(a))).toBe(false); // it would refuse keys it does not know
+  });
+
+  it('explains it when Codex still stops a tool for an approval nobody can give', async () => {
+    fakeCodex([
+      line({ type: 'thread.started', thread_id: 't-5' }),
+      line({ type: 'item.started', item: { id: 'i1', type: 'mcp_tool_call', server: 'pennodepaper', tool: 'get_graph', arguments: {}, status: 'in_progress' } }),
+      line({ type: 'item.completed', item: { id: 'i1', type: 'mcp_tool_call', server: 'pennodepaper', tool: 'get_graph', arguments: {}, status: 'failed', error: { message: 'MCP tool call requires approval, but approval policy is never' } } }),
+      line({ type: 'item.started', item: { id: 'i2', type: 'mcp_tool_call', server: 'pennodepaper', tool: 'list_nodes', arguments: {}, status: 'in_progress' } }),
+      line({ type: 'item.completed', item: { id: 'i2', type: 'mcp_tool_call', server: 'pennodepaper', tool: 'list_nodes', arguments: {}, status: 'failed', error: { message: 'MCP tool call requires approval, but approval policy is never' } } }),
+    ]);
+    await chat.send({ text: 'x', backend: 'codex' });
+    expect(system()).toHaveLength(1); // once per request, not once per blocked call
+    expect(system()[0]).toMatch(/^Codex 0\.160\.0 stopped a campaign tool/);
+    expect(system()[0]).toMatch(/npm i -g @openai\/codex/);
   });
 
   it('says what is wrong when codex is not installed', async () => {

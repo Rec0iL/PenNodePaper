@@ -161,7 +161,7 @@ Everything above works without it. If you install the `claude` and/or `agy` CLI 
 * **In-app chat** (right dock → *AI*): switch Claude / agy / Codex per conversation, pick a model, `@`-mention nodes, selected node is sent as context. Per-node threads live in the inspector and leave a pointer card in the global chat.
 * **Claude** works out of the box (the app spawns `claude -p` headless and hands it this app's MCP server; only the campaign tools are allowed).
 * **agy** needs a one-time *Connect agy* click in the chat (runs `agy mcp add …`, which registers the server in agy's own global config).
-* **Codex** needs no setup in the app beyond having the Codex CLI installed and logged in (`codex login`): every message runs `codex exec --json` and hands it this app's MCP server for that run (the token goes through an environment variable, shell access stays read-only).
+* **Codex** needs no setup in the app beyond having the Codex CLI installed and logged in (`codex login`): every message runs `codex exec --json` and hands it this app's MCP server for that run (the token goes through an environment variable, shell access stays read-only). The app asks `codex --version` and sends only the MCP settings that version knows, including marking the campaign tools as approved — a Codex that wants a click for every MCP tool cannot be answered in `exec` mode, so use a recent one (0.130 or newer is best; if it still stops a tool, the chat says so and the fix is `npm i -g @openai/codex`).
 * **External clients** (Claude Code in a terminal, opencode, Cursor, …) can attach to `http://127.0.0.1:4317/mcp` with the bearer token from `~/.config/pennodepaper/config.json`:
 
   ```bash

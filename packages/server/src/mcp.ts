@@ -18,7 +18,12 @@ function buildServer(store: Store, actor: Actor): McpServer {
   for (const c of aiCommands()) {
     server.registerTool(
       c.name,
-      { description: c.description, inputSchema: c.shape },
+      {
+        description: c.description,
+        inputSchema: c.shape,
+        // honest hints for clients that gate tool calls on them (Codex does): reads are read-only, every change is one undo step
+        annotations: { readOnlyHint: c.readOnly === true, destructiveHint: false, openWorldHint: c.async === true },
+      },
       async (args: Record<string, unknown>) => {
         try {
           const result = await runCommand(store, c.name, args, actor);

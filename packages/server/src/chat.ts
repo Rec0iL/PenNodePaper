@@ -6,7 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 import type { AiCreativity, Backend, ChatMsg, ChatStatus } from '@pnp/shared';
 import { partyDigest } from './party.js';
-import { runCommand } from './commands.js';
+import { codexMcpArgs, isApprovalBlock, parseCodexVersion, type CodexVersion } from './codexargs.js';
+import { aiCommands, runCommand } from './commands.js';
 import { pace } from './tutorial/fake.js';
 import { beatsFor, scriptFor } from './tutorial/script.js';
 import type { Store } from './store.js';
@@ -31,6 +32,16 @@ export interface ChatDeps {
   token: string;
   campaignDir: string;
   broadcast: (m: { t: 'chat'; msg: ChatMsg } | { t: 'chat.status'; status: ChatStatus }) => void;
+  /** The installed Codex's version (what its MCP settings look like depends on it); default: ask `codex --version`, remembered for a minute. */
+  codexVersion?: () => CodexVersion | null;
+}
+
+let codexSeen: { at: number; version: CodexVersion | null } | null = null;
+function probeCodexVersion(): CodexVersion | null {
+  if (codexSeen && Date.now() - codexSeen.at < 60_000) return codexSeen.version;
+  const r = spawnCliSync('codex', ['--version'], { encoding: 'utf8', timeout: 10000 });
+  codexSeen = { at: Date.now(), version: r.error || r.status !== 0 ? null : parseCodexVersion(r.stdout) };
+  return codexSeen.version;
 }
 
 const uid = () => randomBytes(5).toString('hex');
@@ -382,13 +393,10 @@ export class Chat {
       `Tooling notes for Codex: the campaign tools are on the MCP server "${MCP_NAME}". Use them for everything about the campaign; do not run shell commands or edit files — you are only the co-GM, the campaign lives in those tools.`,
       `Prefer targeted calls (search_nodes, get_node) over get_graph once you know what you need.`,
     ].join('\n');
-    const toml = (v: string) => JSON.stringify(v); // a JSON string is a valid TOML basic string
+    const version = (this.deps.codexVersion ?? probeCodexVersion)();
     const args = [
       'exec', '--json', '--skip-git-repo-check', '--sandbox', 'read-only',
-      '-c', `mcp_servers.${MCP_NAME}.url=${toml(`http://127.0.0.1:${port}/mcp?actor=codex`)}`,
-      '-c', `mcp_servers.${MCP_NAME}.bearer_token_env_var=${toml('PNP_MCP_TOKEN')}`,
-      '-c', 'experimental_use_rmcp_client=true',
-      '-c', 'approval_policy="never"',
+      ...codexMcpArgs(MCP_NAME, port, version, aiCommands().map((c) => c.name)),
     ];
     if (model) args.push('-m', model);
     if (this.data.sessions.codex) args.push('resume', this.data.sessions.codex);
@@ -399,6 +407,16 @@ export class Chat {
       if (!text || told.has(text) || this.cancelled) return;
       told.add(text);
       this.push({ role: 'system', backend: 'codex', text: `Codex: ${text.slice(0, 400)}`, nodeId });
+    };
+    let blocked = false;
+    const approvalBlock = (text: string) => {
+      if (blocked || !isApprovalBlock(text)) return;
+      blocked = true;
+      const v = version ? `Codex ${version.join('.')}` : 'This Codex';
+      this.push({
+        role: 'system', backend: 'codex', nodeId,
+        text: `${v} stopped a campaign tool because it wants an approval that nobody can give while the app runs it. The app marks its tools as approved for the Codex versions that have a setting for that (0.120 and newer); update Codex (npm i -g @openai/codex) and try again. Claude and agy are not affected.`,
+      });
     };
     return this.spawnLines('codex', args, campaignDir, (ev) => {
       const e = ev as Record<string, any>;
@@ -420,7 +438,7 @@ export class Chat {
           if (done || it.status === 'failed') {
             const failed = it.status === 'failed' || !!it.error || (!mcp && typeof it.exit_code === 'number' && it.exit_code !== 0);
             card.tool!.status = failed ? 'error' : 'ok';
-            if (failed) card.text = String(it.error?.message ?? it.error ?? it.aggregated_output ?? '').slice(0, 300);
+            if (failed) { card.text = String(it.error?.message ?? it.error ?? it.aggregated_output ?? '').slice(0, 300); if (mcp) approvalBlock(card.text); }
             this.update(card);
           }
         } else if (it.type === 'error' && done) fail(String(it.message ?? ''));
