@@ -18,7 +18,7 @@ $ico = Join-Path $here 'pennodepaper.ico'
 $root = (Resolve-Path (Join-Path $here '..\..')).Path
 $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $programs = [Environment]::GetFolderPath('Programs')
-$desktop = [Environment]::GetFolderPath('Desktop')
+$desktopDir = [Environment]::GetFolderPath('Desktop')
 
 $entries = @(
   @{ Name = 'PenNodePaper'; Arg = 'start'; Text = 'Start PenNodePaper: tray icon, opens in the browser' },
@@ -28,7 +28,7 @@ $entries = @(
 
 if ($Uninstall) {
   foreach ($e in $entries) {
-    foreach ($dir in @($programs, $desktop)) {
+    foreach ($dir in @($programs, $desktopDir)) {
       $f = Join-Path $dir "$($e.Name).lnk"
       if (Test-Path $f) { Remove-Item $f; Write-Host "Removed $f" }
     }
@@ -51,6 +51,6 @@ function New-Link([string]$dir, $e) {
 }
 
 foreach ($e in $entries) { New-Link $programs $e }
-if ($Desktop) { New-Link $desktop $entries[0] }
+if ($Desktop) { New-Link $desktopDir $entries[0] }
 Write-Host ''
 Write-Host 'Done. Open the Start menu and type "PenNodePaper".'
