@@ -4,7 +4,7 @@
   // edit_map uses, so the GM and the AI can work on one map at the same time.
   import { onMount, untrack } from 'svelte';
   import {
-    DEFAULT_LABEL_STYLE, DOOR_KINDS, FIT_MODES, actorName, gridForPicture, groupWindow, groupsOfMap, lineGroupOf, paintPlan, sizeForPicture, variantsOf, FLOORS, LABEL_PLACES, LABEL_STYLES, NODE_TYPE_INFO, PROP_KINDS, REGION_KINDS, applyOps, canon, charactersOfPlace, cleanKind, derivedWalls, fallbackGroupPrompt, fallbackRegionPrompt, getLabelContext, groupProps, groupRegion, imageSize, isLineKind, lettersSvg, placedLabels, pointInShape, regionKind, renderSvg, strokeWidth, tokenKindOf,
+    DEFAULT_LABEL_STYLE, DOOR_KINDS, FIT_MODES, actorName, gridForPicture, groupWindow, groupsOfMap, lineGroupOf, paintPlan, sizeForPicture, variantsOf, FLOORS, LABEL_PLACES, LABEL_STYLES, NODE_TYPE_INFO, PROP_KINDS, REGION_KINDS, applyOps, canon, charactersOfPlace, cleanKind, derivedWalls, fallbackGroupPrompt, fallbackRegionPrompt, getLabelContext, groupProps, groupRegion, imageSize, inStep2, isLineKind, lettersSvg, placedLabels, pointInShape, regionKind, renderSvg, strokeWidth, tokenKindOf,
     type DoorKind, type FitMode, type LabelPlace, type LineGroup, type LabelSize, type MapDoc, type MapOp, type Placed, type PropKind, type RegionKind,
   } from '@pnp/shared';
   import { app, cmd, say, selectNode, sendChat } from '../lib/app.svelte';
@@ -274,7 +274,7 @@
   }
 
   // ---- pointer -> map coordinates -----------------------------------------------------------
-  function local(e: PointerEvent | MouseEvent): { x: number; y: number } {
+  function local(e: { clientX: number; clientY: number }): { x: number; y: number } {
     const r = stage!.getBoundingClientRect();
     return { x: ((e.clientX - r.left) / r.width) * dim.w, y: ((e.clientY - r.top) / r.height) * dim.h };
   }
@@ -381,9 +381,11 @@
       } else if (!edit([{ op: 'edit_token', x: tx0, y: ty0, to: [tx0 + dx, ty0 + dy] }])) return false;
       sel = { t: 'token', x: tx0 + dx, y: ty0 + dy };
     } else if (s.t === 'label' && selLabel) {
-      const { x: lx0, y: ly0, text } = selLabel;
+      const { x: lx0, y: ly0, text, place, style, size, show, area } = selLabel;
       if (copy) {
-        if (!edit([{ op: 'label', x: lx0 + dx, y: ly0 + dy, text }])) return false;
+        // the copy keeps how the name is printed, and the area it stands above / in / below (moved along; areas are in cells on battle maps)
+        const gone = area ? { ...area, x: area.x + dx, y: area.y + dy } : undefined;
+        if (!edit([{ op: 'label', x: lx0 + dx, y: ly0 + dy, text, place, style, size, show, ...(gone ? { area: gone } : {}) }])) return false;
       } else if (!edit([{ op: 'edit_label', x: lx0, y: ly0, to: [lx0 + dx, ly0 + dy] }])) return false;
       sel = { t: 'label', x: lx0 + dx, y: ly0 + dy };
     } else return false;
@@ -828,7 +830,7 @@
     ctx = null;
     ctxSub = null;
   }
-  function openCtx(e: PointerEvent) {
+  function openCtx(e: { clientX: number; clientY: number }) {
     if (!doc) return;
     const p = local(e);
     const c = cellOf(p);
@@ -843,6 +845,12 @@
     ctxSub = null;
     spot = { p, c };
     ctx = { x: e.clientX, y: e.clientY, p, c };
+  }
+  /** a right click outside the open menu closes it — and, over the plan, opens the menu for that spot straight away */
+  function reopenCtx(e: PointerEvent) {
+    closeCtx();
+    const r = vp?.getBoundingClientRect();
+    if (r && e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) openCtx(e);
   }
   /** run a menu action and close the menu */
   const act = (fn: () => void) => () => {
@@ -899,10 +907,14 @@
     const n = placedOf(id);
     if (edit([{ op: 'token', x: c.x, y: c.y, kind: tokenKindOf(who), label: n ? `${who.title} ${n + 1}` : who.title, node: id }])) sel = { t: 'token', x: c.x, y: c.y };
   }
+  /** a new kind for the selected shape, by the map's own rules (a line stays a line, a place never becomes one) */
   function changeKind(id: string) {
-    if (selShape) updateShape(selShape, { kind: id });
+    if (!selShape) return;
+    const k = allKinds.find((x) => x.id === id);
+    const had = doc?.kinds?.some((x) => x.id === id);
+    edit([...(k?.custom && !had ? [{ op: 'define_kind' as const, kind: k }] : []), { op: 'edit_shape', id: selShape.id, kind: id }]);
   }
-  const ctxKinds = $derived(selShape ? allKinds.filter((x) => (selShape.type === 'path') === (x.geometry === 'line')) : []);
+  const ctxKinds = $derived(selShape ? (selShape.type === 'path' ? allKinds.filter((x) => !inStep2(x)) : allKinds) : []);
   const ctxPos = $derived(ctx ? { left: Math.max(8, Math.min(ctx.x, window.innerWidth - 316)), top: Math.max(8, Math.min(ctx.y, window.innerHeight - 440)) } : { left: 0, top: 0 });
 
   // ---- drag & drop ---------------------------------------------------------------------------------------------
@@ -920,6 +932,10 @@
     dropping = false;
     const dt = e.dataTransfer;
     if (!dt || !doc) return;
+    if (impBusy) {
+      e.preventDefault();
+      return say('A picture is being imported — wait until it is done');
+    }
     const who = dt.getData('application/x-pnp-token');
     if (who) {
       e.preventDefault();
@@ -1324,7 +1340,8 @@
   ];
 </script>
 
-<svelte:window {onkeydown} {onkeyup} />
+<!-- a file dropped anywhere else must not make the browser open it and leave the app -->
+<svelte:window {onkeydown} {onkeyup} ondragover={(e) => e.dataTransfer?.types.includes('Files') && e.preventDefault()} ondrop={(e) => e.dataTransfer?.types.includes('Files') && e.preventDefault()} />
 
 {#snippet nameOpts(place: LabelPlace, style: string | undefined, size: LabelSize | undefined, show: boolean, set: (p: NameSet) => void)}
   <div class="label">Stands</div>
@@ -1561,7 +1578,7 @@
         <!-- The menu opens on pointerup. On Windows the browser's contextmenu event comes AFTER that and lands on this scrim or
              on the menu itself: it must only be swallowed there, not close the menu again. A right press outside closes it. -->
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-        <div class="ctx-scrim" onclick={closeCtx} onpointerdown={(e) => e.button === 2 && closeCtx()} oncontextmenu={(e) => e.preventDefault()}></div>
+        <div class="ctx-scrim" onclick={closeCtx} onpointerup={(e) => e.button === 2 && reopenCtx(e)} oncontextmenu={(e) => e.preventDefault()}></div>
         <div class="cmenu" role="menu" tabindex="-1" oncontextmenu={(e) => e.preventDefault()} style="left:{ctxPos.left}px; top:{ctxPos.top}px; width:300px">
           {#if selToken || selProp || selLabel || selDoor || sel?.t === 'area' || selShape}
             <div class="ctx-head"><b>{selToken ? (selToken.label || 'Token') : selProp ? (selProp.label || selProp.kind.replace('_', ' ')) : selLabel ? selLabel.text : selDoor ? 'Door' : sel?.t === 'area' ? `Area ${sel.w}×${sel.h}` : (selShape?.label || kindOf(selShape!.kind).name)}</b></div>
@@ -1889,7 +1906,7 @@
             {@const sk = kindOf(selShape.kind)}
             <div class="step"><b>▣</b> Selected: {sk.name}{selShape.label ? ` · “${selShape.label}”` : ''}</div>
             <div class="label">Kind</div>
-            <select class="field" value={selShape.kind} onchange={(e) => updateShape(selShape!, { kind: e.currentTarget.value })}>
+            <select class="field" value={selShape.kind} onchange={(e) => changeKind(e.currentTarget.value)}>
               <optgroup label="Terrain">{#each palette.terrain as o}<option value={o.id}>{o.name}</option>{/each}</optgroup>
               <optgroup label="Lines">{#each palette.lines as o}<option value={o.id}>{o.name}</option>{/each}</optgroup>
               <optgroup label="Structures">{#each palette.structures as o}<option value={o.id}>{o.name}</option>{/each}</optgroup>
@@ -1925,6 +1942,7 @@
           <div data-tour="map-cast">
             <div class="label">Characters of this place <span class="dim">({cast.length})</span></div>
             <p class="dim">NPCs and enemies that <b>belong to</b> {node ? `“${node.title}”` : 'this place'}. Put them on the plan: the token <b>is</b> the character, and pushing the map sends its sheet along — so the VTT gets the opponent <i>and</i> its token, tied together.</p>
+            <div role="list">
             {#each cast as c (c.id)}
               {@const info = NODE_TYPE_INFO[c.type]}
               <div class="cc" class:on={tool === 'token' && tokenNode === c.id} style="--tc:{info.color}" role="listitem" draggable="true" ondragstart={(e) => { e.dataTransfer?.setData('application/x-pnp-token', c.id); if (e.dataTransfer) e.dataTransfer.effectAllowed = 'copy'; }} title="Drag onto the plan to place it">
@@ -1936,6 +1954,7 @@
             {:else}
               <p class="dim">Nobody belongs here yet — connect an NPC or enemy to this place with <i>belongs to</i>, or make one right here:</p>
             {/each}
+            </div>
             <div class="newc">
               <input class="field" placeholder="New character of this place…" bind:value={newName} onkeydown={(e) => e.key === 'Enter' && createCharacter()} />
               <select class="field" bind:value={newType}><option value="enemy">enemy</option><option value="npc">NPC</option></select>

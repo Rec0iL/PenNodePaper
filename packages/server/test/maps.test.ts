@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { sanitizeMap } from '@pnp/shared';
 import { Maps, applyOps, cellAt, derivedWalls, imageSize, newMap, renderSvg, toPng } from '../src/maps.js';
 
 let dir: string;
@@ -233,5 +234,31 @@ describe('moving and editing parts of a map', () => {
     expect(m.labels[0].text).toBe('Great hall');
     expect(() => applyOps(m, [{ op: 'edit_prop', id: 'nope', x: 1 }])).toThrow(/No prop/);
     expect(() => applyOps(m, [{ op: 'edit_token', x: 0, y: 0 }])).toThrow(/No token/);
+  });
+});
+
+describe('maps that come from outside', () => {
+  it('sanitizeMap leaves nothing but numbers and known colours that reach the SVG', () => {
+    const m = newMap('t', 'T', 'battle', 10, 8);
+    applyOps(m, [{ op: 'prop', kind: 'table', x: 1, y: 1 }]);
+    (m.props[0] as any).rot = '0)"/><script>alert(1)</script>';
+    (m.props[0] as any).x = '1"onload="x';
+    m.kinds = [{ id: 'evil', name: 'Evil', layer: 'terrain', geometry: 'area', color: '"/><script>', prompt: 'a bad kind' } as any];
+    const clean = sanitizeMap(JSON.parse(JSON.stringify(m)));
+    expect(clean.props[0].rot).toBeUndefined();
+    expect(clean.props[0].x).toBe(0);
+    expect(clean.kinds).toBeUndefined();
+    expect(renderSvg(clean)).not.toContain('<script');
+  });
+
+  it('a kind change on a shape follows the same rules as drawing it: lines stay lines, places never become one', () => {
+    const m = newMap('r', 'R', 'region');
+    applyOps(m, [
+      { op: 'shape', type: 'polygon', kind: 'forest', points: [[10, 10], [200, 10], [200, 200], [10, 200]], id: 'a' },
+      { op: 'shape', type: 'path', kind: 'river', points: [[0, 0], [100, 100]], id: 'b' },
+    ]);
+    applyOps(m, [{ op: 'edit_shape', id: 'a', kind: 'river' }]);
+    expect(m.shapes.find((s) => s.id === 'a')!.type).toBe('path'); // an area turned into a line becomes its closed outline
+    expect(() => applyOps(m, [{ op: 'edit_shape', id: 'b', kind: 'village' }])).toThrow(/cannot be a line|painted into an area/);
   });
 });

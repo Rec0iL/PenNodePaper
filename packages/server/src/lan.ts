@@ -34,7 +34,7 @@ export function sessionValue(secret: string, code: string): string {
   return createHmac('sha256', secret).update(`pnp-session:${normalizeCode(code)}`).digest('hex');
 }
 
-const safeEqual = (a: string, b: string) => {
+export const safeEqual = (a: string, b: string) => {
   const x = Buffer.from(a);
   const y = Buffer.from(b);
   return x.length === y.length && timingSafeEqual(x, y);

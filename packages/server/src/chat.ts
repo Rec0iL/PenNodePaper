@@ -244,13 +244,17 @@ export class Chat {
 
   private runClaude(prompt: string, model: string | undefined, nodeId?: string): Promise<void> {
     const { port, token, campaignDir, store } = this.deps;
-    const mcp = JSON.stringify({
-      mcpServers: { [MCP_NAME]: { type: 'http', url: `http://127.0.0.1:${port}/mcp?actor=claude`, headers: { Authorization: `Bearer ${token}` } } },
-    });
+    // the token goes in a private file, not on the command line (where every user of this computer sees it with ps)
+    const mcpFile = path.join(os.tmpdir(), `pnp-mcp-${process.pid}-${Date.now()}.json`);
+    fs.writeFileSync(
+      mcpFile,
+      JSON.stringify({ mcpServers: { [MCP_NAME]: { type: 'http', url: `http://127.0.0.1:${port}/mcp?actor=claude`, headers: { Authorization: `Bearer ${token}` } } } }),
+      { mode: 0o600 },
+    );
     const args = [
       '-p', prompt,
       '--output-format', 'stream-json', '--verbose',
-      '--mcp-config', mcp, '--strict-mcp-config',
+      '--mcp-config', mcpFile, '--strict-mcp-config',
       '--allowedTools', `mcp__${MCP_NAME}`,
       '--tools', '',
       '--append-system-prompt', systemPrompt(store),
@@ -285,7 +289,7 @@ export class Chat {
         if (e.session_id) this.data.sessions.claude = e.session_id;
         if (e.is_error && e.result) this.push({ role: 'system', backend: 'claude', text: String(e.result), nodeId });
       }
-    });
+    }).finally(() => fs.rmSync(mcpFile, { force: true }));
   }
 
   // -------------------------------- agy --------------------------------------

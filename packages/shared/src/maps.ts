@@ -418,6 +418,14 @@ export function applyOps(m: MapDoc, ops: MapOp[]): { ok: number; notes: string[]
         if (!s) throw new Error(`No shape "${o.id}". Shapes: ${m.shapes.map((q) => q.id).join(', ') || 'none'}`);
         if (o.kind !== undefined) {
           if (!isKnownKind(o.kind, m.kinds)) throw new Error(`Unknown kind "${o.kind}". Use: ${[...REGION_KINDS.map((k) => k.id), ...(m.kinds ?? []).map((k) => k.id)].join(', ')} (define your own with define_kind).`);
+          // the same rules as a new shape: lines are drawn as lines, places and structures as areas
+          const kd = regionKind(o.kind, m.kinds);
+          if (isLineKind(kd) && s.type !== 'path') {
+            s.points = outlineOf(s.type as 'polygon' | 'ellipse', s.points, s.r);
+            s.type = 'path';
+            delete s.r;
+            notes.push(`“${kd.name}” is a line: the outline of the area was drawn as a closed line`);
+          } else if (inStep2(kd) && s.type === 'path') throw new Error(`“${kd.name}” is painted into an area or a spot: it cannot be a line. Redraw it as a polygon / ellipse.`);
           s.kind = o.kind;
         }
         if (o.points) {
@@ -542,6 +550,58 @@ export function migratePins(m: MapDoc): boolean {
     return { ...rest, ...pinToEllipse(s, m.kinds) };
   });
   return changed;
+}
+
+/**
+ * Make a map document that came from outside (an imported campaign, a save from the browser) safe to draw: every number a number,
+ * custom kinds run through cleanKind, entries of the wrong shape dropped. The SVG of a map is put into the page as markup, so
+ * nothing but numbers and known colours may reach it. Mutates and returns `m`.
+ */
+export function sanitizeMap(m: MapDoc): MapDoc {
+  const n = (v: unknown, d = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
+  const opt = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+  const arr = <T>(v: unknown, keep: (x: any) => boolean): T[] => (Array.isArray(v) ? (v.filter((x) => x && typeof x === 'object' && keep(x)) as T[]) : []);
+  const str = (v: unknown) => (typeof v === 'string' ? v : '');
+  m.kind = m.kind === 'region' ? 'region' : 'battle';
+  const g = (m.grid ?? {}) as Partial<MapDoc['grid']>;
+  m.grid = { type: g.type === 'hex' ? 'hex' : 'square', cols: Math.max(1, Math.min(200, Math.round(n(g.cols, 20)))), rows: Math.max(1, Math.min(200, Math.round(n(g.rows, 20)))), unit: n(g.unit, 5) };
+  const sz = (m.size ?? {}) as Partial<MapDoc['size']>;
+  m.size = { w: Math.max(64, Math.min(8192, n(sz.w, 1000))), h: Math.max(64, Math.min(8192, n(sz.h, 700))) };
+  m.rows = Array.isArray(m.rows) ? m.rows.map(str) : [];
+  const edge = (d: any) => ({ x: n(d.x), y: n(d.y), side: d.side === 'w' ? ('w' as const) : ('n' as const) });
+  m.doors = arr<MapDoc['doors'][number]>(m.doors, () => true).map((d) => ({ ...edge(d), kind: (DOOR_KINDS as readonly string[]).includes(d.kind) ? d.kind : 'door' }));
+  m.walls = arr<MapDoc['walls'][number]>(m.walls, () => true).map(edge);
+  m.open = arr<MapDoc['open'][number]>(m.open, () => true).map(edge);
+  m.props = arr<MapDoc['props'][number]>(m.props, (p) => typeof p.id === 'string').map((p) => ({
+    id: p.id, kind: (PROP_KINDS as readonly string[]).includes(p.kind) ? p.kind : 'crate', x: n(p.x), y: n(p.y), w: opt(p.w), h: opt(p.h), rot: opt(p.rot), ...(typeof p.label === 'string' ? { label: p.label } : {}),
+  }));
+  for (const p of m.props) for (const k of ['w', 'h', 'rot'] as const) if (p[k] === undefined) delete p[k];
+  m.tokens = arr<MapDoc['tokens'][number]>(m.tokens, () => true).map((t) => ({
+    x: n(t.x), y: n(t.y), kind: t.kind === 'pc' || t.kind === 'npc' ? t.kind : 'enemy', ...(typeof t.label === 'string' ? { label: t.label } : {}), ...(typeof t.node === 'string' ? { node: t.node } : {}),
+  }));
+  m.labels = arr<MapDoc['labels'][number]>(m.labels, (l) => typeof l.text === 'string').map((l) => {
+    const a = l.area as any;
+    return { ...l, x: n(l.x), y: n(l.y), ...(a && typeof a === 'object' ? { area: { x: n(a.x), y: n(a.y), w: n(a.w), h: n(a.h) } } : { area: undefined }) };
+  });
+  for (const l of m.labels) if (l.area === undefined) delete l.area;
+  m.kinds = arr<RegionKind>(m.kinds, () => true).flatMap((k) => {
+    try {
+      return [cleanKind(k)];
+    } catch {
+      return [];
+    }
+  });
+  if (!m.kinds.length) delete m.kinds;
+  m.shapes = arr<MapDoc['shapes'][number]>(m.shapes, (s) => typeof s.id === 'string' && Array.isArray(s.points)).map((s) => ({
+    ...s,
+    type: s.type === 'path' || s.type === 'ellipse' || s.type === 'pin' ? s.type : 'polygon',
+    kind: str(s.kind),
+    points: (s.points as unknown[]).filter((q): q is [number, number] => Array.isArray(q) && q.length >= 2 && Number.isFinite(q[0]) && Number.isFinite(q[1]) && typeof q[0] === 'number' && typeof q[1] === 'number').map((q) => [q[0], q[1]] as [number, number]),
+    r: opt(s.r), width: opt(s.width),
+  }));
+  for (const s of m.shapes) for (const k of ['r', 'width'] as const) if (s[k] === undefined) delete s[k];
+  if (typeof m.background !== 'string') delete m.background;
+  return m;
 }
 
 export function renderSvg(m: MapDoc, style: MapStyle = 'preview', maxSide = 1344): string {

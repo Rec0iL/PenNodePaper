@@ -5,6 +5,7 @@
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { sniffImage } from './imagefile.js';
 
 export const THUMB_WIDTHS = [96, 160, 240, 320, 480, 720] as const;
 
@@ -37,12 +38,19 @@ export function thumbnail(imagesDir: string, file: string, width: number): Promi
       const s = await fs.promises.stat(src);
       const t = await fs.promises.stat(out).catch(() => null);
       if (t && t.mtimeMs >= s.mtimeMs) return out;
+      // ImageMagick guesses a format from the content; name it, so a file that only pretends to be a picture is not handed to another decoder
+      const fh = await fs.promises.open(src, 'r');
+      const head = Buffer.alloc(32);
+      await fh.read(head, 0, 32, 0).finally(() => fh.close());
+      const sniffed = sniffImage(head);
+      if (!sniffed) return null;
+      const format = sniffed === 'jpg' ? 'jpeg' : sniffed;
       const bin = await findMagick();
       if (!bin) return null;
       await fs.promises.mkdir(path.dirname(out), { recursive: true });
       const tmp = `${out}.${process.pid}.tmp.webp`;
-      const args = [src + '[0]', '-auto-orient', '-resize', `${w}x>`, '-strip', '-quality', '80', tmp];
-      const ok = await run(bin, bin === 'magick' ? args : args);
+      const args = [`${format}:${src}[0]`, '-auto-orient', '-resize', `${w}x>`, '-strip', '-quality', '80', tmp];
+      const ok = await run(bin, args);
       if (!ok) { await fs.promises.rm(tmp, { force: true }); return null; }
       await fs.promises.rename(tmp, out);
       return out;

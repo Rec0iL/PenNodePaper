@@ -5,7 +5,7 @@ import path from 'node:path';
 import { getRequestListener } from '@hono/node-server';
 import { Hono, type Context } from 'hono';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { DEFAULT_COMFY, MAP_VIEWS, cameraKey, cleanCameraText, dropAiPrompts, type Actor, type Backend, type CommandResult, type MapPaintMode, type ServerMsg } from '@pnp/shared';
+import { DEFAULT_COMFY, MAP_VIEWS, sanitizeMap, cameraKey, cleanCameraText, dropAiPrompts, type Actor, type Backend, type CommandResult, type MapPaintMode, type ServerMsg } from '@pnp/shared';
 import { spawnCliSync } from './cli.js';
 import { Chat, listModels } from './chat.js';
 import { imageSize, renderSvg } from './maps.js';
@@ -28,7 +28,7 @@ import { Store } from './store.js';
 import { watchCampaign } from './watcher.js';
 import { TutorialComfy, tutorialAi } from './tutorial/fake.js';
 import { createTutorialCampaign, ensureTutorial } from './tutorial/ensure.js';
-import { LanGuard, isLoopback, lanUrls, loginPage, newAccessCode, newSecret } from './lan.js';
+import { LanGuard, isLoopback, safeEqual, lanUrls, loginPage, newAccessCode, newSecret } from './lan.js';
 
 const cfg = loadConfig();
 const lan = new LanGuard({ enabled: cfg.lan, code: cfg.lanCode, secret: cfg.lanSecret });
@@ -100,8 +100,6 @@ const explicit = process.env.PNP_CAMPAIGN ? path.join(cfg.campaignsDir, process.
 const saved = loadSaved().lastCampaign;
 openCampaign(explicit || (saved && fs.existsSync(saved) ? saved : path.join(cfg.campaignsDir, 'demo')));
 
-const ACTORS: Actor[] = ['user', 'claude', 'agy', 'codex', 'system'];
-const asActor = (v: unknown, d: Actor): Actor => (ACTORS.includes(v as Actor) ? (v as Actor) : d);
 
 // --- guard: localhost only, no foreign origins (DNS-rebinding / CSRF) -------
 const LOCAL_HOST = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
@@ -151,12 +149,12 @@ app.post('/api/imports', async (c) => {
     const name = String(c.req.query('name') ?? 'notes');
     const type = c.req.header('content-type') ?? '';
     const text = type.includes('json')
-      ? String(((await c.req.json()) as { text?: string }).text ?? '')
-      : extractText(Buffer.from(await c.req.arrayBuffer()), name);
+      ? String(JSON.parse((await readLimited(c.req.raw, 20_000_000, 'The text')).toString('utf8')).text ?? '')
+      : extractText(await readLimited(c.req.raw, 50_000_000, 'The file'), name);
     if (text.length > 4_000_000) return c.json({ ok: false, error: 'Too much text (4 MB max).' }, 413);
     return c.json({ ok: true, ...store.imports.save(name, text) });
   } catch (err) {
-    return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 400);
+    return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, err instanceof TooBig ? 413 : 400);
   }
 });
 app.delete('/api/imports/:name', (c) => {
@@ -176,6 +174,8 @@ const failure = (err: unknown) => ({ ok: false, error: err instanceof Error ? er
 
 app.get('/api/backups', (c) => c.json({ ok: true, ...backupState() }));
 app.put('/api/backups/settings', async (c) => {
+  const denied = localOnly(c);
+  if (denied) return denied;
   const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
   const cur = store.backups.config;
   const next = {
@@ -234,7 +234,7 @@ app.post('/api/backups/export', (c) => {
 app.post('/api/backups/import', async (c) => {
   const tmp = path.join(os.tmpdir(), `pnp-upload-${process.pid}-${Date.now()}.tar.gz`);
   try {
-    fs.writeFileSync(tmp, Buffer.from(await c.req.arrayBuffer()));
+    fs.writeFileSync(tmp, await readLimited(c.req.raw, 2_000_000_000, 'The archive'));
     const dir = importArchive(tmp, cfg.campaignsDir, String(c.req.query('name') ?? 'imported'));
     const r = switchTo(dir);
     return c.json({ ...r, dir }, r.ok ? 200 : 409);
@@ -252,6 +252,8 @@ app.post('/api/backups/git-commit', async (c) => {
 
 app.get('/api/campaigns', (c) => c.json(listCampaigns(cfg.campaignsDir, campaignDir)));
 app.post('/api/campaigns/open', async (c) => {
+  const denied = localOnly(c);
+  if (denied) return denied;
   const b = (await c.req.json().catch(() => ({}))) as { dir?: string };
   const dir = path.resolve(String(b.dir ?? ''));
   if (!b.dir || !fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return c.json({ ok: false, error: `Folder not found: ${b.dir ?? ''}` }, 400);
@@ -395,11 +397,16 @@ app.post('/api/view', async (c) => {
   return c.json({ ok: true });
 });
 
+// what only the computer that runs PenNodePaper may do (reading its files, opening folders, writing outside the campaign): never a device on the LAN
+const localOnly = (c: Context) => {
+  const incoming = (c.env as { incoming?: http.IncomingMessage }).incoming;
+  return incoming && !isLoopback(incoming) ? c.json({ ok: false, error: 'This can only be done on the computer that runs PenNodePaper.' }, 403) : null;
+};
 app.post('/api/command', async (c) => {
-  const body = (await c.req.json()) as { name: string; args?: unknown; actor?: Actor };
+  const body = (await c.req.json()) as { name: string; args?: unknown };
   const res: CommandResult = { ok: true };
   try {
-    res.result = await runCommand(store, body.name, body.args ?? {}, asActor(body.actor, 'user'));
+    res.result = await runCommand(store, body.name, body.args ?? {}, 'user'); // the AIs come in through /mcp, never through here
     if (body.name === 'accept_proposal' || body.name === 'reject_proposal') broadcast({ t: 'proposals', list: store.proposals() });
   } catch (err) {
     res.ok = false;
@@ -474,6 +481,8 @@ const codexStatus = () => {
 };
 app.get('/api/codex/status', (c) => c.json(codexStatus()));
 app.post('/api/agy/setup', (c) => {
+  const denied = localOnly(c);
+  if (denied) return denied;
   let output = '';
   if (!agyStatus(true).registered) {
     const r = spawnCliSync('agy', ['mcp', 'add', '--header', `Authorization: Bearer ${cfg.token}`, 'pennodepaper', mcpUrl], { encoding: 'utf8', timeout: 20000 });
@@ -537,6 +546,8 @@ app.post('/api/library/:kind', async (c) => {
 });
 
 app.post('/api/library/:kind/import-path', async (c) => {
+  const denied = localOnly(c);
+  if (denied) return denied;
   const kind = c.req.param('kind');
   if (!kindOk(kind)) return c.notFound();
   const b = (await c.req.json()) as { path: string; name?: string };
@@ -603,23 +614,25 @@ app.get('/api/images/:file', async (c) => {
 
 // --- importing pictures the GM already has ----------------------------------------------
 // The body is the picture itself (raw bytes). What it is, is decided by its first bytes, never by the name the browser gave.
-async function importedPicture(req: Request): Promise<ReturnType<typeof checkImport>> {
-  const tooBig = () => new Error(`The picture is too big (the limit is ${MAX_IMPORT_BYTES / 1e6} MB).`);
-  if (Number(req.headers.get('content-length') ?? 0) > MAX_IMPORT_BYTES + 4096) throw tooBig();
-  // a chunked upload has no content-length: count while reading, so the limit holds for it too
+class TooBig extends Error {}
+/** The whole body of a request, counted while it is read: a limit that also holds for chunked uploads (no content-length). */
+async function readLimited(req: Request, limit: number, what: string): Promise<Buffer> {
+  const tooBig = () => new TooBig(`${what} is too big (the limit is ${Math.round(limit / 1e6)} MB).`);
+  if (Number(req.headers.get('content-length') ?? 0) > limit) throw tooBig();
   const chunks: Uint8Array[] = [];
   let size = 0;
   const reader = req.body?.getReader();
   for (let r = await reader?.read(); r && !r.done; r = await reader!.read()) {
     size += r.value.byteLength;
-    if (size > MAX_IMPORT_BYTES + 4096) {
+    if (size > limit) {
       void reader!.cancel();
       throw tooBig();
     }
     chunks.push(r.value);
   }
-  return checkImport(Buffer.concat(chunks));
+  return Buffer.concat(chunks);
 }
+const importedPicture = async (req: Request): Promise<ReturnType<typeof checkImport>> => checkImport(await readLimited(req, MAX_IMPORT_BYTES + 4096, 'The picture'));
 const importError = (c: Context, err: unknown, status: 400 | 404 | 409 = 400) => c.json({ error: err instanceof Error ? err.message : String(err) }, status);
 
 // a picture for a node's gallery (undoable, like a generated one)
@@ -720,7 +733,8 @@ app.get('/api/maps/:id/paint', (c) => {
 app.put('/api/maps/:id', async (c) => {
   const doc = (await c.req.json()) as import('@pnp/shared').MapDoc;
   const id = c.req.param('id');
-  if (doc.id !== id || !store.maps.has(id)) return c.json({ error: 'unknown map' }, 404);
+  if (!doc || typeof doc !== 'object' || doc.id !== id || !store.maps.has(id)) return c.json({ error: 'unknown map' }, 404);
+  sanitizeMap(doc); // numbers and kinds only: the map's picture is shown as markup
   // painting results belong to the server (jobs finish while the editor is open): an autosave of a stale copy must not wipe them
   const cur = store.maps.get(id);
   doc.renders = cur.renders;
@@ -902,14 +916,23 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(403).end('forbidden');
       return;
     }
-    if (req.headers.authorization !== `Bearer ${cfg.token}`) {
+    if (!safeEqual(String(req.headers.authorization ?? ''), `Bearer ${cfg.token}`)) {
       res.writeHead(401, { 'WWW-Authenticate': 'Bearer' }).end('unauthorized');
       return;
     }
     let body: unknown;
     if (req.method === 'POST') {
       const chunks: Buffer[] = [];
-      for await (const ch of req) chunks.push(ch as Buffer);
+      let got = 0;
+      for await (const ch of req) {
+        got += (ch as Buffer).length;
+        if (got > 10_000_000) {
+          res.writeHead(413).end('too big');
+          req.destroy();
+          return;
+        }
+        chunks.push(ch as Buffer);
+      }
       try {
         body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
       } catch {
@@ -936,7 +959,7 @@ server.on('upgrade', (req, socket, head) => {
   const url = new URL(req.url ?? '/', 'http://localhost');
   if (url.pathname === '/bridge') {
     // VTT pages live on other origins (e.g. GitHub Pages), so no Origin check here: the secret token authenticates.
-    if ((!lan.enabled && !LOCAL_HOST.test(req.headers.host ?? '')) || url.searchParams.get('token') !== cfg.token) {
+    if ((!lan.enabled && !LOCAL_HOST.test(req.headers.host ?? '')) || !safeEqual(url.searchParams.get('token') ?? '', cfg.token)) {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
       return;

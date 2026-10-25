@@ -41,7 +41,7 @@ const realEnv = (): Env => ({
   read: (p) => fs.readFileSync(p, 'utf8'),
 });
 
-const SAFE = /^[\w@%+=:,./\\-]*$/;
+const SAFE = /^[\w@+=:,./\\-]*$/; // no %: cmd.exe would expand %VAR% inside an argument
 
 /** How to start `bin args…` on this system. Anywhere but Windows that is just the program itself. */
 export function resolveCli(bin: string, args: string[], env: Env = realEnv()): Launch {

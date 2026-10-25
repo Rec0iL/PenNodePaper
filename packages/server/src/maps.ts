@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { Resvg } from '@resvg/resvg-js';
-import { FLOORS, REGION_KINDS, ensureLabelIds, migratePins, regionKind, slugify, type MapDoc } from '@pnp/shared';
+import { FLOORS, REGION_KINDS, ensureLabelIds, migratePins, regionKind, sanitizeMap, slugify, type MapDoc } from '@pnp/shared';
 import { installLabelContext, labelFontFiles } from './labels.js';
 import { newMap } from '@pnp/shared';
 
@@ -26,7 +26,7 @@ export class Maps {
   }
   list(): MapDoc[] {
     return fs.readdirSync(this.dir).filter((f) => f.endsWith('.json')).map((f) => {
-      const m = JSON.parse(fs.readFileSync(path.join(this.dir, f), 'utf8')) as MapDoc;
+      const m = sanitizeMap(JSON.parse(fs.readFileSync(path.join(this.dir, f), 'utf8')) as MapDoc);
       if (m.kind === 'region') migratePins(m);
       ensureLabelIds(m);
       return m;
@@ -34,7 +34,7 @@ export class Maps {
   }
   get(id: string): MapDoc {
     try {
-      const m = JSON.parse(fs.readFileSync(this.file(id), 'utf8')) as MapDoc;
+      const m = sanitizeMap(JSON.parse(fs.readFileSync(this.file(id), 'utf8')) as MapDoc);
       m.background ??= 'land';
       if (m.kind === 'region') migratePins(m); // places are areas now, not dots
       ensureLabelIds(m); // names have handles (l1, l2…) the AI can address
