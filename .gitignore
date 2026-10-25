@@ -7,3 +7,5 @@ campaigns/
 .DS_Store
 # the design notes stay on this machine only
 docs/design-plan.md
+brag-output*/
+brag/
