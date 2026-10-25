@@ -41,6 +41,22 @@ describe('canvases', () => {
     expect(() => run('rename_canvas', { id: 'nope', name: 'x' })).toThrow(/not found/);
   });
 
+  it('move_canvas reorders the tabs, and undo / redo restore the order', () => {
+    run('create_canvas', { name: 'Act II' });
+    run('create_canvas', { name: 'Act III' });
+    const ids = () => store.state.graph.canvases.map((c) => c.id);
+    expect(ids()).toEqual(['main', 'act-ii', 'act-iii']);
+    run('move_canvas', { id: 'act-iii', to: 0 });
+    expect(ids()).toEqual(['act-iii', 'main', 'act-ii']);
+    run('move_canvas', { id: 'act-iii', to: 99 });
+    expect(ids()).toEqual(['main', 'act-ii', 'act-iii']);
+    store.undo();
+    expect(ids()).toEqual(['act-iii', 'main', 'act-ii']);
+    store.redo();
+    expect(ids()).toEqual(['main', 'act-ii', 'act-iii']);
+    expect(() => run('move_canvas', { id: 'nope', to: 0 })).toThrow(/not found/);
+  });
+
   it('delete: nodes go to the pool by default, or move onto another canvas below what is there; one undo brings it all back', () => {
     run('create_canvas', { name: 'Side quest' });
     scene('m1', 'main', { x: 0, y: 0 });

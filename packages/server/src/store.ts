@@ -22,6 +22,7 @@ type Op =
   | { k: 'placement'; id: string; prev: Placement | null; next: Placement | null }
   | { k: 'edge'; id: string; prev: StoryEdge | null; next: StoryEdge | null }
   | { k: 'canvas'; id: string; prev: { id: string; name: string } | null; next: { id: string; name: string } | null }
+  | { k: 'canvasorder'; id: string; prev: string[]; next: string[] }
   | { k: 'frame'; id: string; prev: Frame | null; next: Frame | null };
 
 interface UndoEntry {
@@ -112,6 +113,20 @@ export class Tx {
     const i = this.store.state.graph.canvases.findIndex((c) => c.id === next.id);
     if (i >= 0) this.store.state.graph.canvases[i] = clone(next);
     else this.store.state.graph.canvases.push(clone(next));
+  }
+
+  /** Put the tabs in this order (ids; any canvas not named keeps its place at the end). */
+  orderCanvases(ids: string[]) {
+    const cur = this.store.state.graph.canvases;
+    const next = [...ids.filter((id) => cur.some((c) => c.id === id)), ...cur.map((c) => c.id).filter((id) => !ids.includes(id))];
+    const prev = cur.map((c) => c.id);
+    if (same(prev, next)) return;
+    this.ops.push({ k: 'canvasorder', id: 'canvases', prev, next });
+    this.reorderCanvases(next);
+  }
+  private reorderCanvases(ids: string[]) {
+    const g = this.store.state.graph;
+    g.canvases = [...ids.map((id) => g.canvases.find((c) => c.id === id)).filter((c): c is { id: string; name: string } => !!c), ...g.canvases.filter((c) => !ids.includes(c.id))];
   }
 
   removeCanvas(id: string) {
@@ -408,6 +423,12 @@ export class Store {
           } else if (i >= 0) this.state.graph.frames.splice(i, 1);
           break;
         }
+        case 'canvasorder': {
+          const ids = value as string[];
+          const g = this.state.graph;
+          g.canvases = [...ids.map((id) => g.canvases.find((c) => c.id === id)).filter((c): c is { id: string; name: string } => !!c), ...g.canvases.filter((c) => !ids.includes(c.id))];
+          break;
+        }
         case 'canvas': {
           const i = this.state.graph.canvases.findIndex((c) => c.id === op.id);
           if (value) {
@@ -517,7 +538,7 @@ function deriveEvents(ops: Op[], dir: 'forward' | 'reverse', state: CampaignStat
       else events.push({ type: 'edge.updated', edge: next, before: prev });
     }
   }
-  if (ops.some((o) => o.k === 'canvas' || o.k === 'frame')) events.push({ type: 'graph.meta', canvases: clone(state.graph.canvases), frames: clone(state.graph.frames) });
+  if (ops.some((o) => o.k === 'canvas' || o.k === 'canvasorder' || o.k === 'frame')) events.push({ type: 'graph.meta', canvases: clone(state.graph.canvases), frames: clone(state.graph.frames) });
   return events;
 }
 

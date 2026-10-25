@@ -61,6 +61,7 @@
       }
       const el = e.target as HTMLElement;
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) return;
+      if (app.mapEditor) return; // the map editor has its own undo: Ctrl+Z there must not also undo a campaign step
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault();
         void (e.shiftKey ? redo() : undo());
@@ -119,6 +120,57 @@
     return () => clearTimeout(t);
   });
 
+  // ---- canvas tabs: right-click menu, drag to reorder, drop a pool node to place it ----
+  let tabMenu = $state<{ id: string; x: number; y: number } | null>(null);
+  let delOpen = $state(false);
+  let dragTab = $state<string | null>(null);
+  let dropTab = $state<string | null>(null);
+  const tabIdx = $derived(tabMenu ? app.graph.canvases.findIndex((c) => c.id === tabMenu!.id) : -1);
+  const tabNodes = $derived(tabMenu ? Object.values(app.graph.placements).filter((p) => p.canvas === tabMenu!.id).length : 0);
+  const closeTabMenu = () => { tabMenu = null; delOpen = false; };
+
+  async function dropOnTab(e: DragEvent, id: string) {
+    const dt = e.dataTransfer;
+    dropTab = null;
+    dragTab = null;
+    if (!dt) return;
+    const tab = dt.getData('application/x-pnp-tab');
+    const node = dt.getData('application/x-pnp-node');
+    if (tab) {
+      e.preventDefault();
+      if (tab === id) return;
+      await cmd('move_canvas', { id: tab, to: app.graph.canvases.findIndex((c) => c.id === id) });
+    } else if (node) {
+      e.preventDefault();
+      const r = await cmd('place_on_canvas', { id: node, canvas: id });
+      if (r) app.canvasId = id;
+    }
+  }
+  async function renameTab() {
+    const c = tabMenu && app.graph.canvases.find((x) => x.id === tabMenu!.id);
+    closeTabMenu();
+    if (!c) return;
+    const name = prompt('Rename canvas', c.name);
+    if (name?.trim() && name.trim() !== c.name) await cmd('rename_canvas', { id: c.id, name: name.trim() });
+  }
+  async function moveTab(by: number) {
+    const id = tabMenu?.id;
+    const i = tabIdx;
+    closeTabMenu();
+    if (id) await cmd('move_canvas', { id, to: i + by });
+  }
+  async function deleteTab(moveTo?: string) {
+    const c = tabMenu && app.graph.canvases.find((x) => x.id === tabMenu!.id);
+    const n = tabNodes;
+    closeTabMenu();
+    if (!c) return;
+    const where = moveTo ? `onto “${app.graph.canvases.find((x) => x.id === moveTo)?.name}”` : 'back to the pool';
+    if (!confirm(`Delete the canvas “${c.name}”?${n ? ` Its ${n} node${n === 1 ? '' : 's'} go ${where}.` : ''} (Ctrl+Z brings it back.)`)) return;
+    const wasOn = app.canvasId === c.id;
+    const r = await cmd('delete_canvas', { id: c.id, ...(moveTo ? { moveTo } : {}) });
+    if (r && wasOn) app.canvasId = moveTo ?? app.graph.canvases[0]?.id ?? app.canvasId;
+  }
+
   async function addCanvas() {
     const name = prompt('Name of the new canvas (e.g. “Act II”)');
     if (!name?.trim()) return;
@@ -127,14 +179,21 @@
   }
 </script>
 
-<svelte:window bind:innerWidth={innerW} />
+<svelte:window bind:innerWidth={innerW} onkeydown={(e) => e.key === 'Escape' && tabMenu && closeTabMenu()} />
 
 <div class="shell" style="--wl:{eff.l}px; --wr:{eff.r}px; --hb:{app.layout.bottom}px">
   <header class="top">
     <div class="brand" data-tour="brand"><span class="logo">◈</span><b>PenNodePaper</b><CampaignMenu /></div>
     <nav class="tabs" data-tour="canvas-tabs">
       {#each app.graph.canvases as c (c.id)}
-        <button class:on={app.canvasId === c.id} data-canvas-tab={c.id} title="Drag a connection from a node onto this tab to connect it to a node on this canvas" onclick={() => (app.canvasId = c.id)}>{c.name}</button>
+        <button class:on={app.canvasId === c.id} class:dropt={dropTab === c.id} class:dragging={dragTab === c.id} data-canvas-tab={c.id} draggable="true"
+          title="Click to open · right-click for more · drag to reorder · drop a pool node here to put it on this canvas · drag a connection from a node onto this tab to connect it to a node on this canvas"
+          onclick={() => (app.canvasId = c.id)} oncontextmenu={(e) => { e.preventDefault(); tabMenu = { id: c.id, x: e.clientX, y: e.clientY }; delOpen = false; }}
+          ondragstart={(e) => { dragTab = c.id; e.dataTransfer?.setData('application/x-pnp-tab', c.id); if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'; }}
+          ondragend={() => { dragTab = null; dropTab = null; }}
+          ondragover={(e) => { const t = e.dataTransfer?.types ?? []; if (t.includes('application/x-pnp-tab') || t.includes('application/x-pnp-node')) { e.preventDefault(); dropTab = c.id; } }}
+          ondragleave={() => { if (dropTab === c.id) dropTab = null; }}
+          ondrop={(e) => dropOnTab(e, c.id)}>{c.name}</button>
       {/each}
       <button class="plus" title="New canvas" onclick={addCanvas}>+</button>
     </nav>
@@ -187,6 +246,32 @@
     <TourMenu />
     <span class="dot" class:on={app.connected} title={app.connected ? 'connected' : 'reconnecting…'}></span>
   </header>
+
+{#if tabMenu}
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+  <div class="ctx-scrim" onclick={closeTabMenu} oncontextmenu={(e) => { e.preventDefault(); closeTabMenu(); }}></div>
+  <div class="cmenu" role="menu" style="left:{Math.max(8, Math.min(tabMenu.x, innerW - 248))}px; top:{tabMenu.y + 6}px; width:240px">
+    <button class="ctx-item" role="menuitem" onclick={() => { const id = tabMenu!.id; closeTabMenu(); app.canvasId = id; }}>Open</button>
+    <button class="ctx-item" role="menuitem" onclick={renameTab}>✎ Rename…</button>
+    <button class="ctx-item" role="menuitem" disabled={tabIdx <= 0} onclick={() => moveTab(-1)}>← Move left</button>
+    <button class="ctx-item" role="menuitem" disabled={tabIdx < 0 || tabIdx >= app.graph.canvases.length - 1} onclick={() => moveTab(1)}>→ Move right</button>
+    <button class="ctx-item" role="menuitem" onclick={() => { closeTabMenu(); void addCanvas(); }}>＋ New canvas…</button>
+    <div class="ctx-sep"></div>
+    {#if app.graph.canvases.length <= 1}
+      <button class="ctx-item danger" disabled>🗑 Delete (the last canvas stays)</button>
+    {:else}
+      <button class="ctx-item danger" class:on={delOpen} role="menuitem" onclick={() => (delOpen = !delOpen)}>🗑 Delete… <span class="sp"></span><span class="dim">▸</span></button>
+      {#if delOpen}
+        <div class="ctx-sub">
+          <button class="ctx-item" onclick={() => deleteTab()}>Nodes back to the pool{tabNodes ? ` (${tabNodes})` : ''}</button>
+          {#each app.graph.canvases.filter((x) => x.id !== tabMenu!.id) as o (o.id)}
+            <button class="ctx-item" onclick={() => deleteTab(o.id)}>Move nodes to “{o.name}”</button>
+          {/each}
+        </div>
+      {/if}
+    {/if}
+  </div>
+{/if}
 
   <Pool />
 
@@ -242,6 +327,8 @@
   .tabs { display: flex; gap: 2px; margin-left: 14px; }
   .tabs button { background: transparent; border: 0; padding: 5px 12px; border-radius: 99px; color: var(--text-dim); }
   .tabs button:hover { background: var(--bg-3); color: var(--text); }
+  .tabs button.dropt { box-shadow: inset 0 0 0 1px var(--accent); background: var(--bg-3); color: var(--text); }
+  .tabs button.dragging { opacity: .45; }
   .tabs button.on { background: var(--accent-soft); color: var(--text); box-shadow: inset 0 0 0 1px var(--accent); }
   .spacer { flex: 1; }
   .toggle { color: var(--text-dim); font-size: 12px; display: flex; gap: 5px; align-items: center; cursor: pointer; }

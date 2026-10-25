@@ -2036,6 +2036,20 @@ def({
 });
 
 def({
+  name: 'move_canvas',
+  description: 'Move a canvas tab to another position (0 = first). Only the order of the tabs changes.',
+  shape: { id: z.string(), to: z.number().int().min(0) },
+  run(tx, a) {
+    const c = canvasById(tx, a.id);
+    const ids = tx.state.graph.canvases.map((x) => x.id).filter((id) => id !== a.id);
+    ids.splice(Math.min(a.to, ids.length), 0, a.id);
+    tx.orderCanvases(ids);
+    tx.label = `Moved canvas “${c.name}”`;
+    return { id: c.id, position: ids.indexOf(a.id) };
+  },
+});
+
+def({
   name: 'delete_canvas',
   description:
     'Delete a canvas. Its nodes are NOT lost: they go back to the sidebar pool, or — with moveTo — onto another canvas (placed below what is already there, frames come along; connections to other canvases stay and are drawn as jump markers again). The last canvas cannot be deleted. One undo step brings everything back.',

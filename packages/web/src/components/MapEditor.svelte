@@ -253,7 +253,7 @@
   let tx = $state(0);
   let ty = $state(0);
   let spaceDown = $state(false);
-  let panning = $state<{ x: number; y: number; tx: number; ty: number } | null>(null);
+  let panning = $state<{ x: number; y: number; tx: number; ty: number; moved: boolean; right: boolean } | null>(null);
 
   function fit() {
     if (!vp || !doc) return;
@@ -541,11 +541,13 @@
   function onpointerdown(e: PointerEvent) {
     if (!doc) return;
     if (e.button === 1 || e.button === 2 || spaceDown) {
-      panning = { x: e.clientX, y: e.clientY, tx, ty };
+      closeCtx();
+      panning = { x: e.clientX, y: e.clientY, tx, ty, moved: false, right: e.button === 2 };
       vp.setPointerCapture(e.pointerId);
       return;
     }
     if (e.button !== 0) return;
+    closeCtx();
     const p = local(e);
     pointerPos = p;
     vp.setPointerCapture(e.pointerId);
@@ -647,6 +649,7 @@
 
   function onpointermove(e: PointerEvent) {
     if (panning) {
+      if (Math.hypot(e.clientX - panning.x, e.clientY - panning.y) > 4) panning.moved = true;
       tx = panning.tx + (e.clientX - panning.x);
       ty = panning.ty + (e.clientY - panning.y);
       return;
@@ -678,7 +681,9 @@
 
   function onpointerup(e: PointerEvent) {
     if (panning) {
+      const click = panning.right && !panning.moved;
       panning = null;
+      if (click) openCtx(e); // a right click that did not pan: the context menu
       return;
     }
     if (!doc) return;
@@ -813,6 +818,120 @@
     return null;
   }
 
+  // ---- context menu (right click) ---------------------------------------------------------------------
+  // Right-drag still pans; a right click opens the menu for what is under the pointer (or for the empty spot).
+  let ctx = $state<{ x: number; y: number; p: { x: number; y: number }; c: { x: number; y: number } } | null>(null);
+  let ctxSub = $state<'prop' | 'floor' | 'kind' | 'token' | null>(null);
+  /** where the menu was opened: kept after it closes, because act() closes the menu before the action runs */
+  let spot = { p: { x: 0, y: 0 }, c: { x: 0, y: 0 } };
+  function closeCtx() {
+    ctx = null;
+    ctxSub = null;
+  }
+  function openCtx(e: PointerEvent) {
+    if (!doc) return;
+    const p = local(e);
+    const c = cellOf(p);
+    if (battle) {
+      if (!(sel?.t === 'area' && inArea(c, sel))) sel = hitItem(p, c);
+      selected = null;
+    } else {
+      const nm = hitLabel(p);
+      sel = nm ? { t: 'label', x: nm.x, y: nm.y } : null;
+      selected = nm ? null : hitShape(p);
+    }
+    ctxSub = null;
+    spot = { p, c };
+    ctx = { x: e.clientX, y: e.clientY, p, c };
+  }
+  /** run a menu action and close the menu */
+  const act = (fn: () => void) => () => {
+    closeCtx();
+    fn();
+  };
+  function renameSel() {
+    if (!doc) return;
+    if (selToken) {
+      const t = prompt('Token name', selToken.label ?? '');
+      if (t !== null) edit([{ op: 'edit_token', x: selToken.x, y: selToken.y, label: t.trim() || null }]);
+    } else if (selProp) {
+      const t = prompt('Prop name', selProp.label ?? '');
+      if (t !== null) edit([{ op: 'edit_prop', id: selProp.id, label: t.trim() || null }]);
+    } else if (selLabel) {
+      const { x, y, text } = selLabel;
+      const t = prompt('Name (leave empty to remove)', text);
+      if (t === null) return;
+      if (t.trim()) edit([{ op: 'edit_label', x, y, text: t.trim() }]);
+      else if (edit([{ op: 'remove_label', x, y }])) sel = null;
+    } else if (selShape) {
+      const t = prompt('Name of this shape', selShape.label ?? '');
+      if (t !== null) updateShape(selShape, { label: t.trim() });
+    }
+  }
+  /** a new free name at the spot that was right-clicked */
+  function nameHere() {
+    const { p, c } = spot;
+    const at = battle ? { x: c.x + 0.5, y: c.y + 0.5 } : { x: Math.round(p.x), y: Math.round(p.y) };
+    if (!doc || (battle && !inGrid(c))) return;
+    const t = prompt('Name');
+    if (t?.trim() && edit([{ op: 'label', ...at, text: t.trim() }])) sel = { t: 'label', ...at };
+  }
+  function propHere(k: PropKind) {
+    const { c } = spot;
+    if (!doc || !inGrid(c)) return;
+    const [w, h] = PROP_SIZE[k] ?? [1, 1];
+    const id = rid(k);
+    if (edit([{ op: 'prop', kind: k, x: Math.min(c.x, doc.grid.cols - w), y: Math.min(c.y, doc.grid.rows - h), w, h, id }])) sel = { t: 'prop', id };
+  }
+  function tokenHere(kd: 'pc' | 'npc' | 'enemy') {
+    const { c } = spot;
+    if (!doc || !inGrid(c)) return;
+    if (doc.tokens.some((t) => t.x === c.x && t.y === c.y)) return say('There is a token on that cell already');
+    const n = doc.tokens.filter((t) => t.kind === kd).length + 1;
+    if (edit([{ op: 'token', x: c.x, y: c.y, kind: kd, label: `${{ pc: 'P', npc: 'N', enemy: 'E' }[kd]}${n}` }])) sel = { t: 'token', x: c.x, y: c.y };
+  }
+  const placeHere = (id: string) => placeCharacter(id, spot.c);
+  /** put a character of this place on the plan (menu, or dragged from the Characters tab) */
+  function placeCharacter(id: string, c: { x: number; y: number }) {
+    const who = app.nodes[id];
+    if (!doc || !who || who.trashed || !inGrid(c)) return;
+    if (doc.tokens.some((t) => t.x === c.x && t.y === c.y)) return say('There is a token on that cell already');
+    const n = placedOf(id);
+    if (edit([{ op: 'token', x: c.x, y: c.y, kind: tokenKindOf(who), label: n ? `${who.title} ${n + 1}` : who.title, node: id }])) sel = { t: 'token', x: c.x, y: c.y };
+  }
+  function changeKind(id: string) {
+    if (selShape) updateShape(selShape, { kind: id });
+  }
+  const ctxKinds = $derived(selShape ? allKinds.filter((x) => (selShape.type === 'path') === (x.geometry === 'line')) : []);
+  const ctxPos = $derived(ctx ? { left: Math.max(8, Math.min(ctx.x, window.innerWidth - 316)), top: Math.max(8, Math.min(ctx.y, window.innerHeight - 440)) } : { left: 0, top: 0 });
+
+  // ---- drag & drop ---------------------------------------------------------------------------------------------
+  // a picture file dropped on the plan opens the import; a character dragged from the Characters tab becomes a token
+  let dropping = $state(false);
+  function ondragover(e: DragEvent) {
+    const t = e.dataTransfer?.types ?? [];
+    if (t.includes('Files') || t.includes('application/x-pnp-token')) {
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+      dropping = t.includes('Files') && !t.includes('application/x-pnp-token'); // a dragged portrait can carry a file too
+    }
+  }
+  function ondrop(e: DragEvent) {
+    dropping = false;
+    const dt = e.dataTransfer;
+    if (!dt || !doc) return;
+    const who = dt.getData('application/x-pnp-token');
+    if (who) {
+      e.preventDefault();
+      if (battle) placeCharacter(who, cellOf(local(e)));
+      return;
+    }
+    const f = [...dt.files].find((x) => x.type.startsWith('image/'));
+    if (dt.files.length) e.preventDefault();
+    if (f) void startImport(f);
+    else if (dt.files.length) say('That is not a picture');
+  }
+
   // ---- keyboard ------------------------------------------------------------------------------------
   function onkeydown(e: KeyboardEvent) {
     if (app.settingsOpen) return; // Settings is open on top of the editor
@@ -823,6 +942,7 @@
       e.preventDefault();
     }
     if (typing) return;
+    if (e.key === 'Escape' && ctx) return closeCtx();
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
       e.preventDefault();
       if (e.shiftKey) redo(); else undo();
@@ -1120,10 +1240,12 @@
     }
   });
 
-  async function pickImport(e: Event & { currentTarget: HTMLInputElement }) {
+  function pickImport(e: Event & { currentTarget: HTMLInputElement }) {
     const f = e.currentTarget.files?.[0];
     e.currentTarget.value = '';
-    if (!f) return;
+    if (f) void startImport(f);
+  }
+  async function startImport(f: File) {
     try {
       const pic = await loadPicture(f);
       imp?.bitmap.close();
@@ -1356,7 +1478,7 @@
         </div>
       </nav>
 
-      <div class="vp" data-tour="map-view" bind:this={vp} role="application" {onwheel} {onpointerdown} {onpointermove} {onpointerup} {ondblclick} oncontextmenu={(e) => e.preventDefault()} style="cursor:{spaceDown || panning ? 'grab' : tool === 'select' ? 'default' : 'crosshair'}">
+      <div class="vp" data-tour="map-view" bind:this={vp} role="application" {onwheel} {onpointerdown} {onpointermove} {onpointerup} {ondblclick} {ondragover} {ondrop} ondragleave={() => (dropping = false)} oncontextmenu={(e) => e.preventDefault()} style="cursor:{spaceDown || panning ? 'grab' : tool === 'select' ? 'default' : 'crosshair'}">
         {#if doc}
           <div class="stage" bind:this={stage} style="width:{dim.w}px;height:{dim.h}px;transform:translate({tx}px,{ty}px) scale({k})">
             {#if view === 'painted' && painted}
@@ -1432,7 +1554,67 @@
           <div class="loading">loading…</div>
         {/if}
         {#if view === 'control'}<div class="hint">This is exactly what the image model receives: flat colours, no text.</div>{/if}
+        {#if dropping}<div class="dropveil">Drop a picture to import it as this map's picture</div>{/if}
       </div>
+
+      {#if ctx && doc}
+        <!-- The menu opens on pointerup. On Windows the browser's contextmenu event comes AFTER that and lands on this scrim or
+             on the menu itself: it must only be swallowed there, not close the menu again. A right press outside closes it. -->
+        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+        <div class="ctx-scrim" onclick={closeCtx} onpointerdown={(e) => e.button === 2 && closeCtx()} oncontextmenu={(e) => e.preventDefault()}></div>
+        <div class="cmenu" role="menu" tabindex="-1" oncontextmenu={(e) => e.preventDefault()} style="left:{ctxPos.left}px; top:{ctxPos.top}px; width:300px">
+          {#if selToken || selProp || selLabel || selDoor || sel?.t === 'area' || selShape}
+            <div class="ctx-head"><b>{selToken ? (selToken.label || 'Token') : selProp ? (selProp.label || selProp.kind.replace('_', ' ')) : selLabel ? selLabel.text : selDoor ? 'Door' : sel?.t === 'area' ? `Area ${sel.w}×${sel.h}` : (selShape?.label || kindOf(selShape!.kind).name)}</b></div>
+            {#if selToken || selProp || selLabel || selShape}<button class="ctx-item" role="menuitem" onclick={act(renameSel)}>✎ Rename…</button>{/if}
+            {#if selToken?.node && app.nodes[selToken.node]}<button class="ctx-item" role="menuitem" onclick={act(() => selectNode(selToken!.node!))}>↗ Open character</button>{/if}
+            {#if selProp}<button class="ctx-item" role="menuitem" onclick={act(rotateSel)}>⟳ Rotate <span class="sp"></span><span class="dim">R</span></button>{/if}
+            {#if selProp}
+              <button class="ctx-item" class:on={ctxSub === 'prop'} role="menuitem" onclick={() => (ctxSub = ctxSub === 'prop' ? null : 'prop')}>▣ Change kind <span class="sp"></span><span class="dim">▸</span></button>
+              {#if ctxSub === 'prop'}<div class="ctx-sub">{#each PROP_KINDS as pk}<button class="ctx-item" class:on={selProp.kind === pk} onclick={act(() => edit([{ op: 'edit_prop', id: selProp!.id, kind: pk }]))}>{pk.replace('_', ' ')}</button>{/each}</div>{/if}
+            {/if}
+            {#if selToken}
+              <button class="ctx-item" class:on={ctxSub === 'token'} role="menuitem" onclick={() => (ctxSub = ctxSub === 'token' ? null : 'token')}>● Change side <span class="sp"></span><span class="dim">▸</span></button>
+              {#if ctxSub === 'token'}<div class="ctx-sub">{#each ['pc', 'npc', 'enemy'] as tk}<button class="ctx-item" class:on={selToken.kind === tk} onclick={act(() => edit([{ op: 'edit_token', x: selToken!.x, y: selToken!.y, kind: tk as 'pc' | 'npc' | 'enemy' }]))}>{tk}</button>{/each}</div>{/if}
+            {/if}
+            {#if selDoor}
+              {#each DOOR_KINDS as dk}<button class="ctx-item" class:on={selDoor.kind === dk} role="menuitem" onclick={act(() => edit([{ op: 'door', x: selDoor!.x, y: selDoor!.y, side: selDoor!.side, kind: dk }]))}>🚪 {dk}</button>{/each}
+            {/if}
+            {#if sel?.t === 'area'}
+              <button class="ctx-item" class:on={ctxSub === 'floor'} role="menuitem" onclick={() => (ctxSub = ctxSub === 'floor' ? null : 'floor')}>▭ Fill with floor <span class="sp"></span><span class="dim">▸</span></button>
+              {#if ctxSub === 'floor'}<div class="ctx-sub">{#each Object.values(FLOORS) as fl}<button class="ctx-item" onclick={act(() => fillSel(fl.name))}><span style="color:{fl.color}">■</span> {fl.name}</button>{/each}</div>{/if}
+            {/if}
+            {#if selShape}
+              <button class="ctx-item" class:on={ctxSub === 'kind'} role="menuitem" onclick={() => (ctxSub = ctxSub === 'kind' ? null : 'kind')}>◈ Change type <span class="sp"></span><span class="dim">▸</span></button>
+              {#if ctxSub === 'kind'}<div class="ctx-sub">{#each ctxKinds as kd}<button class="ctx-item" class:on={selShape.kind === kd.id} onclick={act(() => changeKind(kd.id))}><span style="color:{kd.color}">■</span> {kd.name}</button>{/each}</div>{/if}
+              <button class="ctx-item" role="menuitem" onclick={act(() => reorderShape(true))}>⤒ Bring to front</button>
+              <button class="ctx-item" role="menuitem" onclick={act(() => reorderShape(false))}>⤓ Send to back</button>
+            {/if}
+            {#if selShape || (sel && sel.t !== 'door')}<button class="ctx-item" role="menuitem" onclick={act(() => (selShape ? duplicateShape() : duplicateSel()))}>⧉ Duplicate <span class="sp"></span><span class="dim">Ctrl+D</span></button>{/if}
+            <button class="ctx-item danger" role="menuitem" onclick={act(() => (selShape ? (edit([{ op: 'remove_shape', id: selShape.id }]), (selected = null)) : deleteSel()))}>🗑 Delete <span class="sp"></span><span class="dim">Del</span></button>
+            <div class="ctx-sep"></div>
+          {:else}
+            <div class="ctx-head"><b>{battle ? 'Cell ' + (inGrid(ctx.c) ? `${ctx.c.x + 1}, ${ctx.c.y + 1}` : '(outside)') : 'Map'}</b></div>
+            <button class="ctx-item" role="menuitem" disabled={battle && !inGrid(ctx.c)} onclick={act(nameHere)}>Aa Name here…</button>
+            {#if battle}
+              <button class="ctx-item" class:on={ctxSub === 'prop'} role="menuitem" disabled={!inGrid(ctx.c)} onclick={() => (ctxSub = ctxSub === 'prop' ? null : 'prop')}>▣ Add prop here <span class="sp"></span><span class="dim">▸</span></button>
+              {#if ctxSub === 'prop'}<div class="ctx-sub">{#each PROP_KINDS as pk}<button class="ctx-item" onclick={act(() => propHere(pk))}>{pk.replace('_', ' ')}</button>{/each}</div>{/if}
+              <button class="ctx-item" class:on={ctxSub === 'token'} role="menuitem" disabled={!inGrid(ctx.c)} onclick={() => (ctxSub = ctxSub === 'token' ? null : 'token')}>● Add token here <span class="sp"></span><span class="dim">▸</span></button>
+              {#if ctxSub === 'token'}
+                <div class="ctx-sub">
+                  {#each ['enemy', 'npc', 'pc'] as tk}<button class="ctx-item" onclick={act(() => tokenHere(tk as 'pc' | 'npc' | 'enemy'))}>plain {tk} marker</button>{/each}
+                  {#each cast as cc (cc.id)}<button class="ctx-item" onclick={act(() => placeHere(cc.id))}><span style="color:{NODE_TYPE_INFO[cc.type].color}">{NODE_TYPE_INFO[cc.type].icon}</span> {cc.title}</button>{/each}
+                </div>
+              {/if}
+              <button class="ctx-item" role="menuitem" onclick={act(() => (tool = 'select'))}>⇱ Select tool</button>
+            {/if}
+          {/if}
+          <button class="ctx-item" role="menuitem" disabled={!canUndo} onclick={act(undo)}>↶ Undo <span class="sp"></span><span class="dim">Ctrl+Z</span></button>
+          <button class="ctx-item" role="menuitem" disabled={!canRedo} onclick={act(redo)}>↷ Redo <span class="sp"></span><span class="dim">Ctrl+Shift+Z</span></button>
+          <button class="ctx-item" role="menuitem" onclick={act(fit)}>⤢ Fit to window</button>
+          <button class="ctx-item" role="menuitem" onclick={act(() => (showNames = !showNames))}>Aa {showNames ? 'Hide' : 'Show'} names</button>
+          <button class="ctx-item" role="menuitem" onclick={act(() => { const n = prompt('Map name', doc?.name ?? ''); if (n !== null) rename(n); })}>✎ Rename map…</button>
+        </div>
+      {/if}
 
       <aside class="side">
         <div class="tabs" data-tour="map-tabs">
@@ -1745,7 +1927,7 @@
             <p class="dim">NPCs and enemies that <b>belong to</b> {node ? `“${node.title}”` : 'this place'}. Put them on the plan: the token <b>is</b> the character, and pushing the map sends its sheet along — so the VTT gets the opponent <i>and</i> its token, tied together.</p>
             {#each cast as c (c.id)}
               {@const info = NODE_TYPE_INFO[c.type]}
-              <div class="cc" class:on={tool === 'token' && tokenNode === c.id} style="--tc:{info.color}">
+              <div class="cc" class:on={tool === 'token' && tokenNode === c.id} style="--tc:{info.color}" role="listitem" draggable="true" ondragstart={(e) => { e.dataTransfer?.setData('application/x-pnp-token', c.id); if (e.dataTransfer) e.dataTransfer.effectAllowed = 'copy'; }} title="Drag onto the plan to place it">
                 {#if c.images[0]}<img src={`/api/images/${c.images[0]}?w=96`} alt="" />{:else}<span class="ic">{info.icon}</span>{/if}
                 <div class="ct"><b>{c.title}</b><span class="dim">{c.type === 'enemy' ? 'enemy' : 'NPC'} · {placedOf(c.id) ? `${placedOf(c.id)} on the plan` : 'not placed'}{hasSheet(c) ? '' : ' · no sheet yet'}</span></div>
                 <button class="btn sm" class:primary={tool === 'token' && tokenNode === c.id} onclick={() => startPlacing(c.id)} title="Then click a cell of the plan; click a token to take it away again">{placedOf(c.id) ? '＋ another' : 'Place'}</button>
@@ -1825,6 +2007,7 @@
   .sw button.on { border-color: #fff; box-shadow: 0 0 0 1px #000; }
   .chk { display: flex; gap: 5px; align-items: center; font-size: 12px; color: var(--text-dim); margin-top: 6px; }
   .dim { color: var(--text-faint); font-size: 11.5px; line-height: 1.45; text-transform: none; letter-spacing: 0; }
+  .dropveil { position: absolute; inset: 10px; display: grid; place-items: center; border: 2px dashed var(--accent, #7aa2ff); border-radius: 12px; background: rgba(10,14,24,.7); color: var(--text); font-size: 15px; pointer-events: none; z-index: 5; }
   .vp { position: relative; overflow: hidden; background: #07080c; background-image: radial-gradient(#1a1f2c 1px, transparent 1px); background-size: 22px 22px; touch-action: none; user-select: none; }
   .stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; box-shadow: 0 0 0 1px var(--line-2), 0 20px 60px rgba(0, 0, 0, 0.6); }
   .stage :global(svg) { display: block; }

@@ -267,7 +267,7 @@ app.post('/api/campaigns/branch', async (c) => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pnp-branch-'));
   try {
     const archive = store.backups.exportArchive(tmp);
-    const dir = importArchive(archive, cfg.campaignsDir, title);
+    const dir = importArchive(archive, cfg.campaignsDir, title, { trusted: true }); // our own export: a linked images folder may stay linked
     const metaFile = path.join(dir, 'campaign.json');
     const meta = JSON.parse(fs.readFileSync(metaFile, 'utf8')) as Record<string, unknown>;
     fs.writeFileSync(metaFile, JSON.stringify({ ...meta, name: title, branchOf: store.state.meta.name, createdAt: new Date().toISOString() }, null, 2));
@@ -604,8 +604,21 @@ app.get('/api/images/:file', async (c) => {
 // --- importing pictures the GM already has ----------------------------------------------
 // The body is the picture itself (raw bytes). What it is, is decided by its first bytes, never by the name the browser gave.
 async function importedPicture(req: Request): Promise<ReturnType<typeof checkImport>> {
-  if (Number(req.headers.get('content-length') ?? 0) > MAX_IMPORT_BYTES + 4096) throw new Error(`The picture is too big (the limit is ${MAX_IMPORT_BYTES / 1e6} MB).`);
-  return checkImport(Buffer.from(await req.arrayBuffer()));
+  const tooBig = () => new Error(`The picture is too big (the limit is ${MAX_IMPORT_BYTES / 1e6} MB).`);
+  if (Number(req.headers.get('content-length') ?? 0) > MAX_IMPORT_BYTES + 4096) throw tooBig();
+  // a chunked upload has no content-length: count while reading, so the limit holds for it too
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  const reader = req.body?.getReader();
+  for (let r = await reader?.read(); r && !r.done; r = await reader!.read()) {
+    size += r.value.byteLength;
+    if (size > MAX_IMPORT_BYTES + 4096) {
+      void reader!.cancel();
+      throw tooBig();
+    }
+    chunks.push(r.value);
+  }
+  return checkImport(Buffer.concat(chunks));
 }
 const importError = (c: Context, err: unknown, status: 400 | 404 | 409 = 400) => c.json({ error: err instanceof Error ? err.message : String(err) }, status);
 
@@ -841,7 +854,7 @@ if (fs.existsSync(webDist)) {
   app.get('*', (c) => {
     const rel = c.req.path === '/' ? 'index.html' : c.req.path.slice(1);
     let p = path.join(webDist, rel);
-    if (!p.startsWith(webDist) || !fs.existsSync(p) || fs.statSync(p).isDirectory()) p = path.join(webDist, 'index.html');
+    if (!p.startsWith(webDist + path.sep) || !fs.existsSync(p) || fs.statSync(p).isDirectory()) p = path.join(webDist, 'index.html');
     return new Response(fs.readFileSync(p), { headers: { 'content-type': mime[path.extname(p)] ?? 'application/octet-stream' } });
   });
 }

@@ -14,6 +14,15 @@ import { BACKUP_DEFAULTS, slugify, type BackupSettings, type SnapshotInfo } from
 const CONTENT = ['campaign.json', 'graph.json', 'nodes', 'maps', 'rulebooks', 'worldbooks', 'imports', 'vtts', 'chat.json'];
 const EXT = '.tar.gz';
 
+/** An archive from elsewhere must not bring symbolic links: the app would read and write through them, outside the campaign. */
+function hasLinks(dir: string): boolean {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (e.isSymbolicLink()) return true;
+    if (e.isDirectory() && hasLinks(path.join(dir, e.name))) return true;
+  }
+  return false;
+}
+
 const run = (cmd: string, args: string[], cwd?: string) => spawnSync(cmd, args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 const stamp = (d = new Date()) => d.toISOString().replace(/\.\d+Z$/, 'Z').replace(/:/g, '-');
 
@@ -107,6 +116,8 @@ export class Backups {
       const x = run('tar', ['-xzf', f, '-C', tmp, '--no-same-owner']);
       if (x.status !== 0) throw new Error(`Could not read the snapshot (${x.stderr?.trim() || 'tar failed'}).`);
       if (!fs.existsSync(path.join(tmp, 'graph.json')) && !fs.existsSync(path.join(tmp, 'nodes'))) throw new Error('That archive does not contain a campaign.');
+      if (CONTENT.some((c) => fs.existsSync(path.join(tmp, c)) && (fs.lstatSync(path.join(tmp, c)).isSymbolicLink() || (fs.statSync(path.join(tmp, c)).isDirectory() && hasLinks(path.join(tmp, c))))))
+        throw new Error('That snapshot contains links to other places on the disk — it is not restored.');
       const safety = this.create({ kind: 'pre-restore', label: `before restoring ${id.slice(0, 19)}`, images: false });
       for (const c of CONTENT) {
         if (!fs.existsSync(path.join(tmp, c))) continue;
@@ -175,8 +186,8 @@ export class Backups {
   }
 }
 
-/** Unpack a campaign archive (.pnp.tar.gz or a snapshot) into a NEW folder; returns that folder. */
-export function importArchive(file: string, campaignsDir: string, nameHint: string): string {
+/** Unpack a campaign archive (.pnp.tar.gz or a snapshot) into a NEW folder; returns that folder. trusted = our own export (a branch). */
+export function importArchive(file: string, campaignsDir: string, nameHint: string, opts: { trusted?: boolean } = {}): string {
   const base = slugify(nameHint.replace(/\.pnp\.tar\.gz$|\.tar\.gz$/i, '').replace(/-\d{4}-\d\d-\d\dT.*$/, '')) || 'imported';
   let dir = path.join(campaignsDir, base);
   for (let i = 2; fs.existsSync(dir); i++) dir = path.join(campaignsDir, `${base}-${i}`);
@@ -185,6 +196,10 @@ export function importArchive(file: string, campaignsDir: string, nameHint: stri
   if (x.status !== 0 || (!fs.existsSync(path.join(dir, 'graph.json')) && !fs.existsSync(path.join(dir, 'nodes')))) {
     fs.rmSync(dir, { recursive: true, force: true });
     throw new Error('That file is not a PenNodePaper campaign archive.');
+  }
+  if (!opts.trusted && hasLinks(dir)) {
+    fs.rmSync(dir, { recursive: true, force: true }); // removes the links themselves, never what they point to
+    throw new Error('That archive contains links to other places on the disk — it was not imported.');
   }
   return dir;
 }
