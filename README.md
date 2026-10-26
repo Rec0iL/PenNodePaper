@@ -406,3 +406,7 @@ npx tsx packages/server/scripts/make-tutorial-assets.ts tavern=a,b   # make the 
 * `packages/server/src/tutorial/` — the practice campaign: its content, the shipped pictures (`assets/tutorial/`), the stand-ins for the AI and for ComfyUI that run on the real queue and map pipelines, and the healing the tour asks for
 
 The VTT side is documented in `docs/vtt-bridge-spec.md`.
+
+## Licence
+
+The app and server are **AGPL-3.0-or-later**; the shared library (`packages/shared/`) and the VTT bridge specification are **MIT**, so other tools can build on them freely; pictures and the practice campaign are **CC BY-NC-SA 4.0**. Details in [LICENSING.md](LICENSING.md).

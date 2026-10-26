@@ -2,9 +2,12 @@
   "name": "pennodepaper",
   "private": true,
   "version": "0.1.0",
+  "license": "AGPL-3.0-or-later",
   "description": "AI-assisted world & story building for pen & paper, on an infinite node canvas",
   "type": "module",
-  "workspaces": ["packages/*"],
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "dev": "concurrently -n server,web -c cyan,magenta \"npm run dev -w @pnp/server\" \"npm run dev -w @pnp/web\"",
     "build": "npm run build -w @pnp/web",
