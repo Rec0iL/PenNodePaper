@@ -179,8 +179,6 @@ const failure = (err: unknown) => ({ ok: false, error: err instanceof Error ? er
 
 app.get('/api/backups', (c) => c.json({ ok: true, ...backupState() }));
 app.put('/api/backups/settings', async (c) => {
-  const denied = localOnly(c);
-  if (denied) return denied;
   const b = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
   const cur = store.backups.config;
   const next = {
@@ -257,8 +255,6 @@ app.post('/api/backups/git-commit', async (c) => {
 
 app.get('/api/campaigns', (c) => c.json(listCampaigns(cfg.campaignsDir, campaignDir)));
 app.post('/api/campaigns/open', async (c) => {
-  const denied = localOnly(c);
-  if (denied) return denied;
   const b = (await c.req.json().catch(() => ({}))) as { dir?: string };
   const dir = path.resolve(String(b.dir ?? ''));
   if (!b.dir || !fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return c.json({ ok: false, error: `Folder not found: ${b.dir ?? ''}` }, 400);
@@ -402,11 +398,6 @@ app.post('/api/view', async (c) => {
   return c.json({ ok: true });
 });
 
-// what only the computer that runs PenNodePaper may do (reading its files, opening folders, writing outside the campaign): never a device on the LAN
-const localOnly = (c: Context) => {
-  const incoming = (c.env as { incoming?: http.IncomingMessage }).incoming;
-  return incoming && !isLoopback(incoming) ? c.json({ ok: false, error: 'This can only be done on the computer that runs PenNodePaper.' }, 403) : null;
-};
 app.post('/api/command', async (c) => {
   const body = (await c.req.json()) as { name: string; args?: unknown };
   const res: CommandResult = { ok: true };
@@ -519,8 +510,6 @@ const codexStatus = () => {
 };
 app.get('/api/codex/status', (c) => c.json(codexStatus()));
 app.post('/api/agy/setup', (c) => {
-  const denied = localOnly(c);
-  if (denied) return denied;
   let output = '';
   if (!agyStatus(true).registered) {
     const r = spawnCliSync('agy', ['mcp', 'add', '--header', `Authorization: Bearer ${cfg.token}`, 'pennodepaper', mcpUrl], { encoding: 'utf8', timeout: 20000 });
@@ -584,8 +573,6 @@ app.post('/api/library/:kind', async (c) => {
 });
 
 app.post('/api/library/:kind/import-path', async (c) => {
-  const denied = localOnly(c);
-  if (denied) return denied;
   const kind = c.req.param('kind');
   if (!kindOk(kind)) return c.notFound();
   const b = (await c.req.json()) as { path: string; name?: string };
