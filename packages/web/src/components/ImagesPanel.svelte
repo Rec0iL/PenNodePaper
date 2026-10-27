@@ -1,6 +1,6 @@
 <script lang="ts">
   import { IMAGE_KINDS, type ImageKind, type StoryNode } from '@pnp/shared';
-  import { activeJobs, app, cmd, jobAhead, say, sendChat } from '../lib/app.svelte';
+  import { activeJobs, app, attachToChat, cmd, jobAhead, say, sendChat } from '../lib/app.svelte';
   import { PICTURE_ACCEPT, importNodePicture } from '../lib/imageImport';
 
   let { node, mapRenders = [] }: { node: StoryNode; mapRenders?: string[] } = $props();
@@ -15,11 +15,15 @@
 
   // sensible default kind + prompt per node type
   const defaultKind: Record<string, ImageKind> = { npc: 'portrait', location: 'scene', scene: 'scene', encounter: 'scene', event: 'scene', item: 'item', handout: 'handout', faction: 'banner' };
+  /** picture to start from (img2img): a sketch that should become finished art, or a picture to redo; strength = how freely */
+  let refFile = $state<string | null>(null);
+  let strength = $state(0.75);
   let lastId = '';
   $effect(() => {
     if (node.id !== lastId) {
       lastId = node.id;
       touched = false;
+      refFile = null;
       kind = defaultKind[node.type] ?? 'square';
     }
     if (!touched) prompt = saved || defaultPrompt;
@@ -39,7 +43,7 @@
   async function generate() {
     const before = activeJobs().length;
     void keepPrompt();
-    const r = await cmd('generate_image', { nodeId: node.id, prompt, kind, variants });
+    const r = await cmd('generate_image', { nodeId: node.id, prompt, kind, variants, ...(refFile && node.images.includes(refFile) ? { reference: refFile, strength } : {}) });
     if (!r) return;
     touched = true;
     justQueued = true;
@@ -48,8 +52,11 @@
   }
 
   function askAi() {
+    const ref = refFile && node.images.includes(refFile) ? refFile : null;
     void sendChat(
-      `Write a vivid image prompt for this node (read it with get_node and check get_image_style), then call generate_image for it with kind "${kind}" and ${variants} variant${variants > 1 ? 's' : ''}.`,
+      ref
+        ? `Look at the picture ${ref} of this node with view_image — it is the starting point (e.g. a sketch). Write a vivid image prompt for what it should become, finished (read the node with get_node and check get_image_style), then call generate_image for it with reference "${ref}", strength ${strength}, kind "${kind}" and ${variants} variant${variants > 1 ? 's' : ''}.`
+        : `Write a vivid image prompt for this node (read it with get_node and check get_image_style), then call generate_image for it with kind "${kind}" and ${variants} variant${variants > 1 ? 's' : ''}.`,
       { nodeId: node.id },
     );
   }
@@ -90,6 +97,8 @@
           </button>
           {#if mapRenders.includes(f)}<span class="badge map">map</span>{:else if i === 0}<span class="badge">cover</span>{/if}
           <div class="hov">
+            <button title="Start a new picture from this one (a sketch → finished art, or a better version)" class:on={refFile === f} onclick={() => (refFile = refFile === f ? null : f)}>✎</button>
+            <button title="Show this picture to the AI (it goes along with your next chat message)" onclick={() => attachToChat(f)}>💬</button>
             {#if i !== 0}<button title="Use as cover" onclick={() => cmd('set_cover_image', { nodeId: node.id, file: f })}>★</button>{/if}
             <button title="Remove from node" onclick={() => cmd('remove_image', { nodeId: node.id, file: f })}>✕</button>
           </div>
@@ -122,7 +131,19 @@
         {#each [1, 2, 3, 4] as n}<option value={n}>{n}×</option>{/each}
       </select>
     </div>
-    <textarea class="field" data-tour="img-prompt" rows="3" placeholder="Describe the image…" bind:value={prompt} oninput={() => (touched = true)} onchange={keepPrompt}></textarea>
+    {#if refFile && node.images.includes(refFile)}
+      <div class="ref">
+        <img src={`/api/images/${refFile}?w=96`} alt="" />
+        <div class="rt">
+          <b>Starting from this picture</b>
+          <label class="dim" title="How far the new picture may move away from it: a rough sketch wants a lot, a finished picture a little">
+            close <input type="range" min="0.3" max="0.9" step="0.05" bind:value={strength} /> free · {strength.toFixed(2)}
+          </label>
+        </div>
+        <button class="lnk" title="Start from scratch again" onclick={() => (refFile = null)}>✕</button>
+      </div>
+    {/if}
+    <textarea class="field" data-tour="img-prompt" rows="3" placeholder={refFile ? 'What should it become? (e.g. the elf from my sketch, in leather armour, at dusk)' : 'Describe the image…'} bind:value={prompt} oninput={() => (touched = true)} onchange={keepPrompt}></textarea>
     <div class="acts">
       <button class="btn primary" data-tour="img-generate" onclick={generate} disabled={prompt.trim().length < 8}>{justQueued ? '✓ Queued' : busy ? 'Add to queue' : 'Generate'}</button>
       <button class="btn" onclick={askAi} title="Let the AI write the prompt and generate">✦ AI writes it</button>
@@ -145,7 +166,13 @@
   .hov { position: absolute; top: 4px; right: 4px; display: flex; gap: 3px; opacity: 0; transition: opacity 0.15s; }
   .tile:hover .hov { opacity: 1; }
   .hov button { width: 22px; height: 22px; border-radius: 6px; border: 1px solid var(--line-2); background: rgba(10, 12, 17, 0.85); color: var(--text); padding: 0; }
-  .hov button:hover { border-color: var(--accent); }
+  .hov button:hover, .hov button.on { border-color: var(--accent); }
+  .tile:has(.hov button.on) .hov { opacity: 1; }
+  .ref { display: flex; gap: 8px; align-items: center; padding: 6px; border: 1px solid var(--accent); border-radius: var(--radius-s); background: var(--bg-3); }
+  .ref img { width: 44px; height: 44px; object-fit: cover; border-radius: 6px; }
+  .ref .rt { flex: 1; display: grid; gap: 2px; font-size: 12px; }
+  .ref label { display: flex; gap: 6px; align-items: center; font-size: 11px; }
+  .ref input[type=range] { flex: 1; }
   .job { margin-bottom: 6px; font-size: 12px; color: var(--text-dim); }
   .job.err { color: var(--danger); background: #2a1518; border: 1px solid #5a2a30; padding: 6px 8px; border-radius: 6px; }
   .bar { height: 4px; background: var(--bg-4); border-radius: 99px; overflow: hidden; margin-top: 3px; }

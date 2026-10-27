@@ -3,9 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   DEFAULT_COMFY, DEFAULT_STYLE, IMAGE_KINDS, effectiveCfg, slugify,
-  type Actor, type ComfyConfig, type ImageJob, type ImageKind, type MapPaintMode, type StyleConfig,
+  type Actor, type ComfyConfig, type ImageBackend, type ImageJob, type ImageKind, type MapPaintMode, type PaintBackend, type StyleConfig,
 } from '@pnp/shared';
 import { Comfy, ComfyError } from './comfy.js';
+import { cliPaint, type CliPaintRequest } from './clipaint.js';
+import { scalePicture } from './picture.js';
 import { runOnce, type Runner } from './style.js';
 import type { Store } from './store.js';
 
@@ -53,6 +55,8 @@ export interface CustomJob {
   fileTag?: string;
   /** false = keep the image out of the node's pictures (work-in-progress images such as terrain candidates). Default true. */
   attach?: boolean;
+  /** How agy / Codex would paint this job in one go (Settings → Image generation); without it the job always uses ComfyUI. */
+  cli?: { prompt: string; negative?: string; reference?: Buffer; referenceNote?: string };
 }
 
 export interface ImageServiceOptions {
@@ -60,6 +64,10 @@ export interface ImageServiceOptions {
   mapMode?: () => MapPaintMode;
   /** runs the AI once, headless (prompt writing); injectable for tests */
   ai?: Runner;
+  /** who paints (a user setting for this computer); default ComfyUI */
+  paintBackend?: () => PaintBackend;
+  /** paints one picture with agy / Codex; injectable for tests */
+  cliPaint?: (r: CliPaintRequest) => Promise<Buffer>;
 }
 
 export interface ImageRequest {
@@ -123,6 +131,24 @@ export class ImageService {
     this.comfy = comfy ?? new Comfy(() => this.comfyConfig());
     this.ai = opts.ai ?? runOnce;
     this.modeFn = opts.mapMode ?? (() => 'quick');
+    this.backendFn = opts.paintBackend ?? (() => ({ backend: 'comfy', maps: false }));
+    this.cliPaintFn = opts.cliPaint ?? cliPaint;
+  }
+  private readonly backendFn: () => PaintBackend;
+  private readonly cliPaintFn: (r: CliPaintRequest) => Promise<Buffer>;
+
+  /** Who paints pictures of this kind right now: ComfyUI, or agy / Codex when the GM chose that (maps only when allowed too). */
+  paintBackend(kind: 'image' | 'map'): ImageBackend {
+    const b = this.backendFn();
+    return b.backend !== 'comfy' && (kind === 'image' || b.maps) ? b.backend : 'comfy';
+  }
+
+  /** The job goes to agy / Codex instead of ComfyUI: what they are told. */
+  private viaCli(job: ImageJob, negative: string | undefined, custom?: CustomJob): CliPaintRequest | null {
+    const backend = this.paintBackend(job.kind === 'map' ? 'map' : 'image');
+    if (backend === 'comfy') return null;
+    if (custom) return custom.cli ? { backend, w: job.w, h: job.h, ...custom.cli } : null;
+    return { backend, w: job.w, h: job.h, prompt: this.fullPrompt(job.prompt), negative: negative ?? this.style().negative };
   }
 
   /** How battle maps are painted right now (the user's setting). */
@@ -263,7 +289,20 @@ export class ImageService {
         return bytes;
       };
       let bytes: Buffer;
-      if (custom?.runner) {
+      const cli = this.viaCli(job, negative, custom);
+      if (cli) {
+        // agy / Codex know no progress: a slow crawl, so the bar shows that something is happening
+        job.phase = `${cli.backend === 'codex' ? 'Codex' : 'agy'} is painting…`;
+        this.emit(job);
+        const crawl = setInterval(() => report(job.progress + (0.9 - job.progress) * 0.04), 2000);
+        try {
+          const raw = await this.cliPaintFn({ ...cli, signal: ctl.signal });
+          bytes = scalePicture(raw, job.w, job.h, 'fill'); // the size the job promised (a map's picture must match its plan)
+        } finally {
+          clearInterval(crawl);
+        }
+        passes.push({ phase: cli.backend, positive: cli.prompt, negative: cli.negative ?? '' });
+      } else if (custom?.runner) {
         bytes = await custom.runner({
           seed: job.seed, signal: ctl.signal, comfy: this.comfy, progress: report,
           phase: (label) => {

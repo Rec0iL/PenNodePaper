@@ -68,6 +68,16 @@ export class Maps {
     this.save(m, { backup: 'none' });
     return m;
   }
+  /** A copy of a map under a new id (a pasted place gets its own maps, not the same file as the original). */
+  copy(id: string, name?: string): MapDoc {
+    const m = this.get(id);
+    const base = slugify(`${m.id}-copy`);
+    let nid = base;
+    for (let i = 2; this.has(nid); i++) nid = `${base}-${i}`;
+    const c: MapDoc = { ...JSON.parse(JSON.stringify(m)), id: nid, name: name ?? m.name };
+    this.save(c, { backup: 'none' });
+    return c;
+  }
   remove(id: string) {
     fs.rmSync(this.file(id), { force: true });
   }

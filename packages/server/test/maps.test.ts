@@ -133,7 +133,7 @@ describe('map commands', () => {
 
   it('create_map makes the map file and a location it is attached to', () => {
     const r = run('create_map', { name: 'Rusty Anchor', cols: 20, rows: 14, place: 'canvas' });
-    expect(store.state.nodes[r.nodeId]).toMatchObject({ type: 'location', fields: { mapId: r.mapId } });
+    expect(store.state.nodes[r.nodeId]).toMatchObject({ type: 'location', fields: { maps: [r.mapId] } });
     expect(store.state.graph.placements[r.nodeId]).toBeDefined();
     expect(store.maps.get(r.mapId).grid).toMatchObject({ cols: 20, rows: 14, unit: 6 });
     expect(run('list_maps')[0]).toMatchObject({ mapId: r.mapId, nodeId: r.nodeId });

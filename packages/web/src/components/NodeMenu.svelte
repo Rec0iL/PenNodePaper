@@ -1,6 +1,7 @@
 <script lang="ts">
   import { VISITABLE_TYPES, STATUS_CHOICES as STATUS_CHOICES_SHARED, NODE_TYPE_INFO, DEFAULT_GROUP, groupColor, groupsOf, visitsOf, type CampaignState, type StoryNode } from '@pnp/shared';
   import { app, cmd, hereMany, openCrossLink, selectNode, setStatusMany } from '../lib/app.svelte';
+  import { copyNodes, cutNodes, duplicateNodes } from '../lib/clipboard.svelte';
 
   const menu = $derived(app.nodeMenu);
   /** Right-click on a node that belongs to a multi-selection acts on the whole selection. */
@@ -104,6 +105,10 @@
       {/if}
       <button class="ctx-item" onclick={frameThem} title="A labelled area behind these nodes — they then move together">▭ Frame these {many.length} nodes</button>
       <div class="ctx-sep"></div>
+      <button class="ctx-item" onclick={() => { const ids = many; close(); copyNodes(ids); }}>⧉ Copy {many.length} nodes <span class="sp"></span><span class="dim">Ctrl+C</span></button>
+      <button class="ctx-item" onclick={() => { const ids = many; close(); void cutNodes(ids); }}>✂ Cut {many.length} nodes <span class="sp"></span><span class="dim">Ctrl+X</span></button>
+      <button class="ctx-item" onclick={() => { const ids = many; close(); void duplicateNodes(ids); }}>⧉ Duplicate {many.length} nodes</button>
+      <div class="ctx-sep"></div>
       <button class="ctx-item danger" onclick={() => act('batch', { ops: many.map((id) => ({ command: 'delete_node', args: { id } })), label: `Deleted ${many.length} nodes` })}>Delete {many.length} nodes</button>
     {:else}
     {#if node.type === 'table'}
@@ -157,6 +162,9 @@
     <button class="ctx-item" onclick={() => { selectNode(node.id); close(); }}>Open in inspector</button>
     {#if placed && app.graph.canvases.length > 1}<button class="ctx-item" onclick={() => openCrossLink(node.id)} title="Connect this node to a node on another canvas (next act, side quest …)">↠ Connect to another canvas…</button>{/if}
     {#if placed}<button class="ctx-item" onclick={() => act('move_to_pool', { id: node.id })}>Send to pool</button>{/if}
+    <button class="ctx-item" onclick={() => { const id = node.id; close(); copyNodes([id]); }}>⧉ Copy <span class="sp"></span><span class="dim">Ctrl+C</span></button>
+    {#if placed}<button class="ctx-item" onclick={() => { const id = node.id; close(); void cutNodes([id]); }}>✂ Cut <span class="sp"></span><span class="dim">Ctrl+X</span></button>{/if}
+    <button class="ctx-item" onclick={() => { const id = node.id; close(); void duplicateNodes([id]); }}>⧉ Duplicate</button>
     <button class="ctx-item danger" onclick={() => act('delete_node', { id: node.id })}>Delete</button>
     {/if}
   </div>

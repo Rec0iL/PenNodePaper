@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  EDGE_KIND_INFO, FLOW_TYPES, NODE_TYPE_INFO, dieLabel, sheetToText, tableEntries, tableFaces, tableRanges,
+  EDGE_KIND_INFO, FLOW_TYPES, NODE_TYPE_INFO, dieLabel, mapIdsOf, sheetToText, tableEntries, tableFaces, tableRanges,
   type CampaignState, type StoryEdge, type StoryNode,
 } from '@pnp/shared';
 import { illustrationsOf, imageDimensions, sheetOf } from './vtt.js';
@@ -276,12 +276,11 @@ export function binderParts(store: Store, opts: BinderOptions = {}): { html: str
   if (want.has('places')) {
     section('places', pick.places.label, pick.places.list.map((n) => {
       let mapHtml = '';
-      const mid = typeof n.fields.mapId === 'string' ? n.fields.mapId : '';
-      if (mid && pics) {
+      for (const mid of pics ? mapIdsOf(n) : []) {
         try {
           const m = store.maps.get(mid);
           const render = m.renders.at(-1);
-          mapHtml = `<div class="map">${render ? `<img class="mapimg" src="images/${encodeURIComponent(render)}" alt="">` : `<img class="mapimg" src="data:image/png;base64,${toPng(renderSvg(m, 'preview'), 1100).toString('base64')}" alt="">`}<p class="cap">${esc(m.name)} · ${m.kind === 'battle' ? `${m.grid.cols}×${m.grid.rows} cells, ${m.grid.unit} ft each` : 'region map'}</p></div>`;
+          mapHtml += `<div class="map">${render ? `<img class="mapimg" src="images/${encodeURIComponent(render)}" alt="">` : `<img class="mapimg" src="data:image/png;base64,${toPng(renderSvg(m, 'preview'), 1100).toString('base64')}" alt="">`}<p class="cap">${esc(m.name)} · ${m.kind === 'battle' ? `${m.grid.cols}×${m.grid.rows} cells, ${m.grid.unit} ft each` : 'region map'}</p></div>`;
         } catch { /* map file missing */ }
       }
       return card(n, mapHtml);

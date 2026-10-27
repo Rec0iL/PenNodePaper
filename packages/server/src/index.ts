@@ -5,14 +5,15 @@ import path from 'node:path';
 import { getRequestListener } from '@hono/node-server';
 import { Hono, type Context } from 'hono';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { DEFAULT_COMFY, MAP_VIEWS, sanitizeMap, cameraKey, cleanCameraText, dropAiPrompts, type Actor, type Backend, type CommandResult, type MapPaintMode, type ServerMsg } from '@pnp/shared';
+import { DEFAULT_COMFY, MAP_VIEWS, mapIdsOf, sanitizeMap, cameraKey, cleanCameraText, dropAiPrompts, type Actor, type Backend, type CommandResult, type MapPaintMode, type ServerMsg } from '@pnp/shared';
 import { spawnCliSync } from './cli.js';
 import { Chat, listModels } from './chat.js';
+import { MAX_ATTACHMENT_BYTES } from './attachments.js';
 import { imageSize, renderSvg } from './maps.js';
 import { generateStyle, runOnce } from './style.js';
 import { ImageService } from './images.js';
 import { listCommands, runCommand } from './commands.js';
-import { CONFIG_PATH, REPO_ROOT, loadConfig, loadMapPaintMode, loadSaved, saveConfig } from './config.js';
+import { CONFIG_PATH, REPO_ROOT, loadConfig, loadMapPaintMode, loadPaintBackend, loadSaved, saveConfig } from './config.js';
 import { findModelsDir, isLocalUrl, scanModels } from './comfymodels.js';
 import { estimatePaint } from './mappaint.js';
 import { FONT_DIR, LABEL_ASSET_DIR, installLabelContext } from './labels.js';
@@ -33,6 +34,7 @@ import { LanGuard, isLoopback, safeEqual, lanUrls, loginPage, newAccessCode, new
 const cfg = loadConfig();
 const lan = new LanGuard({ enabled: cfg.lan, code: cfg.lanCode, secret: cfg.lanSecret });
 let mapPaintMode = loadMapPaintMode();
+let paintBackend = loadPaintBackend();
 /** a practice campaign paints in two steps (that is what the tour shows); the Settings choice only applies to it while the tour runs */
 let tutorialMapMode: MapPaintMode = 'staged';
 const clients = new Set<WebSocket>();
@@ -78,9 +80,12 @@ function openCampaign(dir: string, opts: { discardOld?: boolean } = {}) {
   const practice = () => next.state.meta.tutorial?.on === true;
   store = next;
   stopWatching = watchCampaign(next, (m) => console.log(`[watch] ${m}`));
-  chat = new Chat({ store: next, port: cfg.port, token: cfg.token, campaignDir, broadcast });
+  const nextChat = new Chat({ store: next, port: cfg.port, token: cfg.token, campaignDir, broadcast });
+  chat = nextChat;
+  next.onAsk = (ask, actor) => nextChat.ask(ask, actor);
   images = new ImageService(next, path.join(campaignDir, 'images'), (job) => broadcast({ t: 'image.job', job }), new TutorialComfy(() => ({ ...DEFAULT_COMFY, ...next.state.meta.comfy }), practice), {
     mapMode: () => (practice() ? tutorialMapMode : mapPaintMode),
+    paintBackend: () => (practice() ? { backend: 'comfy', maps: false } : paintBackend), // the tour's stand-in pictures come from its own ComfyUI double
     ai: (b, p, m) => (practice() ? tutorialAi(b, p, m) : runOnce(b, p, m)),
   });
   next.images = images;
@@ -419,11 +424,44 @@ app.post('/api/command', async (c) => {
 let modelsCache: ReturnType<typeof listModels> | null = null;
 app.get('/api/models', (c) => c.json((modelsCache ??= listModels())));
 
+// files and pictures sent along with a chat message: uploaded first (raw bytes, the file name in ?name=), then named in /api/chat
+app.post('/api/chat/attachments', async (c) => {
+  try {
+    const bytes = await readLimited(c.req.raw, MAX_ATTACHMENT_BYTES, 'The file');
+    const a = store.attachments.save(String(c.req.query('name') ?? 'file'), bytes);
+    return c.json({ ok: true, attachment: { id: a.id, name: a.name, kind: a.kind, size: a.size, ...(a.w ? { w: a.w, h: a.h } : {}) } });
+  } catch (err) {
+    return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, err instanceof TooBig ? 413 : 400);
+  }
+});
+app.get('/api/chat/attachments/:id', (c) => {
+  try {
+    const a = store.attachments.get(c.req.param('id'));
+    const disp = a.kind === 'image' ? 'inline' : `attachment; filename*=UTF-8''${encodeURIComponent(a.name)}`;
+    return new Response(new Uint8Array(store.attachments.bytes(a.id)), { headers: { 'content-type': a.mime, 'content-disposition': disp, 'x-content-type-options': 'nosniff', 'cache-control': 'private, max-age=86400' } });
+  } catch {
+    return c.notFound();
+  }
+});
+app.post('/api/chat/answer', async (c) => {
+  const b = (await c.req.json().catch(() => ({}))) as { msgId?: string; answers?: string[][]; model?: string };
+  if (!b.msgId || !Array.isArray(b.answers)) return c.json({ ok: false, error: 'msgId and answers are needed' }, 400);
+  try {
+    const run = chat.answer(b.msgId, b.answers.map((x) => (Array.isArray(x) ? x.map(String) : [])), b.model);
+    // the answer is checked right away; the AI's turn then streams back over the websocket
+    await Promise.race([run, new Promise((r) => setTimeout(r, 50))]);
+    run.catch(() => {});
+    return c.json({ ok: true });
+  } catch (err) {
+    return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 409);
+  }
+});
 app.post('/api/chat', async (c) => {
-  const b = (await c.req.json()) as { text: string; backend: Backend; model?: string; nodeId?: string; pins?: string[] };
-  if (!b.text?.trim()) return c.json({ ok: false, error: 'empty message' }, 400);
+  const b = (await c.req.json()) as { text: string; backend: Backend; model?: string; nodeId?: string; pins?: string[]; attachments?: string[] };
+  const files = Array.isArray(b.attachments) ? b.attachments.map(String) : [];
+  if (!b.text?.trim() && !files.length) return c.json({ ok: false, error: 'empty message' }, 400);
   if (chat.status.busy) return c.json({ ok: false, error: 'The AI is still working.' }, 409);
-  void chat.send({ ...b, text: b.text.trim() }); // streams back over the websocket
+  void chat.send({ ...b, attachments: files, text: b.text?.trim() || (files.length > 1 ? '(see the attached files)' : '(see the attached file)') }); // streams back over the websocket
   return c.json({ ok: true });
 });
 app.post('/api/chat/cancel', (c) => {
@@ -702,7 +740,7 @@ app.get('/api/label-textures/:file', (c) => {
 });
 
 // --- maps ---------------------------------------------------------------------------
-const mapNode = (id: string) => Object.values(store.state.nodes).find((n) => !n.trashed && n.fields.mapId === id)?.id ?? null;
+const mapNode = (id: string) => Object.values(store.state.nodes).find((n) => !n.trashed && mapIdsOf(n).includes(id))?.id ?? null;
 app.get('/api/maps', (c) => c.json(store.maps.list().map((m) => ({ id: m.id, name: m.name, kind: m.kind, nodeId: mapNode(m.id) }))));
 app.get('/api/maps/:id', (c) => {
   try {
@@ -807,6 +845,7 @@ app.get('/api/settings', async (c) => {
     aiMode: store.state.meta.aiMode ?? 'live',
     aiCreativity: store.state.meta.aiCreativity ?? 3,
     mapPaintMode: practice ? tutorialMapMode : mapPaintMode,
+    paintBackend,
     alive,
     options: alive ? await (practice ? images.comfy.options().catch(() => null) : images.comfy.options()) : null,
     comfyModelsDir: loadSaved().comfyModelsDir ?? '',
@@ -824,7 +863,12 @@ app.get('/api/comfy/models', async (c) => {
 });
 
 app.put('/api/settings', async (c) => {
-  const b = (await c.req.json()) as { comfy?: Record<string, unknown>; style?: Record<string, unknown>; language?: string; aiMode?: string; aiCreativity?: number; mapPaintMode?: string; comfyModelsDir?: string };
+  const b = (await c.req.json()) as { comfy?: Record<string, unknown>; style?: Record<string, unknown>; language?: string; aiMode?: string; aiCreativity?: number; mapPaintMode?: string; comfyModelsDir?: string; paintBackend?: { backend?: string; maps?: boolean } };
+  if (b.paintBackend && typeof b.paintBackend === 'object') {
+    const want = b.paintBackend.backend;
+    paintBackend = { backend: want === 'agy' || want === 'codex' || want === 'comfy' ? want : paintBackend.backend, maps: typeof b.paintBackend.maps === 'boolean' ? b.paintBackend.maps : paintBackend.maps };
+    saveConfig({ paintBackend }); // this computer's setting, not the campaign's
+  }
   const m = store.state.meta;
   if (typeof b.comfyModelsDir === 'string' && b.comfyModelsDir.trim() !== (loadSaved().comfyModelsDir ?? '')) saveConfig({ comfyModelsDir: b.comfyModelsDir.trim() }); // this computer's folder, not part of the campaign
   if (b.mapPaintMode === 'quick' || b.mapPaintMode === 'staged') {

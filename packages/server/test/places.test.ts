@@ -5,6 +5,7 @@ import http from 'node:http';
 import { WebSocketServer } from 'ws';
 import { connectMockVtt, KINETIK_LIKE_PROFILE } from '../scripts/mock-vtt.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { mapIdsOf } from '@pnp/shared';
 import { runCommand } from '../src/commands.js';
 import { Persistence } from '../src/persistence.js';
 import { Store } from '../src/store.js';
@@ -30,13 +31,24 @@ const addImage = (nodeId: string, file: string) => {
 };
 
 describe('a location carries its map', () => {
-  it('attaching a map keeps the node a location (with its images); a node has at most one map', () => {
+  it('attaching maps keeps the node a location (with its images); a place can have several maps, deleting one keeps the others', () => {
     run('create_node', { id: 'tavern', type: 'location', title: 'The Rusty Anchor', summary: 'A tavern.' });
     addImage('tavern', 'tavern-art.png');
     const r = run('create_map', { name: 'Tavern floor', nodeId: 'tavern', kind: 'battle', cols: 12, rows: 8 });
-    expect(store.state.nodes.tavern).toMatchObject({ type: 'location', images: ['tavern-art.png'], fields: { mapId: r.mapId } });
-    expect(() => run('create_map', { name: 'again', nodeId: 'tavern' })).toThrow(/already has a map/);
-    expect(run('list_maps')[0].nodeId).toBe('tavern');
+    expect(store.state.nodes.tavern).toMatchObject({ type: 'location', images: ['tavern-art.png'], fields: { maps: [r.mapId] } });
+    const cellar = run('create_map', { name: 'Cellar', nodeId: 'tavern', kind: 'battle' });
+    const region = run('create_map', { name: 'Harbour', nodeId: 'tavern', kind: 'region' });
+    expect(mapIdsOf(store.state.nodes.tavern)).toEqual([r.mapId, cellar.mapId, region.mapId]);
+    expect(run('list_maps').every((m: { nodeId: string }) => m.nodeId === 'tavern')).toBe(true);
+    run('delete_map', { mapId: cellar.mapId });
+    expect(mapIdsOf(store.state.nodes.tavern)).toEqual([r.mapId, region.mapId]);
+  });
+
+  it('an old single mapId is read as the first map and folded into the list when a map is added', () => {
+    run('create_node', { id: 'old', type: 'location', title: 'Old place', summary: '.', fields: { mapId: 'legacy-map' } });
+    expect(mapIdsOf(store.state.nodes.old)).toEqual(['legacy-map']);
+    const r = run('create_map', { name: 'New floor', nodeId: 'old' });
+    expect(store.state.nodes.old.fields).toEqual({ maps: ['legacy-map', r.mapId] });
   });
 
   it('a new map without a node creates a location, and old "map" nodes load as locations', () => {

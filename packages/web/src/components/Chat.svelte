@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import type { Backend, ChatMsg } from '@pnp/shared';
+  import type { Backend, ChatAttachment, ChatMsg } from '@pnp/shared';
   import { BACKENDS, NODE_TYPE_INFO, actorName } from '@pnp/shared';
-  import { app, cancelChat, chatMeta, clearChat, focusNode, remember, resetPanelSize, selectNode, sendChat, setPanelSize } from '../lib/app.svelte';
+  import { answerAsk, app, cancelChat, chatMeta, clearChat, focusNode, remember, resetPanelSize, selectNode, sendChat, setPanelSize, uploadChatFile } from '../lib/app.svelte';
 
   /** When set, this is a per-node thread (compact, filtered to that node). */
   let { nodeId }: { nodeId?: string } = $props();
@@ -12,7 +12,61 @@
   const draftKey = nodeId ?? '';
   let text = $state(app.drafts[draftKey]?.text ?? '');
   let pins = $state<string[]>([...(app.drafts[draftKey]?.pins ?? [])]);
-  $effect(() => { app.drafts[draftKey] = { text, pins: [...pins] }; });
+  let files = $state<ChatAttachment[]>([...(app.drafts[draftKey]?.files ?? [])]);
+  $effect(() => { app.drafts[draftKey] = { text, pins: [...pins], files: [...files] }; });
+  // a picture sent here from a node's gallery (💬) while this chat is open
+  $effect(() => {
+    const d = app.drafts[draftKey]?.files ?? [];
+    if (d.some((f) => !files.some((x) => x.id === f.id))) files = [...files, ...d.filter((f) => !files.some((x) => x.id === f.id))];
+  });
+  let uploading = $state(0);
+  let dropping = $state(false);
+  async function addFiles(list: File[]) {
+    for (const f of list.slice(0, 12)) {
+      uploading++;
+      const a = await uploadChatFile(f);
+      uploading--;
+      if (a) files = [...files, a];
+    }
+  }
+  const fileSrc = (a: ChatAttachment, w = 160) => (a.id.startsWith('att-') ? `/api/chat/attachments/${a.id}` : `/api/images/${encodeURIComponent(a.id)}?w=${w}`);
+  function onpaste(e: ClipboardEvent) {
+    const list = [...(e.clipboardData?.files ?? [])];
+    if (!list.length) return;
+    e.preventDefault();
+    void addFiles(list);
+  }
+  function ondragover(e: DragEvent) {
+    if (!e.dataTransfer?.types.includes('Files')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    dropping = true;
+  }
+  function ondrop(e: DragEvent) {
+    dropping = false;
+    const list = [...(e.dataTransfer?.files ?? [])];
+    if (!list.length) return;
+    e.preventDefault();
+    void addFiles(list);
+  }
+
+  // --- the AI's questions (ask_user): the GM's picks, per message and question; "other" is typed ---
+  let picks = $state<Record<string, string[][]>>({});
+  let others = $state<Record<string, string[]>>({});
+  function toggle(m: ChatMsg, qi: number, label: string, multiple?: boolean) {
+    const cur = (picks[m.id] ??= m.ask!.questions.map(() => []));
+    cur[qi] = multiple ? (cur[qi].includes(label) ? cur[qi].filter((x) => x !== label) : [...cur[qi], label]) : [label];
+  }
+  function answersOf(m: ChatMsg): string[][] {
+    return m.ask!.questions.map((q, i) => {
+      const own = (others[m.id]?.[i] ?? '').trim();
+      const chosen = picks[m.id]?.[i] ?? [];
+      return q.multiple ? [...chosen, ...(own ? [own] : [])] : own ? [own] : chosen;
+    });
+  }
+  async function sendAnswer(m: ChatMsg) {
+    if (await answerAsk(m.id, answersOf(m))) { delete picks[m.id]; delete others[m.id]; }
+  }
   let useSelected = $state(true);
   let list: HTMLDivElement;
   let models = $state<Record<Backend, { id: string; label: string }[]> | null>(null);
@@ -122,12 +176,14 @@
 
   async function submit() {
     const t = text.trim();
-    if (!t || busy) return;
+    if ((!t && !files.length) || busy || uploading) return;
     const ids = chipIds.filter((id) => t.includes(`@${app.nodes[id]?.title}`) || id === selected?.id || id === nodeId);
-    const ok = await sendChat(t, { nodeId, pins: ids });
+    const ok = await sendChat(t, { nodeId, pins: ids, ...(files.length ? { attachments: files.map((f) => f.id) } : {}) });
     if (ok) {
       text = '';
       pins = [];
+      files = [];
+      if (app.drafts[draftKey]) app.drafts[draftKey].files = [];
     }
   }
   function onkey(e: KeyboardEvent) {
@@ -149,7 +205,7 @@
   }
 </script>
 
-<div class="chat" class:compact={!!nodeId}>
+<div class="chat" class:compact={!!nodeId} class:dropping role="region" aria-label="AI chat" {ondragover} ondragleave={() => (dropping = false)} {ondrop}>
   {#if !nodeId}
     <div class="bar" data-tour="chat-bar">
       <div class="seg">
@@ -200,7 +256,45 @@
       {:else}
         {@const m = r.m}
         {#if m.role === 'user'}
-          <div class="user"><div class="b">{m.text}</div></div>
+          <div class="user">
+            {#if m.attachments?.length}
+              <div class="atts">
+                {#each m.attachments as a (a.id)}
+                  {#if a.kind === 'image'}<a href={fileSrc(a, 720)} target="_blank" rel="noopener" title={a.name}><img src={fileSrc(a)} alt={a.name} loading="lazy" /></a>
+                  {:else}<a class="fchip" href={fileSrc(a)} title="Download">📄 {a.name}</a>{/if}
+                {/each}
+              </div>
+            {/if}
+            <div class="b">{m.text}</div>
+          </div>
+        {:else if m.role === 'assistant' && m.ask}
+          {@const answered = m.ask.answered}
+          <div class="ai ask" style="--c:var(--{m.backend})">
+            <span class="who">{actorName(m.backend)} asks</span>
+            <div class="b">
+              {#each m.ask.questions as q, qi}
+                {#if q.header}<div class="qh">{q.header}</div>{/if}
+                <div class="qq">{q.question}</div>
+                {#if answered}
+                  <div class="qa">→ {answered[qi]?.picked.join(', ') || '(no answer)'}</div>
+                {:else}
+                  <div class="opts">
+                    {#each q.options as o}
+                      {@const on = (picks[m.id]?.[qi] ?? []).includes(o.label)}
+                      <label class="opt" class:on>
+                        <input type={q.multiple ? 'checkbox' : 'radio'} name={`${m.id}-${qi}`} checked={on} onchange={() => toggle(m, qi, o.label, q.multiple)} />
+                        <span><b>{o.label}</b>{#if o.description}<span class="od">{o.description}</span>{/if}</span>
+                      </label>
+                    {/each}
+                    <input class="field other" placeholder={q.multiple ? 'Something else as well…' : 'Or your own answer…'} value={others[m.id]?.[qi] ?? ''} oninput={(e) => { (others[m.id] ??= [])[qi] = e.currentTarget.value; }} />
+                  </div>
+                {/if}
+              {/each}
+              {#if !answered}
+                <button class="btn primary" disabled={busy || answersOf(m).every((a) => !a.length)} onclick={() => sendAnswer(m)}>Answer</button>
+              {/if}
+            </div>
+          </div>
         {:else if m.role === 'assistant' && !m.text && !m.streaming}
           <!-- a turn that only called tools has no text: the tool cards say it all -->
         {:else if m.role === 'assistant'}
@@ -268,9 +362,22 @@
     {/if}
     <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
     <div class="grip" role="separator" aria-orientation="horizontal" aria-valuenow={app.layout.input} aria-label="Resize the message box (double-click to reset)" tabindex="0" title="Drag to resize the message box — double-click to reset" onpointerdown={dragInput} ondblclick={() => resetPanelSize('input')} onkeydown={nudgeInput}></div>
+    {#if files.length || uploading}
+      <div class="files">
+        {#each files as a (a.id)}
+          <span class="file" title={a.name}>
+            {#if a.kind === 'image'}<img src={fileSrc(a, 96)} alt="" />{:else}<span class="fi">📄</span>{/if}
+            <span class="fn">{a.name}</span>
+            <button title="Remove" onclick={() => (files = files.filter((x) => x.id !== a.id))}>×</button>
+          </span>
+        {/each}
+        {#if uploading}<span class="file up"><i class="spin"></i> uploading…</span>{/if}
+      </div>
+    {/if}
     <div class="row">
-      <textarea class="field" style="height:{app.layout.input}px" placeholder={nodeId ? 'Ask about this node…' : 'Ask the AI… (@ to mention a node, Enter to send)'} bind:value={text} {oninput} onkeydown={onkey} disabled={busy}></textarea>
-      <button class="btn primary send" disabled={busy || !text.trim()} onclick={submit}>↑</button>
+      <label class="btn ghost clip" title="Attach pictures or files (or drop them here, or paste a picture)">📎<input type="file" multiple hidden onchange={(e) => { const l = [...(e.currentTarget.files ?? [])]; e.currentTarget.value = ''; void addFiles(l); }} /></label>
+      <textarea class="field" style="height:{app.layout.input}px" placeholder={nodeId ? 'Ask about this node…' : 'Ask the AI… (@ to mention a node, Enter to send, 📎 or drop files)'} bind:value={text} {oninput} {onpaste} onkeydown={onkey} disabled={busy}></textarea>
+      <button class="btn primary send" disabled={busy || !!uploading || (!text.trim() && !files.length)} onclick={submit}>↑</button>
     </div>
   </div>
 </div>
@@ -292,6 +399,27 @@
   .err { color: var(--danger); margin-left: 8px; }
   .msgs { flex: 1; overflow: auto; padding: 12px 10px; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
   .user { align-self: flex-end; max-width: 88%; }
+  .chat.dropping .composer { outline: 2px dashed var(--accent); outline-offset: -4px; }
+  .atts { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; margin-bottom: 4px; }
+  .atts img { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line-2); display: block; }
+  .fchip { font-size: 11.5px; padding: 3px 8px; border: 1px solid var(--line-2); border-radius: 8px; color: var(--text-dim); background: var(--bg-3); text-decoration: none; }
+  .files { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 6px; }
+  .file { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; padding: 2px 4px 2px 2px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--bg-3); max-width: 180px; }
+  .file img { width: 26px; height: 26px; object-fit: cover; border-radius: 6px; }
+  .file .fi { width: 26px; text-align: center; }
+  .file .fn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file button { background: transparent; border: 0; color: var(--text-dim); padding: 0 3px; }
+  .file.up { padding: 4px 8px; color: var(--text-dim); }
+  .clip { width: 34px; height: 34px; padding: 0; display: grid; place-items: center; cursor: pointer; }
+  .ask .qh { font-size: 10px; text-transform: uppercase; letter-spacing: .07em; color: var(--c); margin-top: 4px; }
+  .ask .qq { font-weight: 600; margin: 2px 0 6px; white-space: normal; }
+  .ask .qa { color: var(--text-dim); margin-bottom: 6px; }
+  .opts { display: grid; gap: 4px; margin-bottom: 8px; white-space: normal; }
+  .opt { display: flex; gap: 8px; align-items: flex-start; padding: 6px 8px; border: 1px solid var(--line-2); border-radius: 8px; cursor: pointer; background: var(--bg); }
+  .opt.on { border-color: var(--c); background: color-mix(in srgb, var(--c) 10%, var(--bg)); }
+  .opt input { margin-top: 3px; accent-color: var(--c); }
+  .opt .od { display: block; font-size: 11.5px; color: var(--text-dim); }
+  .other { font-size: 12px; padding: 5px 8px; }
   .user .b { background: var(--accent-soft); border: 1px solid #2f4170; padding: 7px 11px; border-radius: 12px 12px 3px 12px; white-space: pre-wrap; }
   .ai { max-width: 94%; animation: pnp-pop 0.2s ease-out; }
   .who { font-size: 10px; letter-spacing: 0.06em; font-weight: 600; color: var(--c); text-transform: uppercase; }

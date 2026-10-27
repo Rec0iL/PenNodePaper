@@ -49,11 +49,11 @@ describe('the practice campaign', () => {
     const tavern = store.maps.get(TAVERN_MAP);
     expect(tavern.kind).toBe('battle');
     expect(tavern.props.length).toBeGreaterThan(20);
-    expect(store.state.nodes['rusty-anchor'].fields.mapId).toBe(TAVERN_MAP);
+    expect(store.state.nodes['rusty-anchor'].fields.maps).toEqual([TAVERN_MAP]);
     const coast = store.maps.get('greywater-coast');
     expect(coast.kind).toBe('region');
     expect(coast.shapes.length).toBeGreaterThan(8);
-    expect(store.state.nodes['greywater-coast'].fields.mapId).toBe('greywater-coast');
+    expect(store.state.nodes['greywater-coast'].fields.maps).toEqual(['greywater-coast']);
   });
 
   it('has no structural problems the Story tab would complain about', () => {

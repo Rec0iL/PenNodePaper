@@ -27,7 +27,10 @@ function buildServer(store: Store, actor: Actor): McpServer {
       async (args: Record<string, unknown>) => {
         try {
           const result = await runCommand(store, c.name, args, actor);
-          return { content: [{ type: 'text' as const, text: JSON.stringify(result ?? { ok: true }) }] };
+          // a tool that shows the AI a picture (view_image) hands it over as an image, not as text
+          const { __images, ...rest } = (result && typeof result === 'object' && !Array.isArray(result) ? result : { value: result }) as { __images?: { data: string; mimeType: string }[] } & Record<string, unknown>;
+          const text = JSON.stringify(__images ? rest : (result ?? { ok: true }));
+          return { content: [...(__images ?? []).map((im) => ({ type: 'image' as const, data: im.data, mimeType: im.mimeType })), { type: 'text' as const, text }] };
         } catch (err) {
           return { isError: true, content: [{ type: 'text' as const, text: err instanceof Error ? err.message : String(err) }] };
         }

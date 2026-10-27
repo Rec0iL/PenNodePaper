@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { SvelteFlowProvider } from '@xyflow/svelte';
   import { AI_CREATIVITY, lintStory, type AiCreativity, type CampaignState } from '@pnp/shared';
+  import { installClipboard } from './lib/clipboard.svelte';
   import { activeJobs, app, cmd, connect, redo, resetPanelSize, selectNode, setPanelSize, undo } from './lib/app.svelte';
   import { IMAGE_KINDS } from '@pnp/shared';
   import Activity from './components/Activity.svelte';
@@ -53,6 +54,7 @@
 
   onMount(() => {
     connect();
+    const unclip = installClipboard();
     const key = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
@@ -71,7 +73,10 @@
       }
     };
     window.addEventListener('keydown', key);
-    return () => window.removeEventListener('keydown', key);
+    return () => {
+      window.removeEventListener('keydown', key);
+      unclip();
+    };
   });
 
   // drag a splitter: pointer capture keeps the drag alive over the canvas and the dock

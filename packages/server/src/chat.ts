@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { AiCreativity, Backend, ChatMsg, ChatStatus } from '@pnp/shared';
+import { isBackend, type AiCreativity, type Backend, type ChatAsk, type ChatAttachment, type ChatMsg, type ChatStatus } from '@pnp/shared';
 import { partyDigest } from './party.js';
 import { codexMcpArgs, isApprovalBlock, parseCodexVersion, type CodexVersion } from './codexargs.js';
 import { aiCommands, runCommand } from './commands.js';
@@ -96,10 +96,12 @@ function systemPrompt(store: Store): string {
     `The GM may have switched on review mode: your changes still apply immediately as usual and the GM accepts or rejects them after you finish, so work normally and finish a task in one go instead of stopping to ask. Write campaign content (titles, summaries, read-aloud text) in the language "${lang}" unless asked otherwise. Keep your chat replies short — the work should be visible on the canvas, not buried in prose. Put GM-facing detail in node bodies and player-facing text in readAloud.`,
     ...(creativityBlock(store.state.meta.aiCreativity) ? [creativityBlock(store.state.meta.aiCreativity)] : []),
     `Never delete things the GM did not ask you to delete. Moving a node to the pool is safer than deleting it.`,
-    `Images: generate_image makes art with a local ComfyUI (Krea 2). Write prompts as natural-language prose — subject, setting, composition, lighting, mood — never tag lists or "masterpiece"; the campaign style is appended automatically. Use kind portrait for characters, scene for places, item for objects, handout for documents. Only generate when the GM asks, and offer 2-3 variants for important characters.`,
+    `Images: generate_image makes art with a local ComfyUI (Krea 2) — or, when the GM chose so in Settings, with the image tool of agy / Codex; you call it the same way. Write prompts as natural-language prose — subject, setting, composition, lighting, mood — never tag lists or "masterpiece"; the campaign style is appended automatically. Use kind portrait for characters, scene for places, item for objects, handout for documents. Only generate when the GM asks, and offer 2-3 variants for important characters.`,
     `Running the session: when the GM tells you what happened at the table, record it — to move the players use move_players (which characters go where; the party can split, see get_party) or, with no player characters known, mark_played (a prepared POOL node that they visit is placed and linked automatically; use after to say where they came from); set_here when they are at several nodes at once (never invent a group name for that — groups are only for a party that really splits); set_status only marks a node active/done/skipped/untouched WITHOUT moving anyone ("the bell event is running" is active, not "the players are there"); set_known when they learn a clue, advance_clock for ticking threats. When they went off-script ("how do we get back on track?", "what did they miss?"): call story_status first and reason from it — frontier nodes with converges:true are natural merge points, skippedPast/untaken are what they bypassed, unrevealed is what they don't know (never spoil it). On a big canvas group nodes into labelled areas with create_frame (an act, a district). Fix gaps with small bridge nodes (create_node + a "bridge" edge) or by giving a missed clue a second route; never rewrite what already happened. For a recap or "what do the players know?": call player_wiki and write ONLY from it (it holds nothing the players have not experienced); export_player_wiki / push_player_wiki can hand your text to the players. The GM ends a session with end_session (only when they say so); a recap of the last session is player_wiki with session:"last" — it holds just what happened since the session before, so do not retell older events (list_sessions shows them; entries marked again are places or people the players went back to). Without any ended session, a recap covers the whole story so far. lint_story finds structural problems — run it before a session or after big edits.`,
     `Image style: when the GM asks you to derive or adjust the campaign's visual style, read the world books (list_world_chapters, search_world, get_world_section), then save it with set_image_style — suffix (25-50 words: medium, palette, lighting, mood, typical materials/architecture/costume; no names or plot), negative (what would break the setting), mapSuffix (how painted maps LOOK — materials, brush, palette; never the camera angle or the kind of map, those are set on each map).`,
-    `Maps: a map is an attachment of a LOCATION node — create_map with nodeId gives an existing location its map (it keeps its images, so a location can have both illustrations and a tactical map); without nodeId it creates a new location for it. Battle maps are grid floor plans — build them with edit_map ops (room, corridor, door, prop, label, token; walls derive automatically; 1 cell = 6 ft by default; use get_map to see the rows before editing and keep rooms connected with doors; to shift a room or furniture group use move_area, to change one prop/token/label use edit_prop / edit_token / edit_label — do not redraw; names are set as lettering, never painted: edit_map label / edit_label / remove_label by the id get_map shows (l1, l2…), op lettering for the map's style, on region maps edit_shape changes a shape's name, kind, position or print options in place, and print_map_names prints the names on the finished picture). A token can stand for a character: edit_map token with node = the id of an NPC / enemy node that belongs-to the place (the token takes that node's kind and name; get_map lists the characters that could be placed in "characters"). push_scene then sends those characters to the VTT together with the map and ties each token to its character, so the GM does not have to create the opponents by hand — place the cast that belongs on a battle map this way and set their sheets (set_character_sheet) first. Region maps use vector shapes: terrain areas (water, forest, desert, custom terrains…), STRUCTURES as AREAS (never dots: a city, camp or hospital is a polygon or ellipse of believable size) and LINES (rivers, roads, railways, paths, bridges: multi-point paths with a width). Rivers and roads are painted in their own passes after the terrain, exactly along the drawn path. render_map paints a map with the image model: describe the look (materials, mood), not the layout. The GM chooses in Settings how battle maps are painted (get_map shows paintMode): quick = one pass; precise = two steps that take a while (minutes, depending on the GM's computer) — render_map paints only the EMPTY terrain, the GM judges it in the map editor and picks one (or has it painted again), and only after that does paint_map_props paint every prop group into its place (the GM may have written the prompt of single groups by hand in the editor — get_map shows them as propPrompts; those are used as they are) (touching props of one kind are one object; a row of tables is one long table); the GM then accepts that result or has it painted again. In precise mode never call paint_map_props before the GM has accepted a terrain, and tell the GM that it takes a while. accept_map_terrain makes a terrain the finished picture (maps without props).`,
+    `Maps: a map is an attachment of a LOCATION node — create_map with nodeId gives an existing location a map (it keeps its images and its other maps: a place can have a region map AND battle maps, e.g. one per floor; the node's fields.maps lists them, the first is its main map); without nodeId it creates a new location for it. Battle maps are grid floor plans — build them with edit_map ops (room, corridor, door, prop, label, token; walls derive automatically; 1 cell = 6 ft by default; use get_map to see the rows before editing and keep rooms connected with doors; to shift a room or furniture group use move_area, to change one prop/token/label use edit_prop / edit_token / edit_label — do not redraw; names are set as lettering, never painted: edit_map label / edit_label / remove_label by the id get_map shows (l1, l2…), op lettering for the map's style, on region maps edit_shape changes a shape's name, kind, position or print options in place, and print_map_names prints the names on the finished picture). A token can stand for a character: edit_map token with node = the id of an NPC / enemy node that belongs-to the place (the token takes that node's kind and name; get_map lists the characters that could be placed in "characters"). push_scene then sends those characters to the VTT together with the map and ties each token to its character, so the GM does not have to create the opponents by hand — place the cast that belongs on a battle map this way and set their sheets (set_character_sheet) first. Region maps use vector shapes: terrain areas (water, forest, desert, custom terrains…), STRUCTURES as AREAS (never dots: a city, camp or hospital is a polygon or ellipse of believable size) and LINES (rivers, roads, railways, paths, bridges: multi-point paths with a width). Rivers and roads are painted in their own passes after the terrain, exactly along the drawn path. render_map paints a map with the image model: describe the look (materials, mood), not the layout. The GM chooses in Settings how battle maps are painted (get_map shows paintMode): quick = one pass; precise = two steps that take a while (minutes, depending on the GM's computer) — render_map paints only the EMPTY terrain, the GM judges it in the map editor and picks one (or has it painted again), and only after that does paint_map_props paint every prop group into its place (the GM may have written the prompt of single groups by hand in the editor — get_map shows them as propPrompts; those are used as they are) (touching props of one kind are one object; a row of tables is one long table); the GM then accepts that result or has it painted again. In precise mode never call paint_map_props before the GM has accepted a terrain, and tell the GM that it takes a while. accept_map_terrain makes a terrain the finished picture (maps without props).`,
+    `Pictures and files: the GM can attach files to a message (listed under "Attached" with an id att-…). Look at pictures with view_image (also works for any image file of a node, e.g. from get_node — "this picture" may mean the cover of the node the GM is looking at), read notes / Word / PDF files with read_attachment. A picture becomes a node's picture with add_picture_to_node, a place's map with map_from_picture (battle = with grid, region = overland/town); to turn a picture into new art — a sketch of a character or a room the GM drew (as an illustration, not a map), or "make this better" — look at it, then generate_image with reference (img2img; strength ~0.8 for a rough sketch, ~0.5 to improve a finished picture) and a prompt describing what it SHOULD show. When several pictures go to several nodes, match them by what they show and the nodes' titles; ask if it is unclear.`,
+    `Questions: when a decision is really the GM's (which of several directions, which nodes, a style), call ask_user with 2-6 options instead of guessing, then end your turn; the answer comes as the next message. Do not use it for things you can decide yourself or that the GM already said. Never use any other built-in question tool — only ask_user reaches the GM here.`,
     `World books are stable reference documents, not canvas nodes. Only write or extend one (write_world) when the GM asks; always give it a dense 300-600 character summary.`,
     ...(knowledge ? [knowledge] : []),
   ].join('\n');
@@ -160,30 +162,71 @@ export class Chat {
     this.save();
   }
 
-  /** Compose what the model sees: the GM's text plus pinned/selected context. */
-  private buildPrompt(text: string, nodeId?: string, pins: string[] = []): string {
+  /** Compose what the model sees: the GM's text plus pinned/selected context and the files sent along. */
+  private buildPrompt(text: string, nodeId?: string, pins: string[] = [], attachments: ChatAttachment[] = []): string {
     const s = this.deps.store.state;
     const ids = [...new Set([...(nodeId ? [nodeId] : []), ...pins])].filter((id) => s.nodes[id] && !s.nodes[id].trashed);
-    if (!ids.length) return text;
+    const att = attachments.length
+      ? `\n\nAttached (look at pictures with view_image, read files with read_attachment):\n${attachments.map((a) => `- ${a.kind === 'image' ? 'picture' : 'file'} "${a.name}" — ${a.id.startsWith('att-') ? `attachment id ${a.id}` : `campaign image ${a.id}`}`).join('\n')}`
+      : '';
+    if (!ids.length) return text + att;
     const ctx = ids.map((id) => {
       const n = s.nodes[id];
       const p = s.graph.placements[id];
       return `- ${n.type} "${n.title}" (id: ${id}, ${p ? `on canvas "${p.canvas}"` : 'in the pool'}, status: ${n.status})`;
     });
-    return `${nodeId ? `[Per-node thread — focus on node ${nodeId}]\n` : ''}Context — the GM is looking at:\n${ctx.join('\n')}\n\n${text}`;
+    return `${nodeId ? `[Per-node thread — focus on node ${nodeId}]\n` : ''}Context — the GM is looking at:\n${ctx.join('\n')}\n\n${text}${att}`;
   }
 
-  async send(opts: { text: string; backend: Backend; model?: string; nodeId?: string; pins?: string[] }) {
+  /** The files a message refers to: uploaded attachments (att-…) and pictures the campaign already has. Unknown ids are dropped. */
+  attachmentsOf(ids: string[] = []): ChatAttachment[] {
+    const { store } = this.deps;
+    return [...new Set(ids)].slice(0, 24).flatMap((id): ChatAttachment[] => {
+      if (/^att-/.test(id)) {
+        if (!store.attachments.has(id)) return [];
+        const a = store.attachments.get(id);
+        return [{ id: a.id, name: a.name, kind: a.kind, size: a.size }];
+      }
+      const file = path.basename(id);
+      return fs.existsSync(path.join(store.imagesDir, file)) ? [{ id: file, name: file, kind: 'image' }] : [];
+    });
+  }
+
+  /** ask_user: the AI's question appears in the chat as a card with choices. */
+  ask(ask: ChatAsk, actor: string) {
+    const backend: Backend = isBackend(actor) ? actor : this.status.backend ?? 'claude';
+    this.push({ role: 'assistant', backend, text: '', nodeId: this.status.nodeId, ask });
+    this.save();
+  }
+
+  /** The GM answered a question card: it shows the answer, and the answer goes to the AI as the next message. */
+  async answer(msgId: string, picked: string[][], model?: string) {
+    const m = this.data.messages.find((x) => x.id === msgId);
+    if (!m?.ask) throw new Error('That question is gone.');
+    if (m.ask.answered) throw new Error('That question was already answered.');
+    if (this.status.busy) throw new Error('The AI is still working — wait for it or cancel.');
+    const answered = m.ask.questions.map((q, i) => ({ question: q.question, picked: (picked[i] ?? []).map((p) => String(p).trim().slice(0, 500)).filter(Boolean) }));
+    if (answered.every((a) => !a.picked.length)) throw new Error('Pick an answer first.');
+    m.ask = { ...m.ask, answered };
+    this.update(m);
+    const text = answered.length === 1
+      ? answered[0].picked.join(', ') || '(no answer)'
+      : answered.map((a) => `${a.question} → ${a.picked.join(', ') || '(no answer)'}`).join('\n');
+    await this.send({ text, backend: m.backend, model, nodeId: m.nodeId });
+  }
+
+  async send(opts: { text: string; backend: Backend; model?: string; nodeId?: string; pins?: string[]; attachments?: string[] }) {
     if (this.status.busy) throw new Error('The AI is still working — wait for it or cancel.');
     const { text, backend, nodeId } = opts;
+    const attachments = this.attachmentsOf(opts.attachments);
     // a practice campaign (the welcome tour) has a scripted stand-in instead of a real AI: nothing needs to be installed
     const demo = !!this.deps.store.state.meta.tutorial?.on;
     this.cancelled = false;
-    this.push({ role: 'user', backend, text, nodeId });
+    this.push({ role: 'user', backend, text, nodeId, ...(attachments.length ? { attachments } : {}) });
     this.setStatus({ busy: true, backend, nodeId, ...(demo ? { demo: true } : {}) });
     this.save();
     this.deps.store.beginTurn(text);
-    const prompt = demo ? text : this.buildPrompt(text, nodeId, opts.pins);
+    const prompt = demo ? text : this.buildPrompt(text, nodeId, opts.pins, attachments);
     try {
       if (demo) await this.runDemo(text, nodeId);
       else if (backend === 'claude') await this.runClaude(prompt, opts.model, nodeId);

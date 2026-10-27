@@ -1,6 +1,6 @@
 import { tick } from 'svelte';
 import type {
-  Actor, Backend, Batch, CampaignState, ChatMsg, ChatStatus, ImageJob, MapDoc, VttStatus, ChangeEvent, CommandResult, EdgeKind, GraphFile, Placement, Proposal, ServerMsg, StoryEdge, StoryNode,
+  Actor, Backend, Batch, CampaignState, ChatMsg, ChatStatus, ImageJob, MapDoc, VttStatus, ChangeEvent, CommandResult, EdgeKind, GraphFile, Placement, Proposal, ServerMsg, StoryEdge, StoryNode, ChatAttachment,
 } from '@pnp/shared';
 import { isAiActor as isAi } from '@pnp/shared';
 
@@ -141,7 +141,7 @@ export const app = $state({
 
   chat: [] as ChatMsg[],
   /** Unsent chat input per thread ('' = main chat, else node id) — the Chat component unmounts on tab switches. */
-  drafts: {} as Record<string, { text: string; pins: string[] }>,
+  drafts: {} as Record<string, { text: string; pins: string[]; files?: ChatAttachment[] }>,
   chatStatus: { busy: false } as ChatStatus,
   backend: (['agy', 'codex'].includes(ls('pnp.backend') ?? '') ? ls('pnp.backend') : 'claude') as Backend,
   models: { claude: ls('pnp.model.claude') ?? '', agy: ls('pnp.model.agy') ?? '', codex: ls('pnp.model.codex') ?? '' } as Record<Backend, string>,
@@ -338,7 +338,52 @@ export async function loadTracks(force = false) {
   app.tracks = Array.isArray(r) ? r : [];
 }
 
-export async function sendChat(text: string, opts: { nodeId?: string; pins?: string[] } = {}): Promise<boolean> {
+/** A picture of the campaign goes along with the next message of the main chat (the AI can then look at it). */
+export function attachToChat(file: string) {
+  const d = (app.drafts[''] ??= { text: '', pins: [] });
+  if (!(d.files ?? []).some((f) => f.id === file)) d.files = [...(d.files ?? []), { id: file, name: file, kind: 'image' }];
+  app.tab = 'chat';
+}
+
+/** Upload a file for the chat; pictures the browser can read but the AI might not (GIF, AVIF, BMP…) are sent as PNG. */
+export async function uploadChatFile(f: File): Promise<ChatAttachment | null> {
+  let body: Blob = f;
+  let name = f.name || 'pasted.png';
+  if (f.type.startsWith('image/') && !['image/png', 'image/jpeg', 'image/webp'].includes(f.type)) {
+    try {
+      const bmp = await createImageBitmap(f);
+      const c = document.createElement('canvas');
+      c.width = bmp.width;
+      c.height = bmp.height;
+      c.getContext('2d')!.drawImage(bmp, 0, 0);
+      body = await new Promise<Blob>((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('no picture'))), 'image/png'));
+      name = name.replace(/\.[a-z0-9]+$/i, '') + '.png';
+    } catch {
+      /* not a picture the browser can read: it goes as a file */
+    }
+  }
+  try {
+    const r = await fetch(`/api/chat/attachments?name=${encodeURIComponent(name)}`, { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body });
+    const j = (await r.json().catch(() => ({}))) as { ok?: boolean; error?: string; attachment?: ChatAttachment };
+    if (!r.ok || !j.attachment) throw new Error(j.error ?? `the server said ${r.status}`);
+    return j.attachment;
+  } catch (e) {
+    say(`${name}: ${e instanceof Error ? e.message : e}`);
+    return null;
+  }
+}
+
+/** The GM's answer to a question card of the AI. */
+export async function answerAsk(msgId: string, answers: string[][]): Promise<boolean> {
+  const res = await fetch('/api/chat/answer', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ msgId, answers, model: app.models[app.backend] || undefined }) });
+  if (!res.ok) {
+    say(((await res.json().catch(() => ({}))) as { error?: string }).error ?? 'Could not send the answer');
+    return false;
+  }
+  return true;
+}
+
+export async function sendChat(text: string, opts: { nodeId?: string; pins?: string[]; attachments?: string[] } = {}): Promise<boolean> {
   const res = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

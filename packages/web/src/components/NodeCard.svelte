@@ -1,12 +1,12 @@
 <script lang="ts">
   import { Handle, Position, type NodeProps } from '@xyflow/svelte';
-  import { DEFAULT_GROUP, NODE_TYPE_INFO, actorColor, actorName, clockOf, dieLabel, groupColor, isKnown, tableEntries, tableFaces, visitsOf, type StoryNode } from '@pnp/shared';
+  import { DEFAULT_GROUP, NODE_TYPE_INFO, actorColor, actorName, clockOf, dieLabel, groupColor, isKnown, mapIdsOf, tableEntries, tableFaces, visitsOf, type StoryNode } from '@pnp/shared';
   import { app, closeEnlarged, cmd, toggleEnlarge } from '../lib/app.svelte';
   import { md } from '../lib/md';
 
   const openMap = () => {
-    const mid = data.node.fields?.mapId;
-    if (typeof mid === 'string' && mid && !data.ghost) app.mapEditor = { mapId: mid };
+    const mid = mapIdsOf(data.node)[0];
+    if (mid && !data.ghost) app.mapEditor = { mapId: mid };
   };
   // double-click: the card is enlarged (notes, read-aloud, a bigger picture) until you double-click the empty canvas, pick another card, press Esc or use the ×
   const onDbl = () => {
@@ -33,7 +33,8 @@
   const painting = $derived(pending.find((j) => j.status === 'running'));
   const table = $derived(node.type === 'table' ? { faces: tableFaces(tableEntries(node)), last: typeof node.fields.last === 'string' ? node.fields.last : '' } : null);
   const proposal = $derived(app.proposals.find((p) => p.nodes.includes(id)));
-  const hasMap = $derived(typeof node.fields?.mapId === 'string' && !!node.fields.mapId);
+  const mapCount = $derived(node.fields ? mapIdsOf(node).length : 0);
+  const hasMap = $derived(mapCount > 0);
   const known = $derived(node.type === 'clue' && isKnown(node));
   const big = $derived(app.enlarged?.id === id && !data.ghost);
   const gmNotes = $derived(big ? md(node.body) : '');
@@ -78,7 +79,7 @@
   <div class="bar"></div>
   <div class="inner">
     <div class="top">
-      <span class="type"><i>{info.icon}</i>{info.label}{#if seq}<b class="seq" title="Order in which the players reached it">#{seq}</b>{/if}{#if known}<b class="known" title="The players know this">◉ known</b>{/if}{#if hasMap}<button class="mapbadge nodrag" title="This place has a map — click to open it" onclick={(e) => { e.stopPropagation(); openMap(); }}>⌗ map</button>{/if}</span>
+      <span class="type"><i>{info.icon}</i>{info.label}{#if seq}<b class="seq" title="Order in which the players reached it">#{seq}</b>{/if}{#if known}<b class="known" title="The players know this">◉ known</b>{/if}{#if hasMap}<button class="mapbadge nodrag" title={mapCount > 1 ? `This place has ${mapCount} maps — click to open the first (the others are in the side panel)` : 'This place has a map — click to open it'} onclick={(e) => { e.stopPropagation(); openMap(); }}>⌗ {mapCount > 1 ? `${mapCount} maps` : 'map'}</button>{/if}</span>
       {#if pending.length}<span class="gen" class:wait={!painting} title={painting ? 'An image is being generated' : 'An image is waiting in the queue'}>{painting ? `◌ ${Math.round(painting.progress * 100)}%` : '⏳ queued'}{#if pending.length > 1}{` ×${pending.length}`}{/if}</span>{/if}
       {#if node.status !== 'untouched'}
         <span class="status s-{node.status}">{node.status}</span>

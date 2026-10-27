@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
-  import { MODEL_FAMILIES, PICKABLE_FAMILIES, actorName, missingComponents, recommendedSettings, type ComfyConfig, type FamilyKey, type MapPaintMode, type ModelSettings, type StyleConfig } from '@pnp/shared';
-  import { app, cmd, say } from '../lib/app.svelte';
+  import { MODEL_FAMILIES, PICKABLE_FAMILIES, actorName, missingComponents, recommendedSettings, type ComfyConfig, type FamilyKey, type MapPaintMode, type ModelSettings, type PaintBackend, type StyleConfig } from '@pnp/shared';
+  import { app, chatMeta, cmd, say } from '../lib/app.svelte';
 
   let { onclose }: { onclose: () => void } = $props();
 
@@ -12,6 +12,8 @@
   let style = $state<StyleConfig | null>(null);
   let language = $state('de');
   let mapMode = $state<MapPaintMode>('quick');
+  let painter = $state<PaintBackend>({ backend: 'comfy', maps: false });
+  let painters = $state<{ agy: boolean; codex: boolean } | null>(null);
   let alive = $state<boolean | null>(null);
   let practice = $state(false);
   let opts = $state<Opts | null>(null);
@@ -21,7 +23,7 @@
   let modelsDirInput = $state(''); // the folder the GM named (saved for this computer)
   let loaded = $state(false);
   let baseline = ''; // what the server has: only real changes are saved
-  const snapshot = () => JSON.stringify([comfy, style, language, mapMode, modelsDirInput]);
+  const snapshot = () => JSON.stringify([comfy, style, language, mapMode, modelsDirInput, painter]);
   let status = $state('');
   let lastDir = ''; // the models folder the list was last read with
 
@@ -32,6 +34,8 @@
     style = j.style;
     language = j.language;
     mapMode = j.mapPaintMode === 'staged' ? 'staged' : 'quick';
+    painter = j.paintBackend ?? { backend: 'comfy', maps: false };
+    void chatMeta().then((m) => (painters = { agy: m.agy.installed, codex: m.codex.installed })).catch(() => {});
     alive = j.alive;
     practice = !!j.practice;
     opts = j.options;
@@ -60,7 +64,7 @@
     clearTimeout(timer);
     status = 'Saving…';
     timer = setTimeout(async () => {
-      const r = await fetch('/api/settings', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ comfy, style, language, mapPaintMode: mapMode, comfyModelsDir: modelsDirInput }) });
+      const r = await fetch('/api/settings', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ comfy, style, language, mapPaintMode: mapMode, comfyModelsDir: modelsDirInput, paintBackend: painter }) });
       if (r.ok) baseline = now;
       if (r.ok && modelsDirInput !== lastDir) { lastDir = modelsDirInput; void loadModels(); } // a new models folder: read the models again
       status = r.ok ? '✓ Saved automatically' : '⚠ save failed';
@@ -298,6 +302,28 @@
           <section class="wide practice"><p class="hint"><b>Practice campaign.</b> ComfyUI is simulated here: the pictures and maps are played back, and the Map painting choice below only applies while the tour runs. {alive ? 'A real ComfyUI answers on this address.' : 'No real ComfyUI answers on this address — everything except pictures works without one.'}</p></section>
         {/if}
         <section class="wide">
+          <h4>Image generation <span class="dim">who paints the pictures — saved for this computer, all campaigns</span></h4>
+          <div class="modes three" role="radiogroup" aria-label="Image generation">
+            <button class="mode" class:on={painter.backend === 'comfy'} role="radio" aria-checked={painter.backend === 'comfy'} onclick={() => (painter = { ...painter, backend: 'comfy' })}>
+              <b>ComfyUI <span class="tag">local</span></b>
+              <span>Your own graphics card with the model chosen above. Everything works with it: pictures, sketch → art, both ways of map painting.</span>
+            </button>
+            <button class="mode" class:on={painter.backend === 'agy'} role="radio" aria-checked={painter.backend === 'agy'} disabled={painters?.agy === false} onclick={() => (painter = { ...painter, backend: 'agy' })}>
+              <b>agy <span class="tag">experimental</span></b>
+              <span>The image tool of the Antigravity CLI paints instead (uses your Google account's quota).{painters?.agy === false ? ' — agy is not installed.' : ''}</span>
+            </button>
+            <button class="mode" class:on={painter.backend === 'codex'} role="radio" aria-checked={painter.backend === 'codex'} disabled={painters?.codex === false} onclick={() => (painter = { ...painter, backend: 'codex' })}>
+              <b>Codex <span class="tag">experimental</span></b>
+              <span>The image tool of the Codex CLI paints instead (uses your OpenAI plan).{painters?.codex === false ? ' — Codex is not installed.' : ''}</span>
+            </button>
+          </div>
+          {#if painter.backend !== 'comfy'}
+            <label class="chk"><input type="checkbox" checked={painter.maps} onchange={(e) => (painter = { ...painter, maps: e.currentTarget.checked })} /> Also battle maps and region maps <span class="dim">(experimental too: the map is painted in one go from its plan; the precise two-step way and repainting single groups keep using ComfyUI)</span></label>
+            <p class="hint">Experimental. agy paints with its own image subagent (like Illuminator's agy engine): about half a minute per picture, sketch → art works too; when its picture quota is used up the job says when it comes back. Codex is untested (not installed here): the app asks it to paint one picture and save it. If a job fails, it says what the CLI answered — switch back to ComfyUI then. Claude cannot paint pictures, so it is not offered.</p>
+          {/if}
+        </section>
+
+        <section class="wide">
           <h4>Map painting <span class="dim">how maps are painted — saved for this computer, all campaigns</span></h4>
           <div class="modes" data-tour="settings-map-modes" role="radiogroup" aria-label="Map painting">
             <button class="mode" class:on={mapMode === 'quick'} role="radio" aria-checked={mapMode === 'quick'} onclick={() => (mapMode = 'quick')}>
@@ -391,6 +417,8 @@
   .caps { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
   .row { display: flex; gap: 8px; }
   .modes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 8px 0 6px; }
+  .modes.three { grid-template-columns: 1fr 1fr 1fr; }
+  .mode:disabled { opacity: .5; cursor: not-allowed; }
   .mode { all: unset; box-sizing: border-box; cursor: pointer; display: flex; flex-direction: column; gap: 6px; padding: 11px 13px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--bg); font-size: 12px; line-height: 1.45; color: var(--text-dim); }
   .mode:hover { border-color: var(--text-faint); }
   .mode.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--bg)); }
@@ -407,5 +435,5 @@
   .spin { width: 11px; height: 11px; border: 2px solid rgba(10, 12, 17, 0.35); border-top-color: #0a0c11; border-radius: 50%; display: inline-block; animation: spin 0.7s linear infinite; vertical-align: -1px; margin-right: 4px; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .loading { padding: 40px; text-align: center; color: var(--text-faint); }
-  @media (max-width: 760px) { .body { grid-template-columns: 1fr; } .modes { grid-template-columns: 1fr; } }
+  @media (max-width: 760px) { .body { grid-template-columns: 1fr; } .modes, .modes.three { grid-template-columns: 1fr; } }
 </style>

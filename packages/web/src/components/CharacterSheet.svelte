@@ -8,7 +8,7 @@
 
   let { node }: { node: StoryNode } = $props();
 
-  const RESERVED = new Set(['role', 'preset', 'sheet', 'mapId', 'imagePrompt']);
+  const RESERVED = new Set(['role', 'preset', 'sheet', 'mapId', 'maps', 'imagePrompt']);
 
   const profile = $derived(app.vtt?.profile ?? null);
   const roles = $derived<CharacterRole[]>(profile?.characters?.roles ?? []);

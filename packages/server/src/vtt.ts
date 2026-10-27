@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { WebSocket } from 'ws';
 import {
-  BRIDGE_PROTOCOL, imageSize, renderSvg, pickRole, validateSheet, isCharacterNode, tokenKindOf,
+  BRIDGE_PROTOCOL, imageSize, mapIdsOf, renderSvg, pickRole, validateSheet, isCharacterNode, tokenKindOf,
   type BridgeFromVtt, type BridgeToVtt, type StoryNode, type CharacterRole, type UpfCharacter, type UpfHandout, type UpfImage, type UpfPush, type UpfScene,
   type UpfTrack, type VttProfile, type VttStatus,
 } from '@pnp/shared';
@@ -186,9 +186,11 @@ export { imageDimensions };
 
 /** Map render files of a node (they are listed among its images, but are not illustrations). */
 function renderFiles(store: Store, n: StoryNode): Set<string> {
-  const id = typeof n.fields.mapId === 'string' ? n.fields.mapId : '';
-  if (!id) return new Set();
-  try { return new Set(store.maps.get(id).renders); } catch { return new Set(); }
+  const out = new Set<string>();
+  for (const id of mapIdsOf(n)) {
+    try { for (const f of store.maps.get(id).renders) out.add(f); } catch { /* map file missing */ }
+  }
+  return out;
 }
 
 /** The images of a node that are pictures (not painted map renders) — what can be shown as a handout or backdrop. */
@@ -222,7 +224,7 @@ export function sceneFromImage(store: Store, imagesDir: string, nodeId: string, 
   const dim = imageDimensions(Buffer.from(image.b64, 'base64')) ?? { w: 1344, h: 768 };
   return {
     // a place with a map as well gets "(Bild)" so the VTT's scene list can tell the two apart
-    id: `${n.id}:${f}`, name: typeof n.fields.mapId === 'string' && n.fields.mapId ? `${n.title} (${store.state.meta.language === 'de' ? 'Bild' : 'picture'})` : n.title, image, width: dim.w, height: dim.h,
+    id: `${n.id}:${f}`, name: mapIdsOf(n).length ? `${n.title} (${store.state.meta.language === 'de' ? 'Bild' : 'picture'})` : n.title, image, width: dim.w, height: dim.h,
     grid: { type: 'square', size: Math.max(16, Math.round(Math.min(dim.w, dim.h) / 20)), offsetX: 0, offsetY: 0, unitsPerCell: 1, unit: 'ft', hidden: true },
     tokens: [], activate: opts.activate,
   };
@@ -289,7 +291,7 @@ export function portraitImage(dir: string, file: string, max = 256): UpfImage {
   return { name: `${path.basename(file, path.extname(file))}-portrait.png`, mime: 'image/png', b64: toPng(svg).toString('base64') };
 }
 
-const RESERVED_FIELDS = new Set(['role', 'preset', 'sheet', 'mapId', 'imagePrompt']);
+const RESERVED_FIELDS = new Set(['role', 'preset', 'sheet', 'mapId', 'maps', 'imagePrompt']);
 
 /** The sheet stored on a node. Nodes written before sheets existed keep loose fields (tier, level, …): treat those as the sheet. */
 export function sheetOf(n: StoryNode): Record<string, unknown> {
@@ -346,8 +348,8 @@ function sceneOfNpc(store: Store, nodeId: string, scenes: UpfScene[]): string | 
     if (e.kind !== 'belongs-to' || (e.from !== nodeId && e.to !== nodeId)) continue;
     const place = s.nodes[e.from === nodeId ? e.to : e.from];
     if (!place || place.trashed) continue;
-    const mapId = typeof place.fields.mapId === 'string' ? place.fields.mapId : '';
-    const hit = scenes.find((sc) => sc.id === mapId) ?? scenes.find((sc) => sc.id.startsWith(`${place.id}:`));
+    const maps = mapIdsOf(place);
+    const hit = scenes.find((sc) => maps.includes(sc.id)) ?? scenes.find((sc) => sc.id.startsWith(`${place.id}:`));
     if (hit) return hit.id;
   }
   return undefined;

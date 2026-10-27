@@ -36,7 +36,7 @@ export function seedDemo(store: Store) {
         command: 'create_node',
         args: {
           id: n.id, type: n.type, title: n.title, summary: n.summary, body: n.body, readAloud: n.readAloud, tags: n.tags, poolHint: n.poolHint,
-          fields: { ...n.fields, ...(withMap[n.id] ? { mapId: withMap[n.id] } : {}) },
+          fields: { ...n.fields, ...(withMap[n.id] ? { maps: [withMap[n.id]] } : {}) },
           ...(n.at ? { place: 'canvas', x: n.at.x, y: n.at.y } : {}),
         },
       })),

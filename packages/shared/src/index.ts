@@ -176,6 +176,13 @@ export const MAP_PAINT_MODES: Record<MapPaintMode, { label: string; short: strin
   staged: { label: 'Precise (2 steps)', short: 'precise' },
 };
 
+/** Who paints pictures: the local ComfyUI, or (experimental) the image tool of agy / Codex. `maps`: also battle and region maps. */
+export type ImageBackend = 'comfy' | 'agy' | 'codex';
+export interface PaintBackend {
+  backend: ImageBackend;
+  maps: boolean;
+}
+
 export type ImageKind = 'portrait' | 'scene' | 'item' | 'handout' | 'banner' | 'square';
 
 /** Sizes are multiples of 16 (latent grid). */
@@ -385,6 +392,7 @@ export interface Batch {
 
 export type Backend = 'claude' | 'agy' | 'codex';
 export const BACKENDS: Backend[] = ['claude', 'agy', 'codex'];
+export const isBackend = (v: unknown): v is Backend => BACKENDS.includes(v as Backend);
 
 export interface ChatMsg {
   id: string;
@@ -399,6 +407,31 @@ export interface ChatMsg {
   streaming?: boolean;
   /** Written by the welcome tour's scripted stand-in, not by a real AI. */
   demo?: boolean;
+  /** Files and pictures the GM sent along with this message (stored in the campaign's attachments/ folder, or a picture of the campaign). */
+  attachments?: ChatAttachment[];
+  /** The AI asks the GM (ask_user): choices shown as radio buttons / checkboxes; `answered` once the GM replied. */
+  ask?: ChatAsk;
+}
+
+export interface ChatAttachment {
+  /** `att-…` for an uploaded file, or the file name of a picture the campaign already has (images/) */
+  id: string;
+  name: string;
+  kind: 'image' | 'file';
+  size?: number;
+}
+
+export interface ChatAskQuestion {
+  question: string;
+  /** a short label (a few words) for the question, shown above it */
+  header?: string;
+  options: { label: string; description?: string }[];
+  /** checkboxes (several answers) instead of radio buttons */
+  multiple?: boolean;
+}
+export interface ChatAsk {
+  questions: ChatAskQuestion[];
+  answered?: { question: string; picked: string[] }[];
 }
 
 export interface ChatStatus {

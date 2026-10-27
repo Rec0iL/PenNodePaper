@@ -1,5 +1,5 @@
 import { z, type ZodRawShape } from 'zod';
-import { DEFAULT_GROUP, DEFAULT_STYLE, cameraKey, cameraProfile, cleanCameraText, controlLegend, customCamera, dropAiPrompts, groupSig, groupsOfMap, paintPlan, recordVariant, variantsOf, isAiActor, lookOnly, charactersOfPlace, isCharacterNode, tokenKindOf, dieLabel, soundsOf, entryLine, fragmentName, parseEntry, rollLog, rollTable, seeded, tableEntries, tableFaces, clockOf, lintStory, newSessionMark, nextPlayedSeq, parseScope, playedPath, playerWiki, sessionLabel, sessionOverview, sessionsOf, wikiMarkdown, slugify, storyStatus, validateSheet, visitsOf, type Visit } from '@pnp/shared';
+import { DEFAULT_GROUP, DEFAULT_STYLE, gridForPicture, sizeForPicture, mapIdsOf, withMaps, cameraKey, cameraProfile, cleanCameraText, controlLegend, customCamera, dropAiPrompts, groupSig, groupsOfMap, paintPlan, recordVariant, variantsOf, isAiActor, lookOnly, charactersOfPlace, isCharacterNode, tokenKindOf, dieLabel, soundsOf, entryLine, fragmentName, parseEntry, rollLog, rollTable, seeded, tableEntries, tableFaces, clockOf, lintStory, newSessionMark, nextPlayedSeq, parseScope, playedPath, playerWiki, sessionLabel, sessionOverview, sessionsOf, wikiMarkdown, slugify, storyStatus, validateSheet, visitsOf, type Visit } from '@pnp/shared';
 import type { Actor, Backend, DoorKind, EdgeKind, EdgeSide, ImageKind, MapDoc, NodeStatus, NodeType, PropKind, StoryEdge, StoryNode } from '@pnp/shared';
 import { DEFAULT_LABEL_STYLE, DOOR_KINDS, EDGE_KINDS, FRAME_PALETTE, EDGE_SIDES, IMAGE_KINDS, LABEL_PLACES, LABEL_SIZES, LABEL_STYLES, NODE_STATUSES, NODE_TYPES, PROP_KINDS, REGION_KINDS, cleanKind, isKnownKind } from '@pnp/shared';
 import { createHash } from 'node:crypto';
@@ -10,6 +10,7 @@ import { buildBundle, characterFromNode, mapCast, handoutFromNode, illustrations
 import { applyOps, groupProps, groupRegion, imageSize, lineStages, regionLegend, renderSvg, toPng, type MapOp } from './maps.js';
 import { composeVariant } from './variants.js';
 import { checkImport, keepImport } from './imagefile.js';
+import { forViewing, scalePicture } from './picture.js';
 import { propsRunner, readTerrain, mapLook, regionGroupInfos, regionStructuresRunner, regionTerrainRunner, repaintGroupRunner, terrainRunner, estimatePaint, type Fidelity } from './mappaint.js';
 import type { Store, Tx } from './store.js';
 import { printNames, printableCount } from './labels.js';
@@ -280,6 +281,67 @@ def({
     tx.putNode({ ...n, trashed: true, updatedAt: now() });
     tx.label = `Deleted ${describe(n)}`;
     return { id: a.id };
+  },
+});
+
+// The GM's clipboard (Ctrl+C / Ctrl+V on the canvas): copies of nodes with the connections among them, laid out as they were.
+const pastedNode = z.object({
+  key: z.string(),
+  dx: z.number(),
+  dy: z.number(),
+  node: z.object({
+    type: nodeTypeEnum, title: z.string().min(1), summary: z.string().optional(), body: z.string().optional(), readAloud: z.string().optional(),
+    tags: z.array(z.string()).optional(), fields: z.record(z.unknown()).optional(), images: z.array(z.string()).optional(), poolHint: z.string().optional(),
+  }),
+});
+def({
+  name: 'paste_nodes',
+  description: 'Paste copied nodes (the GM\'s clipboard): new nodes with new ids and the connections among them, placed around x/y on a canvas in their old layout (or into the pool). Pictures this campaign does not have are left out; maps are copied, so the copy can be changed without touching the original. Play state (visits, status) starts fresh.',
+  internal: true,
+  shape: {
+    nodes: z.array(pastedNode).min(1).max(300),
+    edges: z.array(z.object({ from: z.string(), to: z.string(), kind: edgeKindEnum, label: z.string().optional(), noTrail: z.boolean().optional() })).optional(),
+    place: z.enum(['canvas', 'pool']).optional(),
+    canvas: z.string().optional(),
+    x: z.number().optional(),
+    y: z.number().optional(),
+  },
+  run(tx, a) {
+    const canvas = a.canvas ?? tx.store.activeCanvasId();
+    const onCanvas = (a.place ?? 'canvas') === 'canvas';
+    if (onCanvas) checkCanvas(tx, canvas);
+    const ids = new Map<string, string>();
+    const t = now();
+    for (const p of a.nodes) {
+      if (ids.has(p.key)) throw new Error(`The key "${p.key}" is used twice`);
+      const id = tx.newNodeId(p.node.title);
+      ids.set(p.key, id);
+      // the copy's own maps, the pictures that exist here, and none of the original's played history
+      const { visits: _v, mapId: _m, maps: _l, ...rest } = (p.node.fields ?? {}) as Record<string, unknown>;
+      const maps = mapIdsOf({ fields: p.node.fields ?? {} }).flatMap((mid) => {
+        try {
+          return [tx.store.maps.copy(mid).id];
+        } catch {
+          return []; // a map of another campaign
+        }
+      });
+      const images = (p.node.images ?? []).filter((f) => fs.existsSync(path.join(tx.store.imagesDir, path.basename(f))));
+      tx.putNode({
+        id, type: p.node.type, title: p.node.title, summary: p.node.summary ?? '', body: p.node.body ?? '', readAloud: p.node.readAloud ?? '',
+        tags: p.node.tags ?? [], status: 'untouched', fields: withMaps(rest, maps), images, poolHint: p.node.poolHint ?? '', trashed: false, createdAt: t, updatedAt: t,
+      });
+      if (onCanvas) tx.setPlacement(id, { canvas, x: Math.round((a.x ?? 0) + p.dx), y: Math.round((a.y ?? 0) + p.dy) });
+    }
+    let edges = 0;
+    for (const e of a.edges ?? []) {
+      const from = ids.get(e.from), to = ids.get(e.to);
+      if (!from || !to || from === to) continue;
+      const made = link(tx, from, to, e.kind, e.label ?? '');
+      if (e.noTrail) tx.putEdge({ ...made, noTrail: true });
+      edges++;
+    }
+    tx.label = a.nodes.length === 1 ? `Pasted ${a.nodes[0].node.type} “${a.nodes[0].node.title}”` : `Pasted ${a.nodes.length} nodes`;
+    return { ids: [...ids.values()], keys: Object.fromEntries(ids), edges };
   },
 });
 
@@ -554,7 +616,7 @@ const imageKindEnum = z.enum(Object.keys(IMAGE_KINDS) as [ImageKind, ...ImageKin
 def({
   name: 'generate_image',
   description:
-    'Queue image generation (local ComfyUI, Krea 2) for a node. Returns immediately; finished images attach to the node automatically (first one becomes the cover) — check progress with image_queue. Write the prompt as natural-language prose describing subject, setting, composition, lighting and mood (no tag lists, no "masterpiece"); the campaign style is appended automatically. kind picks the format: portrait (character), scene (wide place), item, handout (document page), banner, square. variants 1-4 makes alternatives to choose from.',
+    'Queue image generation for a node (the local ComfyUI with Krea 2, or — when the GM chose it in Settings — the image tool of agy / Codex). Returns immediately; finished images attach to the node automatically (first one becomes the cover) — check progress with image_queue. Write the prompt as natural-language prose describing subject, setting, composition, lighting and mood (no tag lists, no "masterpiece"); the campaign style is appended automatically. kind picks the format: portrait (character), scene (wide place), item, handout (document page), banner, square. variants 1-4 makes alternatives to choose from.',
   shape: {
     nodeId: z.string(),
     prompt: z.string().min(8),
@@ -562,12 +624,143 @@ def({
     variants: z.number().int().min(1).max(4).optional(),
     seed: z.number().int().optional(),
     negative: z.string().optional(),
+    reference: z.string().optional().describe('Start from this picture instead of from noise (img2img): an attachment id (att-…) or an image file of the campaign. For a SKETCH the GM drew (a character, a room as a mood picture, an item) or "make this picture better / in our style": look at it with view_image first, then describe in the prompt what it SHOULD show, finished — the reference gives the composition, pose and layout.'),
+    strength: z.number().min(0.2).max(0.95).optional().describe('With reference: how far the new picture may move away from it — 0.35 keeps it close and only repaints, 0.6 (default) a clear new painting of the same layout, 0.75-0.85 for a rough pencil sketch that should become finished art (keeps pose and composition, not the scribbly lines).'),
   },
   run(tx, a) {
     if (!tx.store.images) throw new Error('Image generation is not available.');
     tx.requireNode(a.nodeId);
+    if (a.reference) {
+      const images = tx.store.images;
+      const { w, h } = IMAGE_KIND_SIZE(a.kind);
+      const ref = scalePicture(pictureBytes(tx, a.reference).bytes, w, h, 'fill');
+      const negative = a.negative ?? images.style().negative;
+      const prompt = images.fullPrompt(a.prompt);
+      const strength = a.strength ?? 0.6;
+      const jobs = images.enqueueCustom({
+        nodeId: a.nodeId, kind: a.kind ?? 'square', prompt: a.prompt, w, h, variants: a.variants, seed: a.seed, actor: tx.actor, fileTag: 'redo',
+        build: async (seed) => images.comfy.buildImg2Img(prompt, negative, await images.comfy.uploadImage(ref, `pnp-ref-${seed}.png`), seed, strength),
+        cli: {
+          prompt, negative, reference: ref,
+          referenceNote: strength >= 0.7 ? 'it is a rough sketch: keep its pose, composition and layout, but paint it as finished, detailed art (not the sketchy lines)' : 'keep it close: the same composition and content, painted better',
+        },
+      });
+      return { queued: jobs.map((j) => ({ jobId: j.id, seed: j.seed, size: `${j.w}x${j.h}` })), from: a.reference, note: 'Queued, starting from the reference picture. Images attach to the node when ready; use image_queue to check.' };
+    }
     const jobs = tx.store.images.enqueue({ ...a, actor: tx.actor });
     return { queued: jobs.map((j) => ({ jobId: j.id, seed: j.seed, size: `${j.w}x${j.h}` })), note: 'Queued. Images attach to the node when ready; use image_queue to check.' };
+  },
+});
+
+// ------------------------------- pictures & files from the chat, questions to the GM -------------------------------
+
+/** The bytes of a picture the AI refers to: an attachment of the chat (att-…) or an image file of the campaign. */
+function pictureBytes(tx: Tx, ref: string): { bytes: Buffer; name: string; from: 'attachment' | 'campaign' } {
+  if (/^att-/.test(ref)) {
+    const a = tx.store.attachments.get(ref);
+    if (a.kind !== 'image') throw new Error(`“${a.name}” is not a picture — read it with read_attachment.`);
+    return { bytes: tx.store.attachments.bytes(ref), name: a.name, from: 'attachment' };
+  }
+  const file = path.basename(ref);
+  const p = path.join(tx.store.imagesDir, file);
+  if (!fs.existsSync(p)) throw new Error(`No picture "${ref}": give an attachment id (att-…) from the GM's message or an image file of a node (get_node lists them).`);
+  return { bytes: fs.readFileSync(p), name: file, from: 'campaign' };
+}
+const IMAGE_KIND_SIZE = (k?: ImageKind) => IMAGE_KINDS[k ?? 'square'];
+
+def({
+  name: 'view_image',
+  description: 'Look at a picture: one the GM attached to the chat (attachment id att-…, listed in their message) or any image of the campaign (a file name from a node\'s images, e.g. from get_node). You get to see the picture itself. Use it before describing, judging, recreating or sorting pictures.',
+  readOnly: true,
+  shape: { file: z.string().describe('att-… or an image file name') },
+  run(tx, a) {
+    const p = pictureBytes(tx, a.file);
+    const v = forViewing(p.bytes);
+    const owners = p.from === 'campaign' ? Object.values(tx.state.nodes).filter((n) => !n.trashed && n.images.includes(path.basename(a.file))).map((n) => ({ id: n.id, title: n.title })) : [];
+    return { file: a.file, name: p.name, from: p.from, size: `${v.w}x${v.h}`, ...(owners.length ? { usedBy: owners } : {}), __images: [{ data: v.data, mimeType: v.mimeType }] };
+  },
+});
+
+def({
+  name: 'read_attachment',
+  description: 'The text of a file the GM attached to the chat (notes, .md/.txt, Word .docx, PDF). Pictures are looked at with view_image instead.',
+  readOnly: true,
+  shape: { id: z.string() },
+  run(tx, a) {
+    const att = tx.store.attachments.get(a.id);
+    const t = tx.store.attachments.text(a.id);
+    return { id: a.id, name: att.name, text: t.text, ...(t.truncated ? { note: 'Cut off after 60 000 characters.' } : {}) };
+  },
+});
+
+def({
+  name: 'add_picture_to_node',
+  description: 'Give a node a picture the GM attached to the chat (att-…) or one the campaign already has (an image file of another node). cover:true makes it the node\'s cover (first picture). To make a picture the MAP of a place, use map_from_picture instead.',
+  shape: { nodeId: z.string(), file: z.string(), cover: z.boolean().optional() },
+  run(tx, a) {
+    const n = tx.requireNode(a.nodeId);
+    const p = pictureBytes(tx, a.file);
+    const file = p.from === 'attachment' ? keepImport(tx.store.imagesDir, n.id, checkImport(p.bytes), 'chat') : path.basename(a.file);
+    const rest = n.images.filter((f) => f !== file);
+    tx.putNode({ ...n, images: a.cover ? [file, ...rest] : [...rest, file], updatedAt: now() });
+    tx.label = `Added a picture to ${describe(n)}`;
+    return { nodeId: n.id, file, cover: n.images.length === 0 || !!a.cover };
+  },
+});
+
+def({
+  name: 'map_from_picture',
+  description: 'Make a picture (attached to the chat, att-…, or a campaign image) the map of a place: a new map of the node, sized to the picture\'s proportions, with the picture as its painted picture (what goes to the VTT). kind "battle" = it gets a grid (cols columns, rows follow the picture; default 24) for tokens; "region" = an overland / town map without grid. The node keeps its other maps. The map has no drawn plan (rooms, shapes): it is the picture.',
+  shape: {
+    nodeId: z.string(),
+    file: z.string(),
+    kind: z.enum(['battle', 'region']),
+    name: z.string().optional(),
+    cols: z.number().int().min(4).max(80).optional(),
+  },
+  run(tx, a) {
+    const n = tx.requireNode(a.nodeId);
+    const p = pictureBytes(tx, a.file);
+    const img = checkImport(p.bytes);
+    const name = a.name?.trim() || (mapIdsOf(n).length ? `${n.title} — ${a.kind === 'battle' ? 'battle map' : 'region map'} ${mapIdsOf(n).length + 1}` : n.title);
+    let m: MapDoc;
+    if (a.kind === 'battle') {
+      const g = gridForPicture(img.w, img.h, a.cols ?? 24);
+      m = tx.store.maps.create(name, 'battle', g.cols, g.rows);
+    } else {
+      m = tx.store.maps.create(name, 'region');
+      m.size = sizeForPicture(img.w, img.h);
+    }
+    const want = imageSize(m);
+    const scaled = checkImport(scalePicture(img.bytes, want.w, want.h, 'stretch'));
+    const file = keepImport(tx.store.imagesDir, n.id, scaled, 'import-map');
+    m.renders = [file];
+    tx.store.maps.save(m, { backup: 'none' });
+    const maps = [...mapIdsOf(n), m.id];
+    tx.putNode({ ...n, fields: withMaps(n.fields, maps), images: n.images.includes(file) ? n.images : [...n.images, file], updatedAt: now() });
+    tx.store.emitMap(m, tx.actor);
+    tx.label = `Made a ${a.kind} map of “${n.title}” from a picture`;
+    return { mapId: m.id, nodeId: n.id, kind: m.kind, ...(m.kind === 'battle' ? { grid: `${m.grid.cols}x${m.grid.rows}` } : {}), picture: `${want.w}x${want.h}`, file };
+  },
+});
+
+const askOption = z.object({ label: z.string().min(1).max(80), description: z.string().max(200).optional() });
+def({
+  name: 'ask_user',
+  description: 'Ask the GM a question with choices (shown in the chat as radio buttons, or checkboxes with multiple:true; the GM can always type their own answer too). Use it when a decision is really the GM\'s — which of several directions, which nodes, a style — instead of guessing. 1-4 questions, 2-6 options each. After calling it END YOUR TURN: the answer arrives as the GM\'s next message.',
+  readOnly: true,
+  shape: {
+    questions: z.array(z.object({
+      question: z.string().min(3).max(400),
+      header: z.string().max(24).optional().describe('a short label, a few words'),
+      options: z.array(askOption).min(2).max(6),
+      multiple: z.boolean().optional(),
+    })).min(1).max(4),
+  },
+  run(tx, a) {
+    if (!tx.store.onAsk) throw new Error('There is no chat open to ask the GM in — ask in your reply instead.');
+    tx.store.onAsk({ questions: a.questions }, tx.actor);
+    return { shown: true, note: 'The question is shown to the GM. End your turn now (a short line is enough); their answer arrives as the next message.' };
   },
 });
 
@@ -675,8 +868,8 @@ def({
 });
 
 // ------------------------------- maps --------------------------------------
-// A map is a structured document (maps/<id>.json) attached to a node (fields.mapId) — usually a location
-// (fields.mapId). Battle maps are text rows of floor cells + doors/props; region
+// A map is a structured document (maps/<id>.json) attached to a node (fields.maps, a list: a place can have a region map
+// and several battle maps, one per floor) — usually a location. Battle maps are text rows of floor cells + doors/props; region
 // maps are colour-coded vector shapes. Renders paint them via ComfyUI img2img.
 
 const xy = { x: z.number(), y: z.number() };
@@ -730,7 +923,7 @@ const mapOps = z.discriminatedUnion('op', [
 
 const FIDELITY = { faithful: 0.62, balanced: 0.7, painterly: 0.8 } as const;
 
-const mapNodeId = (tx: Tx, mapId: string) => Object.values(tx.state.nodes).find((n) => !n.trashed && n.fields.mapId === mapId)?.id ?? null;
+const mapNodeId = (tx: Tx, mapId: string) => Object.values(tx.state.nodes).find((n) => !n.trashed && mapIdsOf(n).includes(mapId))?.id ?? null;
 
 def({
   name: 'list_maps',
@@ -745,7 +938,7 @@ def({
 def({
   name: 'create_map',
   description:
-    'Create an empty map attached to a location: with nodeId it becomes the map of that existing node (the node keeps its type and images — use this for "the map of the tavern"); without nodeId a new location node is created for it (in the pool, or on the canvas with place:"canvas"). kind "battle" = grid floor plan for tactical play (cols x rows cells, unit = feet per cell, default 6); kind "region" = free vector map (overland, world, a town) in a canvas of width x height px. Then fill it with edit_map and paint it with render_map.',
+    'Create an empty map attached to a location: with nodeId it becomes a map of that existing node (the node keeps its type, images and other maps — a place can have several maps, e.g. a region map plus one battle map per floor: use this for "the map of the tavern", "the cellar of the tavern"); without nodeId a new location node is created for it (in the pool, or on the canvas with place:"canvas"). kind "battle" = grid floor plan for tactical play (cols x rows cells, unit = feet per cell, default 6); kind "region" = free vector map (overland, world, a town) in a canvas of width x height px. Then fill it with edit_map and paint it with render_map.',
   shape: {
     name: z.string().min(1),
     kind: z.enum(['battle', 'region']).optional(),
@@ -756,13 +949,10 @@ def({
     height: z.number().int().min(256).max(2048).optional(),
     place: z.enum(['pool', 'canvas']).optional(),
     summary: z.string().optional(),
-    nodeId: z.string().optional().describe('Attach the new map to this existing node (usually a location) instead of creating a node. A node has at most one map.'),
+    nodeId: z.string().optional().describe('Attach the new map to this existing node (usually a location) instead of creating a node. It is added to the maps the node already has.'),
   },
   run(tx, a) {
-    if (a.nodeId) {
-      const n = tx.requireNode(a.nodeId);
-      if (typeof n.fields.mapId === 'string' && n.fields.mapId) throw new Error(`“${n.title}” already has a map (${n.fields.mapId}).`);
-    }
+    if (a.nodeId) tx.requireNode(a.nodeId);
     const m = tx.store.maps.create(a.name, a.kind ?? 'battle', a.cols, a.rows, a.unit);
     if (m.kind === 'region') {
       m.size = { w: Math.round((a.width ?? 1344) / 16) * 16, h: Math.round((a.height ?? 768) / 16) * 16 };
@@ -770,15 +960,16 @@ def({
     }
     if (a.nodeId) {
       const n = tx.requireNode(a.nodeId);
-      tx.putNode({ ...n, fields: { ...n.fields, mapId: m.id }, updatedAt: now() });
+      const maps = [...mapIdsOf(n), m.id];
+      tx.putNode({ ...n, fields: withMaps(n.fields, maps), updatedAt: now() });
       tx.label = `Created a map for “${n.title}”`;
-      return { mapId: m.id, nodeId: n.id, kind: m.kind };
+      return { mapId: m.id, nodeId: n.id, kind: m.kind, mapsOfNode: maps.length };
     }
     const id = tx.newNodeId(a.name);
     const t = now();
     tx.putNode({
       id, type: 'location', title: a.name, summary: a.summary ?? (m.kind === 'battle' ? `Battle map ${m.grid.cols}×${m.grid.rows}` : 'Region map'), body: '', readAloud: '', tags: [], status: 'untouched',
-      fields: { mapId: m.id }, images: [], poolHint: '', trashed: false, createdAt: t, updatedAt: t,
+      fields: { maps: [m.id] }, images: [], poolHint: '', trashed: false, createdAt: t, updatedAt: t,
     });
     if (a.place === 'canvas') {
       const canvas = tx.store.activeCanvasId();
@@ -910,7 +1101,9 @@ def({
     // shapes that no pass paints (a wall drawn as an area, a town drawn as a line…) are said right away
     const orphans = paintPlan(m).orphans;
     const notPainted = orphans.length ? { notPainted: orphans.map((o) => `${o.id} (${o.kind}): ${o.why}`) } : {};
-    if (images.mapMode() === 'staged') {
+    // agy / Codex paint maps in one go from the plan (Settings → Image generation, maps allowed); the precise way needs ComfyUI
+    const cliMaps = images.paintBackend('map') !== 'comfy';
+    if (images.mapMode() === 'staged' && !cliMaps) {
       // precise way, step 1: the empty terrain. Candidates stay with the map (not on the node) until the GM picks one.
       const place = a.prompt.trim();
       const fidelity: Fidelity = a.fidelity ?? 'balanced';
@@ -949,6 +1142,11 @@ def({
         const name = await images.comfy.uploadImage(png, `pnp-${m.id}.png`);
         return images.comfy.buildImg2Img(prompt, negative, name, seed, denoise);
       },
+      cli: {
+        prompt: `A painted ${m.kind === 'battle' ? 'battle map (tabletop RPG, seen straight from above)' : 'map of a region'}: ${a.prompt.trim().replace(/[.\s]+$/, '')}. ${mapLook(style, m)}`,
+        negative, reference: png,
+        referenceNote: `it is a flat colour-coded PLAN of this map (${m.kind === 'battle' ? controlLegend(m) : regionLegend(m)}). Paint the finished map with exactly this layout — everything where the plan has it, the same size and shape — but as a real painted map, without the flat plan colours, without text or grid`,
+      },
       after: (file) => {
         const cur = maps.get(m.id);
         cur.renders.push(file);
@@ -956,6 +1154,7 @@ def({
         tx.store.emitMap(cur, tx.actor);
       },
     });
+    if (cliMaps) return { queued: jobs.map((j) => ({ jobId: j.id, seed: j.seed })), size: `${w}x${h}`, paintedBy: images.paintBackend('map'), ...notPainted, note: `Queued: ${images.paintBackend('map')} paints the map in one go from its plan (the GM's setting; experimental — the precise two-step way and group repaints need ComfyUI). The result becomes the node cover; check with image_queue.` };
     return { queued: jobs.map((j) => ({ jobId: j.id, seed: j.seed })), size: `${w}x${h}`, denoise, ...notPainted, note: 'Queued (~1.5 min each). The result becomes the node cover; check with image_queue.' };
   },
 });
@@ -1230,11 +1429,16 @@ def({
 
 def({
   name: 'delete_map',
-  description: 'Delete a map document (its map node and rendered images stay; the node just loses its layout).',
+  description: 'Delete a map document (its node and the rendered images stay; the node just loses this map, its other maps stay).',
   shape: { mapId: z.string() },
   run(tx, a) {
-    tx.store.maps.get(a.mapId);
+    const m = tx.store.maps.get(a.mapId);
+    for (const n of Object.values(tx.state.nodes)) {
+      const ids = mapIdsOf(n);
+      if (ids.includes(a.mapId)) tx.putNode({ ...n, fields: withMaps(n.fields, ids.filter((x) => x !== a.mapId)), updatedAt: now() });
+    }
     tx.store.maps.remove(a.mapId);
+    tx.label = `Deleted the map “${m.name}”`;
     return { ok: true };
   },
 });
@@ -1274,7 +1478,7 @@ def({
 
 def({
   name: 'push_scene',
-  description: 'Show a place on the VTT\'s map screen. Two ways: (1) the tactical MAP of a location (mapId, or nodeId of a location that has a map): grid size, offset, token starts; uses the latest painted render (or the plan image with image:"plan"). (2) an ILLUSTRATION of a location as a backdrop (nodeId + imageFile, a file name from the node\'s images): no grid, no tokens — for the establishing shot before the battle map. activate:true shows it to the players right away; ask the GM which of the two they want shown first.',
+  description: 'Show a place on the VTT\'s map screen. Two ways: (1) the tactical MAP of a location (mapId, or nodeId of a location that has a map — then its first map; a place with several maps lists them in fields.maps): grid size, offset, token starts; uses the latest painted render (or the plan image with image:"plan"). (2) an ILLUSTRATION of a location as a backdrop (nodeId + imageFile, a file name from the node\'s images): no grid, no tokens — for the establishing shot before the battle map. activate:true shows it to the players right away; ask the GM which of the two they want shown first.',
   async: true,
   shape: {
     mapId: z.string().optional(), nodeId: z.string().optional(), imageFile: z.string().optional().describe('Show this illustration of the node as a backdrop instead of its map.'), image: z.enum(['painted', 'plan']).optional(), activate: z.boolean().optional(),
@@ -1288,7 +1492,7 @@ def({
       await tx.store.vtt.push({ kind: 'scene', payload: sc });
       return { pushed: 'scene', name: sc.name, as: 'backdrop (no grid)' };
     }
-    const mapId = a.mapId ?? (a.nodeId ? String(tx.requireNode(a.nodeId).fields.mapId ?? '') : '');
+    const mapId = a.mapId ?? (a.nodeId ? mapIdsOf(tx.requireNode(a.nodeId))[0] ?? '' : '');
     if (!mapId) throw new Error('Give a mapId, or the nodeId of a location that has a map.');
     const profile = tx.store.vtt.status().profile;
     // the characters that stand on the map go along (so their tokens are the VTT's own combat entries, not bare markers)
@@ -1338,7 +1542,7 @@ def({
     if (check.errors.length) throw new Error(`Sheet rejected: ${check.errors.join('; ')}`);
     const fields: Record<string, unknown> = { ...n.fields, role: role.id, sheet: check.sheet };
     if (preset) fields.preset = preset.id;
-    for (const k of Object.keys(fields)) if (!['role', 'preset', 'sheet', 'mapId'].includes(k) && k in check.sheet) delete fields[k]; // migrate loose legacy fields
+    for (const k of Object.keys(fields)) if (!['role', 'preset', 'sheet', 'mapId', 'maps'].includes(k) && k in check.sheet) delete fields[k]; // migrate loose legacy fields
     tx.putNode({ ...n, fields, updatedAt: now() });
     tx.label = `Edited the ${role.label} sheet of ${describe(n)}`;
     return { role: role.id, preset: preset?.id, sheet: check.sheet, warnings: check.warnings };

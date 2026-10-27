@@ -1,4 +1,4 @@
-import { guidanceOf, pickDemoScript, storyStatus, type CampaignState, type DemoScript } from '@pnp/shared';
+import { guidanceOf, mapIdsOf, pickDemoScript, storyStatus, type CampaignState, type DemoScript } from '@pnp/shared';
 import { PICTURES } from './assets.js';
 import type { Store } from '../store.js';
 
@@ -198,7 +198,7 @@ function imagePrompt(c: DemoCtx): Beat[] {
 
 function mapPrompt(c: DemoCtx): Beat[] {
   const node = c.nodeId ? c.store.state.nodes[c.nodeId] : undefined;
-  const mapId = typeof node?.fields.mapId === 'string' ? node.fields.mapId : '';
+  const mapId = mapIdsOf(node)[0] ?? '';
   return [
     { say: 'I will describe the place without furniture (that comes in step 2) and start the terrain.' },
     { tool: 'get_map', args: { mapId }, summary: mapId },

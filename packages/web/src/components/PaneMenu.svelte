@@ -1,6 +1,7 @@
 <script lang="ts">
   import { NODE_TYPES, NODE_TYPE_INFO, type NodeType } from '@pnp/shared';
   import { app, cmd, closeMenus, selectNode } from '../lib/app.svelte';
+  import { clip, pasteNodes } from '../lib/clipboard.svelte';
 
   const menu = $derived(app.paneMenu);
   const groups: { id: 'story' | 'world' | 'helper'; label: string }[] = [
@@ -32,6 +33,10 @@
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
   <div class="ctx-scrim" onclick={closeMenus} oncontextmenu={(e) => { e.preventDefault(); closeMenus(); }}></div>
   <div class="cmenu pane" role="menu" style="left:{pos.left}px; top:{pos.top}px">
+    {#if clip.count}
+      <button class="ctx-item primary" onclick={() => { const { fx, fy } = menu; closeMenus(); void pasteNodes(null, { x: fx, y: fy }); }}>📋 Paste {clip.count === 1 ? 'the node' : `${clip.count} nodes`} here{clip.cut ? ' (cut)' : ''} <span class="sp"></span><span class="dim">Ctrl+V</span></button>
+      <div class="ctx-sep"></div>
+    {/if}
     <div class="ctx-head"><b>Add here</b></div>
     <button class="ctx-item" onclick={addFrame}><span style="color:#7aa2ff">▭</span> Frame — a labelled area (act, district…)</button>
     <div class="ctx-sep"></div>

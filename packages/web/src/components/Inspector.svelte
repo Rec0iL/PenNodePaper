@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { dieLabel, entryLine, parseEntryLines, rollLog, tableEntries, tableFaces, tableRanges, FLOW_TYPES, VISITABLE_TYPES, STATUS_CHOICES, visitsOf, groupsOf, sheetToText, type CampaignState, clockOf, isKnown, NODE_TYPES, NODE_STATUSES, NODE_TYPE_INFO, EDGE_KINDS, EDGE_KIND_INFO, type EdgeKind, type NodeType, type NodeStatus } from '@pnp/shared';
+  import { dieLabel, entryLine, parseEntryLines, rollLog, tableEntries, tableFaces, tableRanges, FLOW_TYPES, VISITABLE_TYPES, STATUS_CHOICES, visitsOf, groupsOf, sheetToText, mapIdsOf, type CampaignState, clockOf, isKnown, NODE_TYPES, NODE_STATUSES, NODE_TYPE_INFO, EDGE_KINDS, EDGE_KIND_INFO, type EdgeKind, type NodeType, type NodeStatus } from '@pnp/shared';
   import { app, cmd, focusNode, openCrossLink, say, sendChat } from '../lib/app.svelte';
   import Chat from './Chat.svelte';
   import SoundCues from './SoundCues.svelte';
@@ -18,7 +18,7 @@
   // npc/enemy sheets are edited in the schema-driven sheet form; map ids / sheet internals never belong in the raw list
   const hasRoles = $derived(!!app.vtt?.profile?.characters?.roles?.length);
   // bookkeeping the app manages itself (where the players are, the sound list …): not for typing into
-  const genericHidden = $derived(new Set(['role', 'preset', 'sheet', 'mapId', 'imagePrompt', 'visits', 'sound', 'sounds', ...(node?.type === 'table' ? ['entries', 'last', 'history'] : []), ...(hasRoles && (node?.type === 'npc' || node?.type === 'enemy') ? Object.keys(node.fields) : [])]));
+  const genericHidden = $derived(new Set(['role', 'preset', 'sheet', 'mapId', 'maps', 'imagePrompt', 'visits', 'sound', 'sounds', ...(node?.type === 'table' ? ['entries', 'last', 'history'] : []), ...(hasRoles && (node?.type === 'npc' || node?.type === 'enemy') ? Object.keys(node.fields) : [])]));
 
   const clock = $derived(node?.type === 'clock' ? clockOf(node) : null);
   const customFields = $derived(node ? Object.entries(node.fields).filter(([k]) => !genericHidden.has(k)) : []);
@@ -36,15 +36,42 @@
   const isHere = $derived(!!node && visitsOf(node).some((v) => v.here));
   const setStatus = (status: string) => node && cmd('set_status', { nodeId: node.id, status });
 
-  const mapId = $derived(node && typeof node.fields.mapId === 'string' && node.fields.mapId ? node.fields.mapId : null);
-  // painted renders of the map are listed among the node's images, but they are the map, not pictures of the place
-  let mapRenders = $state<string[]>([]);
+  // a place can have several maps (a region map, a battle map per floor…); the first is its main map
+  const mapIds = $derived(node ? mapIdsOf(node) : []);
+  const mapId = $derived(mapIds[0] ?? null);
+  type MapInfo = { id: string; name: string; kind: 'battle' | 'region'; size: string; renders: string[]; missing?: boolean };
+  let maps = $state<MapInfo[]>([]);
+  // painted renders of the maps are listed among the node's images, but they are the maps, not pictures of the place
+  const mapRenders = $derived(maps.flatMap((m) => m.renders));
   $effect(() => {
-    const id = mapId;
+    const ids = mapIds;
     void app.mapEvent;
-    if (!id) { mapRenders = []; return; }
-    fetch(`/api/maps/${encodeURIComponent(id)}`).then((r) => (r.ok ? r.json() : null)).then((j) => { if (j && mapId === id) mapRenders = j.map.renders ?? []; }).catch(() => {});
+    if (!ids.length) { maps = []; return; }
+    const key = ids.join('|');
+    void Promise.all(ids.map(async (id): Promise<MapInfo> => {
+      try {
+        const r = await fetch(`/api/maps/${encodeURIComponent(id)}`);
+        if (!r.ok) throw new Error();
+        const m = (await r.json()).map;
+        return { id, name: m.name, kind: m.kind, size: m.kind === 'battle' ? `${m.grid.cols}×${m.grid.rows}` : `${m.size.w}×${m.size.h}px`, renders: m.renders ?? [] };
+      } catch {
+        return { id, name: id, kind: 'battle', size: '', renders: [], missing: true };
+      }
+    })).then((list) => { if (mapIds.join('|') === key) maps = list; });
   });
+  let pushMap = $state<string | null>(null);
+  const pushMapId = $derived(pushMap && mapIds.includes(pushMap) ? pushMap : mapId);
+  async function addMap(kind: 'battle' | 'region') {
+    if (!node) return;
+    const n = mapIds.length;
+    const name = n ? `${node.title} — ${kind === 'battle' ? 'battle map' : 'region map'} ${n + 1}` : node.title;
+    const r = await cmd<{ mapId: string }>('create_map', { name, nodeId: node.id, kind, ...(kind === 'battle' ? { cols: 24, rows: 18 } : {}) });
+    if (r) app.mapEditor = { mapId: r.mapId };
+  }
+  async function removeMap(m: MapInfo) {
+    if (!confirm(`Delete the map “${m.name}”? Its painted pictures stay among the images of this place.`)) return;
+    await cmd('delete_map', { mapId: m.id });
+  }
   const pictures = $derived(node ? node.images.filter((f) => !mapRenders.includes(f)) : []);
   const BACKDROP_TYPES = new Set(['location', 'scene', 'encounter', 'event', 'faction']);
   const hasText = $derived(!!node && !!(node.readAloud.trim() || node.summary.trim()));
@@ -213,16 +240,23 @@
 
     {#if node.type === 'location' || mapId}
       <div class="mapbox" data-tour="insp-map">
-        {#if mapId}
-          <button class="btn primary" onclick={() => (app.mapEditor = { mapId })}>⌗ Open the map of this place</button>
-          <span class="dim">or double-click the card</span>
+        {#if maps.length}
+          {#each maps as m, i (m.id)}
+            <div class="mapline" class:missing={m.missing}>
+              <button class="btn" class:primary={i === 0} disabled={m.missing} onclick={() => (app.mapEditor = { mapId: m.id })} title={m.missing ? 'The map file is missing' : 'Open this map'}>⌗ {m.name}</button>
+              <span class="dim small">{m.missing ? 'missing' : `${m.kind === 'battle' ? 'battle' : 'region'} · ${m.size}`}{i === 0 && maps.length > 1 ? ' · main' : ''}</span>
+              <span class="sp"></span>
+              <button class="lnk danger" title="Delete this map" onclick={() => removeMap(m)}>✕</button>
+            </div>
+          {/each}
+          <span class="dim small">Double-clicking the card opens the first map.</span>
         {:else}
           <div class="dim">This place has no map yet — the pictures below are enough for a place you only describe.</div>
-          <div class="mrow">
-            <button class="btn" onclick={() => cmd('create_map', { name: node.title, nodeId: node.id, kind: 'battle', cols: 24, rows: 18 })}>＋ Battle map</button>
-            <button class="btn" onclick={() => cmd('create_map', { name: node.title, nodeId: node.id, kind: 'region' })}>＋ Region map</button>
-          </div>
         {/if}
+        <div class="mrow">
+          <button class="btn" onclick={() => addMap('battle')}>＋ Battle map</button>
+          <button class="btn" onclick={() => addMap('region')}>＋ Region map</button>
+        </div>
       </div>
     {/if}
 
@@ -313,7 +347,12 @@
         {/if}
         {#if mapId}
           <label class="chk"><input type="checkbox" bind:checked={withPlayers} /> include player start markers {prof?.push.scene?.playerStarts ? '(this VTT wants them)' : '(testing — players are added in the VTT)'}</label>
-          <button class="btn primary" disabled={!prof || pushing || !prof.push.scene} onclick={() => push('push_scene', { nodeId: node.id, activate: reveal, includePlayers: withPlayers || undefined })}>⌗ Map screen: the battle map (grid + tokens)</button>
+          {#if maps.length > 1}
+            <select class="field" value={pushMapId} onchange={(e) => (pushMap = e.currentTarget.value)} title="Which map goes to the VTT">
+              {#each maps.filter((m) => !m.missing) as m (m.id)}<option value={m.id}>{m.name} ({m.kind})</option>{/each}
+            </select>
+          {/if}
+          <button class="btn primary" disabled={!prof || pushing || !prof.push.scene} onclick={() => push('push_scene', { nodeId: node.id, ...(pushMapId ? { mapId: pushMapId } : {}), activate: reveal, includePlayers: withPlayers || undefined })}>⌗ Map screen: {maps.length > 1 ? 'this map' : 'the battle map'} (grid + tokens)</button>
         {/if}
         {#if node.type === 'npc' || node.type === 'enemy'}
           <button class="btn" disabled={!prof || pushing || !prof.push.character} onclick={() => push('push_character', { nodeId: node.id })}>Push {node.type === 'enemy' ? 'enemy' : 'NPC'} to the VTT (sheet)</button>
@@ -409,6 +448,11 @@
   .lnk { background: none; border: 0; color: var(--accent); padding: 0; text-decoration: underline; }
   .mapbox { margin-top: 12px; padding: 10px; background: var(--bg-3); border: 1px solid var(--line-2); border-left: 2px solid var(--tc); border-radius: 8px; display: grid; gap: 6px; }
   .mrow { display: flex; gap: 6px; }
+  .mapline { display: flex; align-items: center; gap: 8px; }
+  .mapline .btn { max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mapline .sp { flex: 1; }
+  .mapline.missing { opacity: .6; }
+  .lnk.danger { color: #ff8a8a; }
   .read { min-height: 80px; font-style: italic; }
   .mono { font-family: var(--mono); font-size: 12px; }
   .diff { animation: pnp-diffglow 7s ease-out; border-color: var(--accent); }

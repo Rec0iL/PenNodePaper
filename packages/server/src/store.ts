@@ -1,11 +1,12 @@
 import { randomBytes } from 'node:crypto';
 import type {
-  Actor, Batch, CampaignState, ChangeEvent, FieldDiff, Frame, Proposal, ImageJob, ImageKind, MapDoc, Placement, StoryEdge, StoryNode, StyleConfig,
+  Actor, Batch, CampaignState, ChangeEvent, FieldDiff, Frame, Proposal, ImageJob, ImageKind, MapDoc, Placement, StoryEdge, StoryNode, StyleConfig, ChatAsk,
 } from '@pnp/shared';
 import { isAiActor, slugify } from '@pnp/shared';
 import path from 'node:path';
 import { Persistence } from './persistence.js';
 import { Backups } from './backup.js';
+import { Attachments } from './attachments.js';
 import { Imports } from './imports.js';
 import { FileBooks } from './rulebook.js';
 import { Maps } from './maps.js';
@@ -47,6 +48,8 @@ export interface ImageApi {
   comfy: import('./comfy.js').Comfy;
   /** How battle maps are painted (the user's setting for this computer). */
   mapMode(): import('@pnp/shared').MapPaintMode;
+  /** Who paints pictures of this kind: ComfyUI, or (experimental) agy / Codex. */
+  paintBackend(kind: 'image' | 'map'): import('@pnp/shared').ImageBackend;
   /** Runs the AI once, headless (used to write painting prompts). */
   ai: import('./style.js').Runner;
   estimateSeconds(megapixels: number): { seconds: number; measured: boolean };
@@ -183,6 +186,10 @@ export class Store {
   readonly imports: Imports;
   /** Snapshots, restore, mirror folder and git for this campaign. */
   readonly backups: Backups;
+  /** Files and pictures the GM sent in the chat. */
+  readonly attachments: Attachments;
+  /** The chat shows a question of the AI to the GM (set by the server; ask_user calls it). */
+  onAsk: ((ask: ChatAsk, actor: Actor) => void) | null = null;
 
   constructor(readonly persistence: Persistence) {
     this.state = persistence.load();
@@ -198,6 +205,7 @@ export class Store {
     };
     this.world = new FileBooks(path.join(persistence.dir, 'worldbooks'));
     this.imports = new Imports(path.join(persistence.dir, 'imports'));
+    this.attachments = new Attachments(path.join(persistence.dir, 'attachments'));
     this.backups = new Backups(persistence.dir, () => this.state.meta.backup);
   }
 

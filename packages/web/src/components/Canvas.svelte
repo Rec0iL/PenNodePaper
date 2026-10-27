@@ -6,6 +6,7 @@
   } from '@xyflow/svelte';
   import { NODE_TYPES, NODE_TYPE_INFO, EDGE_KINDS, EDGE_KIND_INFO, groupColor, labelSize, routeEdges, trailEdges, type CampaignState, type NodeType, type EdgeKind, type RBox, type REdge } from '@pnp/shared';
   import { routing, setRouting } from '../lib/routing.svelte';
+  import { notePointer } from '../lib/clipboard.svelte';
   import { NODE_H, NODE_W, app, closeEnlarged, cmd, closeMenus, noteZoom, openCrossLink, screenToFlow, selectEdge, selectFrame, selectNode, viewCenter } from '../lib/app.svelte';
   import NodeCard from './NodeCard.svelte';
   import StoryEdge from './StoryEdge.svelte';
@@ -292,7 +293,7 @@
 
 <svelte:window onkeydown={(e) => e.key === 'Escape' && app.enlarged && closeEnlarged()} />
 
-<div class="canvas" data-tour="canvas" role="application" {ondragover} {ondrop} ondblclick={onPaneDblClick}>
+<div class="canvas" data-tour="canvas" role="application" {ondragover} {ondrop} ondblclick={onPaneDblClick} onpointermove={notePointer}>
   <SvelteFlow
     bind:nodes
     bind:edges
