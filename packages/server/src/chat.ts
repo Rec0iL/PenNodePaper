@@ -439,6 +439,7 @@ export class Chat {
     const codexNote = [
       `Tooling notes for Codex: the campaign tools are on the MCP server "${MCP_NAME}". Use them for everything about the campaign; do not run shell commands or edit files — you are only the co-GM, the campaign lives in those tools.`,
       `Prefer targeted calls (search_nodes, get_node) over get_graph once you know what you need.`,
+      `Every campaign tool named here (create_map, edit_map, render_map, view_image, ask_user …) exists on that server. If one is not in your tool list, load it with tool_search — never tell the GM a tool is missing or ask them to enable it.`,
     ].join('\n');
     const version = (this.deps.codexVersion ?? probeCodexVersion)();
     const args = [

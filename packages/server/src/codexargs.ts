@@ -4,6 +4,11 @@
 //   < 0.77   URL servers (streamable HTTP) only work with `experimental_use_rmcp_client=true`.
 //   >= 0.77  that client is the only one; the flag is gone and Codex warns "unrecognized configuration setting".
 //   >= 0.120 `mcp_servers.<id>.tools.<tool>.approval_mode`;   >= 0.130 `mcp_servers.<id>.default_tools_approval_mode`.
+//   >= 0.147 `mcp_servers.<id>.omit_tools_from`;  >= 0.158 `mcp_servers.<id>.tool_input_schema_max_bytes`.
+// A newer Codex hands a model that can search tools only a `tool_search` tool and keeps the MCP tools "deferred" behind it
+// (its prompt for that speaks of apps/connectors): the model then believes edit_map & co. do not exist. omit_tools_from
+// ["deferred"] puts them in the tool list directly. And it squeezes every tool schema above 5 000 bytes (descriptions
+// dropped, nested parts collapsed): edit_map's op list (~18 kB) would lose what each op looks like, so the limit is raised.
 // A Codex that has MCP approvals stops every tool call in `exec` ("MCP tool call requires approval, but approval policy is
 // never"): `approval_policy="never"` does not cover MCP, and nobody is there to click. Marking the tools as approved is the
 // only way through short of dropping the read-only sandbox (openai/codex#24135, still open). The server's config rejects
@@ -19,6 +24,8 @@ export function parseCodexVersion(text: string | null | undefined): CodexVersion
 }
 
 const atLeast = (v: CodexVersion, minor: number) => v[0] > 0 || v[1] >= minor;
+/** room for the largest tool schema (edit_map, ~18 kB) */
+const SCHEMA_BYTES = 64_000;
 
 /** What this Codex needs for the app's MCP server, as `-c key=value` pairs (a JSON string is a valid TOML basic string). */
 export function codexMcpArgs(name: string, port: number, version: CodexVersion | null, tools: string[]): string[] {
@@ -35,6 +42,9 @@ export function codexMcpArgs(name: string, port: number, version: CodexVersion |
   if (version && atLeast(version, 120) && tools.length) {
     out.push(`mcp_servers.${name}.tools={${tools.map((t) => `${toml(t)}={approval_mode="approve"}`).join(',')}}`);
   }
+  // every campaign tool in the model's own tool list, not behind tool_search; whole schemas, not squeezed ones
+  if (version && atLeast(version, 147)) out.push(`mcp_servers.${name}.omit_tools_from=["deferred"]`);
+  if (version && atLeast(version, 158)) out.push(`mcp_servers.${name}.tool_input_schema_max_bytes=${SCHEMA_BYTES}`);
   return out.flatMap((kv) => ['-c', kv]);
 }
 

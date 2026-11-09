@@ -49,6 +49,16 @@ describe('codexMcpArgs', () => {
     expect(kv(run('1.0.0'))).toEqual(expect.arrayContaining([perTool, server]));
   });
 
+  it('puts the campaign tools in the tool list directly (not behind tool_search) from 0.147, and keeps big schemas whole from 0.158', () => {
+    const direct = 'mcp_servers.pennodepaper.omit_tools_from=["deferred"]';
+    const whole = 'mcp_servers.pennodepaper.tool_input_schema_max_bytes=64000';
+    for (const v of [null, '0.130.0', '0.146.9']) expect(kv(run(v)).filter((x) => /omit_tools_from|schema_max_bytes/.test(x))).toEqual([]);
+    expect(kv(run('0.147.0'))).toContain(direct);
+    expect(kv(run('0.157.0'))).not.toContain(whole);
+    expect(kv(run('0.158.0'))).toEqual(expect.arrayContaining([direct, whole]));
+    expect(kv(run('0.167.0'))).toEqual(expect.arrayContaining([direct, whole]));
+  });
+
   it('writes valid TOML: every value after the first = parses as a string, number-free inline table or boolean', () => {
     const a = kv(run('0.160.0'));
     const table = a.find((x) => x.includes('.tools='))!;
