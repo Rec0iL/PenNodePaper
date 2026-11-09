@@ -149,7 +149,7 @@
       <button class="btn" onclick={askAi} title="Let the AI write the prompt and generate">✦ AI writes it</button>
       <label class="btn" class:off={importing} title="Add pictures you already have (PNG, JPEG, WebP, GIF…) — they join the gallery like generated ones">{importing ? 'Importing…' : '⬆ Import'}<input type="file" accept={PICTURE_ACCEPT} multiple hidden disabled={importing} data-tour="img-import" onchange={importFiles} /></label>
       {#if busy}<button class="btn ghost" onclick={cancel}>stop</button>{/if}
-      <button class="btn ghost gear" onclick={() => (app.settingsOpen = true)} title="ComfyUI & style settings">⚙</button>
+      <button class="btn ghost gear" onclick={() => (app.settingsOpen = true)} title="Image settings: who paints (ComfyUI, agy or Codex) and the style">⚙</button>
     </div>
     <p class="hint">The campaign style is appended automatically.</p>
   </div>

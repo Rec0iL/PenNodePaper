@@ -195,6 +195,28 @@
 
     {#if comfy && style}
       <div class="body">
+        <section class="wide" data-tour="settings-painter">
+          <h4>Image generation <span class="dim">who paints the pictures — saved for this computer, all campaigns</span></h4>
+          <div class="modes three" role="radiogroup" aria-label="Image generation">
+            <button class="mode" class:on={painter.backend === 'comfy'} role="radio" aria-checked={painter.backend === 'comfy'} onclick={() => (painter = { ...painter, backend: 'comfy' })}>
+              <b>ComfyUI <span class="tag">local</span></b>
+              <span>Your own graphics card with the model set in the ComfyUI section below. Everything works with it: pictures, sketch → art, both ways of map painting.</span>
+            </button>
+            <button class="mode" class:on={painter.backend === 'agy'} role="radio" aria-checked={painter.backend === 'agy'} disabled={painters?.agy === false} onclick={() => (painter = { ...painter, backend: 'agy' })}>
+              <b>agy <span class="tag">experimental</span></b>
+              <span>The image tool of the Antigravity CLI paints instead (uses your Google account's quota).{painters?.agy === false ? ' — agy is not installed.' : ''}</span>
+            </button>
+            <button class="mode" class:on={painter.backend === 'codex'} role="radio" aria-checked={painter.backend === 'codex'} disabled={painters?.codex === false} onclick={() => (painter = { ...painter, backend: 'codex' })}>
+              <b>Codex <span class="tag">experimental</span></b>
+              <span>The image tool of the Codex CLI paints instead (uses your OpenAI plan).{painters?.codex === false ? ' — Codex is not installed.' : ''}</span>
+            </button>
+          </div>
+          {#if painter.backend !== 'comfy'}
+            <label class="chk"><input type="checkbox" checked={painter.maps} onchange={(e) => (painter = { ...painter, maps: e.currentTarget.checked })} /> Also battle maps and region maps <span class="dim">(experimental too: the map is painted in one go from its plan; the precise two-step way and repainting single groups keep using ComfyUI)</span></label>
+            <p class="hint">Experimental. agy paints with its own image subagent (like Illuminator's agy engine): about half a minute per picture, sketch → art works too; when its picture quota is used up the job says when it comes back. Codex is untested (not installed here): the app asks it to paint one picture and save it. If a job fails, it says what the CLI answered — switch back to ComfyUI then. Claude cannot paint pictures, so it is not offered.</p>
+          {/if}
+        </section>
+
         <section>
           <h4>Campaign</h4>
           <div class="label">Language <span class="dim">— the AI writes campaign content in this language</span></div>
@@ -222,6 +244,9 @@
           <h4>ComfyUI <span class="dot" class:on={alive} class:off={alive === false}></span>
             <span class="dim">{alive === null ? 'checking…' : alive ? 'connected' : 'not reachable'}</span>
             <button class="btn ghost sm" onclick={load}>↻ test</button></h4>
+          {#if painter.backend !== 'comfy'}
+            <p class="hint">{painter.backend === 'agy' ? 'agy' : 'Codex'} paints the pictures{painter.maps ? ' and maps' : ''} now. ComfyUI is still used for {painter.maps ? 'the precise two-step map painting and for repainting single groups' : 'maps'}.</p>
+          {/if}
           <div class="label">URL</div>
           <input class="field" bind:value={comfy.url} />
 
@@ -301,27 +326,6 @@
         {#if practice}
           <section class="wide practice"><p class="hint"><b>Practice campaign.</b> ComfyUI is simulated here: the pictures and maps are played back, and the Map painting choice below only applies while the tour runs. {alive ? 'A real ComfyUI answers on this address.' : 'No real ComfyUI answers on this address — everything except pictures works without one.'}</p></section>
         {/if}
-        <section class="wide">
-          <h4>Image generation <span class="dim">who paints the pictures — saved for this computer, all campaigns</span></h4>
-          <div class="modes three" role="radiogroup" aria-label="Image generation">
-            <button class="mode" class:on={painter.backend === 'comfy'} role="radio" aria-checked={painter.backend === 'comfy'} onclick={() => (painter = { ...painter, backend: 'comfy' })}>
-              <b>ComfyUI <span class="tag">local</span></b>
-              <span>Your own graphics card with the model chosen above. Everything works with it: pictures, sketch → art, both ways of map painting.</span>
-            </button>
-            <button class="mode" class:on={painter.backend === 'agy'} role="radio" aria-checked={painter.backend === 'agy'} disabled={painters?.agy === false} onclick={() => (painter = { ...painter, backend: 'agy' })}>
-              <b>agy <span class="tag">experimental</span></b>
-              <span>The image tool of the Antigravity CLI paints instead (uses your Google account's quota).{painters?.agy === false ? ' — agy is not installed.' : ''}</span>
-            </button>
-            <button class="mode" class:on={painter.backend === 'codex'} role="radio" aria-checked={painter.backend === 'codex'} disabled={painters?.codex === false} onclick={() => (painter = { ...painter, backend: 'codex' })}>
-              <b>Codex <span class="tag">experimental</span></b>
-              <span>The image tool of the Codex CLI paints instead (uses your OpenAI plan).{painters?.codex === false ? ' — Codex is not installed.' : ''}</span>
-            </button>
-          </div>
-          {#if painter.backend !== 'comfy'}
-            <label class="chk"><input type="checkbox" checked={painter.maps} onchange={(e) => (painter = { ...painter, maps: e.currentTarget.checked })} /> Also battle maps and region maps <span class="dim">(experimental too: the map is painted in one go from its plan; the precise two-step way and repainting single groups keep using ComfyUI)</span></label>
-            <p class="hint">Experimental. agy paints with its own image subagent (like Illuminator's agy engine): about half a minute per picture, sketch → art works too; when its picture quota is used up the job says when it comes back. Codex is untested (not installed here): the app asks it to paint one picture and save it. If a job fails, it says what the CLI answered — switch back to ComfyUI then. Claude cannot paint pictures, so it is not offered.</p>
-          {/if}
-        </section>
 
         <section class="wide">
           <h4>Map painting <span class="dim">how maps are painted — saved for this computer, all campaigns</span></h4>
