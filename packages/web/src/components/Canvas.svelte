@@ -293,14 +293,13 @@
 
 <svelte:window onkeydown={(e) => e.key === 'Escape' && app.enlarged && closeEnlarged()} />
 
-<div class="canvas" data-tour="canvas" role="application" {ondragover} {ondrop} ondblclick={onPaneDblClick} onpointermove={notePointer}>
+<div class="canvas" class:waiting={!app.camReady} data-tour="canvas" role="application" {ondragover} {ondrop} ondblclick={onPaneDblClick} onpointermove={notePointer}>
   <SvelteFlow
     bind:nodes
     bind:edges
     {nodeTypes}
     {edgeTypes}
     colorMode="dark"
-    fitView
     minZoom={0.1}
     maxZoom={2.2}
     snapGrid={[10, 10]}
@@ -387,6 +386,8 @@
 </div>
 
 <style>
+  .canvas :global(.svelte-flow__viewport) { transition: opacity 0.25s; }
+  .canvas.waiting :global(.svelte-flow__viewport) { opacity: 0; }
   .canvas { height: 100%; width: 100%; position: relative; }
   /* the review bar sits under the add bar and is as wide as it: they can never overlap, however narrow the window */
   :global(.tlpanel) { max-width: calc(100% - 30px); }

@@ -120,8 +120,10 @@ export const app = $state({
   backupsOpen: false,
   /** Level of detail of the canvas: far zoomed out, cards show only their big title (semantic zoom). */
   lod: 'full' as 'full' | 'compact',
-  /** Bumped when another campaign is opened: the canvas re-fits its view. */
-  fitNonce: 0,
+  /** Bumped when a campaign is shown for the first time (a fresh start, another campaign): the canvas plays its opening camera. */
+  introNonce: 0,
+  /** false until the opening camera shows the whole canvas: the cards stay hidden instead of flashing at the wrong spot */
+  camReady: false,
   /** Image-queue dropdown in the top bar. */
   queueOpen: false,
   /** Right-click menu on a node (screen position). */
@@ -178,15 +180,50 @@ export const registerFlowApi = (a: FlowApi | null) => {
   flowApi = a;
 };
 
-// ---- every canvas keeps the camera it was left with (this session) --------------------------------------
+// ---- every canvas keeps the camera it was left with ---------------------------------------------------------
 // Opening a canvas by its tab brings the camera back to where the GM left it (the whole canvas on the first visit).
 // A jump (a connection's marker, a search hit, the AI) leaves the old canvas just the same, but arrives at its node.
+// Kept in this browser per campaign, so a reload comes back to the canvas and the spot it was left at: the opening
+// camera shows the whole canvas first and then glides in (see FlowBridge).
 type View = { x: number; y: number; zoom: number };
 const views = new Map<string, View>();
 let restoreFor: string | null = null;
+/** this browser's storage key of the campaign that is open ('' until one is loaded) */
+let viewKey = '';
+let introPending = false;
+let saveTimer: ReturnType<typeof setTimeout> | undefined;
+function saveViews() {
+  if (!viewKey) return;
+  clearTimeout(saveTimer);
+  const key = viewKey;
+  saveTimer = setTimeout(() => remember(key, JSON.stringify({ active: app.canvasId, views: Object.fromEntries(views) })), 300);
+}
+/** A campaign is shown: its cameras and the canvas that was open come back from this browser. */
+function loadViews(key: string, canvases: { id: string }[]) {
+  viewKey = key;
+  views.clear();
+  restoreFor = null;
+  try {
+    const j = JSON.parse(ls(key) ?? '{}') as { active?: string; views?: Record<string, View> };
+    for (const [id, v] of Object.entries(j.views ?? {})) {
+      if (canvases.some((c) => c.id === id) && [v?.x, v?.y, v?.zoom].every((n) => typeof n === 'number' && Number.isFinite(n))) views.set(id, v);
+    }
+    if (j.active && canvases.some((c) => c.id === j.active)) app.canvasId = j.active;
+  } catch { /* nothing kept, or not readable: start with the whole canvas */ }
+  introPending = true;
+  app.camReady = false;
+  app.introNonce++;
+}
+/** The opening camera, once per fresh start: where the canvas was left (null = just show the whole canvas). */
+export function takeIntro(): { view: View | null } | null {
+  if (!introPending) return null;
+  introPending = false;
+  return { view: views.get(app.canvasId) ?? null };
+}
 /** The camera came to rest: it is where this canvas was left (so far). */
 export function noteView(v: View) {
   views.set(app.canvasId, { x: v.x, y: v.y, zoom: v.zoom });
+  saveViews();
 }
 /** Before the view leaves the canvas it shows: keep its camera, even if it never came to rest after the last move. */
 function rememberView() {
@@ -519,7 +556,7 @@ function resetForCampaign() {
   app.canvasId = 'main';
   views.clear();
   restoreFor = null;
-  app.fitNonce++;
+  viewKey = ''; // the next load is a fresh start of the other campaign: it plays the opening camera
 }
 
 function load(state: CampaignState) {
@@ -527,6 +564,9 @@ function load(state: CampaignState) {
   app.nodes = state.nodes;
   app.graph = state.graph;
   if (!state.graph.canvases.some((c) => c.id === app.canvasId)) app.canvasId = state.graph.canvases[0]?.id ?? 'main';
+  // a campaign shown for the first time in this page (not a reconnect): its kept cameras, and the opening camera
+  const key = `pnp.views.${state.meta.name}|${state.meta.createdAt}`;
+  if (key !== viewKey) loadViews(key, state.graph.canvases);
   app.loaded = true;
 }
 
