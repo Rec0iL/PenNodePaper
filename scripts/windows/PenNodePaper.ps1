@@ -137,7 +137,12 @@ function Update-App {
     $n = Invoke-Git @('rev-list', '--count', 'HEAD..@{u}')
     if (-not $n.Ok -or -not $n.Out -or [int]$n.Out -eq 0) { return }
     $dirty = Invoke-Git @('status', '--porcelain', '--untracked-files=no')
-    if ($dirty.Out) { Set-Notice 'An update is available, but this copy has changes of its own - it was not updated.'; return }
+    # package-lock.json is written by npm itself (an npm install with another npm version, or after a package.json change that
+    # came without its lock file): that is no change of the GM's. It is put back; npm makes it again from package.json.
+    # (each line is "XY path"; the output is trimmed, so the first line may have lost its leading blank)
+    $own = @(($dirty.Out -split "`n") | ForEach-Object { $_.Trim() -replace '^\S{1,2}\s+', '' } | Where-Object { $_ -and $_ -ne 'package-lock.json' })
+    if ($own.Count) { Set-Notice 'An update is available, but this copy has changes of its own - it was not updated.'; return }
+    if ($dirty.Out) { [void](Invoke-Git @('checkout', '--', 'package-lock.json')) }
     $before = (Invoke-Git @('rev-parse', 'HEAD')).Out
     $pull = Invoke-Git @('pull', '--ff-only', '--quiet') 180000
     if (-not $pull.Ok) { Set-Notice "The update did not work: $($pull.Err)"; return }
