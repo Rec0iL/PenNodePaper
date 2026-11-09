@@ -8,7 +8,9 @@
     PenNodePaper.ps1 open         open the browser (starts the server if it is not running)
     PenNodePaper.ps1 status       print whether it runs
     PenNodePaper.ps1 lan-info     show the address and access code for other devices
-    PenNodePaper.ps1 tray         run just the tray icon (status dot, start / stop, LAN mode, address and code)
+    PenNodePaper.ps1 tray         run just the tray icon (status dot, start / stop, LAN mode, address and code, updates)
+    PenNodePaper.ps1 check-update look for a new version (git fetch) and offer to install it; -Quiet only notes the result
+    PenNodePaper.ps1 update       install the new version (a running server is stopped and started again in its mode)
     PenNodePaper.ps1 selftest     check what this script needs and print it (run it from a terminal)
 
   Run it with:  powershell -NoProfile -ExecutionPolicy Bypass -File PenNodePaper.ps1 start
@@ -21,7 +23,8 @@
 #>
 param(
   [string]$Command = 'tray',
-  [string]$Message = ''
+  [string]$Message = '',
+  [switch]$Quiet
 )
 
 $ErrorActionPreference = 'Stop'
@@ -35,6 +38,8 @@ $State = Join-Path $env:LOCALAPPDATA 'pennodepaper'
 $PidFile = Join-Path $State 'server.pid'
 $Log = Join-Path $State 'server.log'
 $NoticeFile = Join-Path $State 'notice.txt'
+$UpdatesFile = Join-Path $State 'updates.txt'      # how many new changes the last look found (0 = up to date)
+$TrayRestartFile = Join-Path $State 'tray-restart' # an update brought a new script: the tray icon starts itself again
 $IcoPath = Join-Path $PSScriptRoot 'pennodepaper.ico'
 $PsExe = (Get-Process -Id $PID).Path
 New-Item -ItemType Directory -Force -Path $State | Out-Null
@@ -127,31 +132,107 @@ function Set-Notice([string]$text) {
   Add-Content -Path (Join-Path $State 'launcher.log') -Value "$(Get-Date -Format s) $text"
 }
 
-# Looks for a new version and installs it. Never stops the start: whatever is wrong, the version that is here is started.
+# ---------------------------------------------------------------- updates ---
+
+function Get-Version {
+  $v = Invoke-Git @('log', '-1', '--format=%h  %cd', '--date=short')
+  if ($v.Ok -and $v.Out) { return $v.Out }
+  return 'unknown'
+}
+
+# How many new changes there are (git fetch); throws a sentence when it cannot look. Notes the number for the tray icon.
+function Get-NewChanges {
+  if (-not (Test-Path (Join-Path $Root '.git'))) { throw 'This installation is not a git checkout - update it by hand.' }
+  if (-not (Get-Command git.exe -ErrorAction SilentlyContinue)) { throw 'git.exe was not found - updates need Git for Windows.' }
+  if (-not (Invoke-Git @('fetch', '--quiet')).Ok) { throw 'Could not reach the update server (offline?).' }
+  $n = Invoke-Git @('rev-list', '--count', 'HEAD..@{u}')
+  if (-not $n.Ok -or -not $n.Out) { throw 'This copy follows no branch to update from.' }
+  $count = [int]$n.Out
+  Set-Content -Path $UpdatesFile -Value $count
+  return $count
+}
+
+# Changes of the user's own, which block an update. package-lock.json is written by npm itself (an npm install with
+# another npm version, or after a package.json change that came without its lock file): it does not count.
+function Get-OwnChanges {
+  $dirty = Invoke-Git @('status', '--porcelain', '--untracked-files=no')
+  # each line is "XY path"; the output is trimmed, so the first line may have lost its leading blank
+  return @(($dirty.Out -split "`n") | ForEach-Object { $_.Trim() -replace '^\S{1,2}\s+', '' } | Where-Object { $_ -and $_ -ne 'package-lock.json' })
+}
+
+# git pull and npm install when a package list changed (the UI is rebuilt by Start-Server's staleness check). Throws a sentence.
+function Install-Update {
+  if ((Get-OwnChanges).Count) { throw 'An update is ready, but this copy has changes of its own - it was not updated.' }
+  [void](Invoke-Git @('checkout', '--', 'package-lock.json'))
+  $before = (Invoke-Git @('rev-parse', 'HEAD')).Out
+  $pull = Invoke-Git @('pull', '--ff-only', '--quiet') 180000
+  if (-not $pull.Ok) { throw "The update did not work: $($pull.Err)" }
+  $changed = (Invoke-Git @('diff', '--name-only', $before, 'HEAD')).Out
+  if ($changed -match '(?m)(^|/)package(-lock)?\.json$') {
+    Invoke-Npm @('install') 'npm install'
+    [void](Invoke-Git @('checkout', '--', 'package-lock.json'))
+  }
+  Set-Content -Path $UpdatesFile -Value 0
+}
+
+# On every start of the server: a new version is installed first. Never stops the start: whatever is wrong, the version
+# that is here is started.
 function Update-App {
   if ($env:PNP_NO_UPDATE -eq '1') { return }
   try {
-    if (-not (Test-Path (Join-Path $Root '.git'))) { return }
-    if (-not (Get-Command git.exe -ErrorAction SilentlyContinue)) { return }
-    if (-not (Invoke-Git @('fetch', '--quiet')).Ok) { return } # offline
-    $n = Invoke-Git @('rev-list', '--count', 'HEAD..@{u}')
-    if (-not $n.Ok -or -not $n.Out -or [int]$n.Out -eq 0) { return }
-    $dirty = Invoke-Git @('status', '--porcelain', '--untracked-files=no')
-    # package-lock.json is written by npm itself (an npm install with another npm version, or after a package.json change that
-    # came without its lock file): that is no change of the GM's. It is put back; npm makes it again from package.json.
-    # (each line is "XY path"; the output is trimmed, so the first line may have lost its leading blank)
-    $own = @(($dirty.Out -split "`n") | ForEach-Object { $_.Trim() -replace '^\S{1,2}\s+', '' } | Where-Object { $_ -and $_ -ne 'package-lock.json' })
-    if ($own.Count) { Set-Notice 'An update is available, but this copy has changes of its own - it was not updated.'; return }
-    if ($dirty.Out) { [void](Invoke-Git @('checkout', '--', 'package-lock.json')) }
-    $before = (Invoke-Git @('rev-parse', 'HEAD')).Out
-    $pull = Invoke-Git @('pull', '--ff-only', '--quiet') 180000
-    if (-not $pull.Ok) { Set-Notice "The update did not work: $($pull.Err)"; return }
-    $changed = (Invoke-Git @('diff', '--name-only', $before, 'HEAD')).Out
-    if ($changed -match '(^|/)package(-lock)?\.json') { Invoke-Npm @('install') 'npm install' }
-    Set-Notice "PenNodePaper was updated ($($n.Out) new change$(if ([int]$n.Out -ne 1) { 's' }))."
+    $n = Get-NewChanges
   } catch {
+    # offline, no git checkout, no git.exe: no news worth a balloon on every start
     Add-Content -Path (Join-Path $State 'launcher.log') -Value "$(Get-Date -Format s) update skipped: $($_.Exception.Message)"
+    return
   }
+  if ($n -eq 0) { return }
+  try {
+    Install-Update
+    Set-Notice "PenNodePaper was updated ($n new change$(if ($n -ne 1) { 's' }))."
+  } catch {
+    Set-Notice $_.Exception.Message
+  }
+}
+
+# From the tray icon: install the new version now. A running server is stopped for it and started again in its mode
+# (also when the update failed). One at a time.
+function Invoke-Update {
+  $lock = New-Object System.Threading.Mutex($false, 'Local\PenNodePaperUpdate')
+  if (-not $lock.WaitOne(0, $false)) { return }
+  try {
+    $n = Get-NewChanges
+    if ($n -eq 0) { Set-Notice "PenNodePaper is already up to date ($(Get-Version))."; return }
+    $mode = Get-Mode (Get-Status)
+    if ($mode -ne 'down') { Set-Notice 'Updating - PenNodePaper restarts in a moment...'; Stop-Server }
+    try {
+      Install-Update
+    } finally {
+      if ($mode -ne 'down') { $env:PNP_NO_UPDATE = '1'; Start-Server ($mode -eq 'lan') }
+    }
+    Set-Notice "PenNodePaper was updated to $(Get-Version) ($n new change$(if ($n -ne 1) { 's' }))."
+    Set-Content -Path $TrayRestartFile -Value '1'
+  } finally {
+    $lock.ReleaseMutex()
+  }
+}
+
+function Invoke-CheckUpdate {
+  try { $n = Get-NewChanges } catch { if (-not $Quiet) { Show-Box $_.Exception.Message 'Warning' }; return }
+  if ($Quiet) { return }
+  if ($n -eq 0) { Show-Box "PenNodePaper is up to date ($(Get-Version))."; return }
+  if (Confirm-Update $n) { Invoke-Update }
+}
+
+function Confirm-Update([int]$n) {
+  $running = $null -ne (Get-Status)
+  $text = "A new version is ready ($n new change$(if ($n -ne 1) { 's' })). Install it now?`n`n" +
+    $(if ($running) { 'PenNodePaper restarts for it; an AI or image job that is running is stopped. ' } else { '' }) + 'Your campaigns are not touched.'
+  return ([System.Windows.Forms.MessageBox]::Show($text, 'PenNodePaper - update', 'YesNo', 'Question') -eq 'Yes')
+}
+
+function Get-PendingUpdates {
+  try { return [int]((Get-Content $UpdatesFile -ErrorAction Stop | Select-Object -First 1)) } catch { return 0 }
 }
 
 # run this script again (hidden, detached) with another command: the tray menu and the start-up use it
@@ -280,6 +361,10 @@ function Build-Menu {
   $script:Menu.Items.Clear()
   [void](Add-MenuItem (Get-Header $st) $null $false)
   [void](Add-MenuItem 'Open PenNodePaper' { Start-Self @('open') })
+  $n = Get-PendingUpdates
+  if ($n -gt 0) {
+    [void](Add-MenuItem ("Update now - $n new change" + $(if ($n -ne 1) { 's' } else { '' })) { if (Confirm-Update (Get-PendingUpdates)) { $script:Notify.ShowBalloonTip(3000, 'PenNodePaper', 'Updating...', 'Info'); Start-Self @('update') } })
+  }
   [void]$script:Menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
   if ($mode -eq 'down') {
     [void](Add-MenuItem 'Start' { Start-Self @('start') })
@@ -301,6 +386,8 @@ function Build-Menu {
     [void](Add-MenuItem 'Show address and code...' { Show-LanInfo })
   }
   [void]$script:Menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+  [void](Add-MenuItem ("Version " + $script:Version) $null $false)
+  [void](Add-MenuItem 'Check for updates' { Start-Self @('check-update') })
   [void](Add-MenuItem 'Quit tray icon' { $script:Notify.Visible = $false; [System.Windows.Forms.Application]::Exit() })
 }
 
@@ -315,7 +402,7 @@ function Show-Notice {
 
 function Update-Tray {
   $st = Get-Status
-  $sig = if ($null -eq $st) { 'down' } else { ($st | ConvertTo-Json -Compress) }
+  $sig = $(if ($null -eq $st) { 'down' } else { ($st | ConvertTo-Json -Compress) }) + "|$(Get-PendingUpdates)"
   if ($sig -eq $script:Sig) { return }
   $script:Sig = $sig
   $script:St = $st
@@ -329,6 +416,8 @@ function Invoke-Tray {
   if (-not $script:Mutex.WaitOne(0, $false)) { return } # one tray icon at a time
   $script:Sig = $null
   $script:St = $null
+  $script:Version = Get-Version
+  $script:Ticks = 0
   $script:Menu = New-Object System.Windows.Forms.ContextMenuStrip
   $script:Notify = New-Object System.Windows.Forms.NotifyIcon
   $script:Notify.ContextMenuStrip = $script:Menu
@@ -341,7 +430,23 @@ function Invoke-Tray {
   if ($Message) { $script:Notify.ShowBalloonTip(5000, 'PenNodePaper', $Message, 'Info') } else { Show-Notice }
   $script:Timer = New-Object System.Windows.Forms.Timer
   $script:Timer.Interval = 3000
-  $script:Timer.add_Tick({ try { Update-Tray; Show-Notice } catch { } })
+  $script:Timer.add_Tick({
+    try {
+      Update-Tray
+      Show-Notice
+      # look for a new version now and then, quietly (20 s after the start, then every 6 hours): the menu offers it
+      $script:Ticks++
+      if ($script:Ticks -eq 7 -or $script:Ticks % 7200 -eq 0) { Start-Self @('check-update', '-Quiet') }
+      # an update brought a new version of this script: this icon makes way for one that runs it
+      if (Test-Path $TrayRestartFile) {
+        Remove-Item $TrayRestartFile -ErrorAction SilentlyContinue
+        $script:Notify.Visible = $false
+        $script:Mutex.ReleaseMutex()
+        Start-Self @('tray')
+        [System.Windows.Forms.Application]::Exit()
+      }
+    } catch { }
+  })
   $script:Timer.Start()
   [System.Windows.Forms.Application]::Run()
   $script:Notify.Dispose()
@@ -358,6 +463,7 @@ function Invoke-SelfTest {
   Write-Host "UI built    : $(-not (Test-NeedsBuild))"
   Write-Host "Icon file   : $(Test-Path $IcoPath)"
   Write-Host "Updates     : $(if ($env:PNP_NO_UPDATE -eq '1') { 'off (PNP_NO_UPDATE)' } elseif ((Test-Path (Join-Path $Root '.git')) -and (Get-Command git.exe -ErrorAction SilentlyContinue)) { 'on (git)' } else { 'not possible here (no git checkout / no git.exe)' })"
+  Write-Host "Version     : $(Get-Version)"
   Write-Host "State/log   : $State"
   $st = Get-Status
   Write-Host "Server      : $(Get-Header $st)"
@@ -376,8 +482,10 @@ try {
     'status' { $st = Get-Status; Write-Host (Get-Header $st); if ($null -eq $st) { exit 1 } }
     'lan-info' { Show-LanInfo }
     'tray' { Invoke-Tray }
+    'check-update' { Invoke-CheckUpdate }
+    'update' { Invoke-Update }
     'selftest' { Invoke-SelfTest }
-    default { Write-Host 'usage: PenNodePaper.ps1 start | start-lan | stop | open | status | lan-info | tray | selftest'; exit 2 }
+    default { Write-Host 'usage: PenNodePaper.ps1 start | start-lan | stop | open | status | lan-info | tray | check-update [-Quiet] | update | selftest'; exit 2 }
   }
 } catch {
   $text = $_.Exception.Message

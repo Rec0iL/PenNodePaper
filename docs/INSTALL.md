@@ -361,7 +361,9 @@ npm run dev        # or: npm run build && npm start
 
 Your campaigns live in `campaigns/` (not tracked by git), so updating never touches them.
 
-On Windows the [Start menu launcher](#-windows) does all of this by itself when it starts the server.
+Or let the **tray icon** do it (Linux, macOS and Windows): it looks for a new version now and then, shows **Update now — N new changes** when there is one, and **Check for updates** looks right away. Updating installs it (`git pull`, `npm install` when a package list changed), restarts a running PenNodePaper in its mode and rebuilds the UI. The same from a terminal: `./scripts/pennodepaper.sh check-update` / `update` (Linux, macOS). A copy with changes of your own is never updated over them.
+
+On Windows the [Start menu launcher](#-windows) also does all of this by itself when it starts the server.
 
 ---
 
