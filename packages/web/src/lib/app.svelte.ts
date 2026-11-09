@@ -168,6 +168,7 @@ const camera = (p: { x: number; y: number }, duration = 500) =>
 /** Follow the AI to a placement — onto its canvas first, if it works on another one than the GM is looking at. */
 const cameraTo = async (pl: { canvas: string; x: number; y: number }, duration = 450) => {
   if (pl.canvas !== app.canvasId) {
+    rememberView();
     app.canvasId = pl.canvas;
     await tick();
   }
@@ -176,6 +177,35 @@ const cameraTo = async (pl: { canvas: string; x: number; y: number }, duration =
 export const registerFlowApi = (a: FlowApi | null) => {
   flowApi = a;
 };
+
+// ---- every canvas keeps the camera it was left with (this session) --------------------------------------
+// Opening a canvas by its tab brings the camera back to where the GM left it (the whole canvas on the first visit).
+// A jump (a connection's marker, a search hit, the AI) leaves the old canvas just the same, but arrives at its node.
+type View = { x: number; y: number; zoom: number };
+const views = new Map<string, View>();
+let restoreFor: string | null = null;
+/** The camera came to rest: it is where this canvas was left (so far). */
+export function noteView(v: View) {
+  views.set(app.canvasId, { x: v.x, y: v.y, zoom: v.zoom });
+}
+/** Before the view leaves the canvas it shows: keep its camera, even if it never came to rest after the last move. */
+function rememberView() {
+  const v = flowApi?.getViewport();
+  if (v) noteView(v);
+}
+/** Open a canvas the plain way (its tab): the camera returns to where it was on that canvas. */
+export function openCanvas(id: string) {
+  if (id === app.canvasId) return;
+  rememberView();
+  restoreFor = id;
+  app.canvasId = id;
+}
+/** For the canvas: the camera to put back now that `id` is shown — a saved one, 'fit' on a first visit, null after a jump. */
+export function takeRestore(id: string): View | 'fit' | null {
+  if (restoreFor !== id) return null;
+  restoreFor = null;
+  return views.get(id) ?? 'fit';
+}
 /** The canvas' camera (the welcome tour watches and moves it). */
 export const flow = () => flowApi;
 
@@ -438,6 +468,7 @@ export function focusEdge(id: string) {
   const a = app.graph.placements[e.from];
   const b = app.graph.placements[e.to];
   if (a && b) {
+    if (a.canvas !== app.canvasId) rememberView();
     app.canvasId = a.canvas;
     void flowApi?.centerOn({ x: (a.x + b.x) / 2 + NODE_W / 2, y: (a.y + b.y) / 2 + NODE_H / 2 }, 500);
   }
@@ -447,6 +478,7 @@ export function focusNode(id: string) {
   const p = app.graph.placements[id];
   selectNode(id);
   if (p) {
+    if (p.canvas !== app.canvasId) rememberView();
     app.canvasId = p.canvas;
     void flowApi?.centerOn({ x: p.x + NODE_W / 2, y: p.y + NODE_H / 2 }, 500);
   }
@@ -455,6 +487,7 @@ export function focusNode(id: string) {
 /** The AI asked to show a canvas (show_canvas). Respects "follow the AI". */
 function showCanvasFromAi(canvas: string, nodeId: string | undefined, actor: Actor) {
   if (!app.followAi || !app.graph.canvases.some((c) => c.id === canvas)) return;
+  if (canvas !== app.canvasId) rememberView();
   app.canvasId = canvas;
   const p = nodeId ? app.graph.placements[nodeId] : undefined;
   if (nodeId && p) {
@@ -484,6 +517,8 @@ function resetForCampaign() {
   app.ghosts = {};
   app.edgeGhosts = {};
   app.canvasId = 'main';
+  views.clear();
+  restoreFor = null;
   app.fitNonce++;
 }
 

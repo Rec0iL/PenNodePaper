@@ -3,7 +3,7 @@
   import { SvelteFlowProvider } from '@xyflow/svelte';
   import { AI_CREATIVITY, lintStory, type AiCreativity, type CampaignState } from '@pnp/shared';
   import { installClipboard } from './lib/clipboard.svelte';
-  import { activeJobs, app, cmd, connect, redo, resetPanelSize, selectNode, setPanelSize, undo } from './lib/app.svelte';
+  import { activeJobs, app, cmd, connect, openCanvas, redo, resetPanelSize, selectNode, setPanelSize, undo } from './lib/app.svelte';
   import { IMAGE_KINDS } from '@pnp/shared';
   import Activity from './components/Activity.svelte';
   import Canvas from './components/Canvas.svelte';
@@ -148,7 +148,7 @@
     } else if (node) {
       e.preventDefault();
       const r = await cmd('place_on_canvas', { id: node, canvas: id });
-      if (r) app.canvasId = id;
+      if (r) openCanvas(id);
     }
   }
   async function renameTab() {
@@ -180,7 +180,7 @@
     const name = prompt('Name of the new canvas (e.g. “Act II”)');
     if (!name?.trim()) return;
     const r = await cmd<{ id: string }>('create_canvas', { name: name.trim() });
-    if (r) app.canvasId = r.id;
+    if (r) openCanvas(r.id);
   }
 </script>
 
@@ -193,7 +193,7 @@
       {#each app.graph.canvases as c (c.id)}
         <button class:on={app.canvasId === c.id} class:dropt={dropTab === c.id} class:dragging={dragTab === c.id} data-canvas-tab={c.id} draggable="true"
           title="Click to open · right-click for more · drag to reorder · drop a pool node here to put it on this canvas · drag a connection from a node onto this tab to connect it to a node on this canvas"
-          onclick={() => (app.canvasId = c.id)} oncontextmenu={(e) => { e.preventDefault(); tabMenu = { id: c.id, x: e.clientX, y: e.clientY }; delOpen = false; }}
+          onclick={() => openCanvas(c.id)} oncontextmenu={(e) => { e.preventDefault(); tabMenu = { id: c.id, x: e.clientX, y: e.clientY }; delOpen = false; }}
           ondragstart={(e) => { dragTab = c.id; e.dataTransfer?.setData('application/x-pnp-tab', c.id); if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'; }}
           ondragend={() => { dragTab = null; dropTab = null; }}
           ondragover={(e) => { const t = e.dataTransfer?.types ?? []; if (t.includes('application/x-pnp-tab') || t.includes('application/x-pnp-node')) { e.preventDefault(); dropTab = c.id; } }}
@@ -256,7 +256,7 @@
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
   <div class="ctx-scrim" onclick={closeTabMenu} oncontextmenu={(e) => { e.preventDefault(); closeTabMenu(); }}></div>
   <div class="cmenu" role="menu" style="left:{Math.max(8, Math.min(tabMenu.x, innerW - 248))}px; top:{tabMenu.y + 6}px; width:240px">
-    <button class="ctx-item" role="menuitem" onclick={() => { const id = tabMenu!.id; closeTabMenu(); app.canvasId = id; }}>Open</button>
+    <button class="ctx-item" role="menuitem" onclick={() => { const id = tabMenu!.id; closeTabMenu(); openCanvas(id); }}>Open</button>
     <button class="ctx-item" role="menuitem" onclick={renameTab}>✎ Rename…</button>
     <button class="ctx-item" role="menuitem" disabled={tabIdx <= 0} onclick={() => moveTab(-1)}>← Move left</button>
     <button class="ctx-item" role="menuitem" disabled={tabIdx < 0 || tabIdx >= app.graph.canvases.length - 1} onclick={() => moveTab(1)}>→ Move right</button>

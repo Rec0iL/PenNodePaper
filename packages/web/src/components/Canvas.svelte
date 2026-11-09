@@ -7,7 +7,7 @@
   import { NODE_TYPES, NODE_TYPE_INFO, EDGE_KINDS, EDGE_KIND_INFO, groupColor, labelSize, routeEdges, trailEdges, type CampaignState, type NodeType, type EdgeKind, type RBox, type REdge } from '@pnp/shared';
   import { routing, setRouting } from '../lib/routing.svelte';
   import { notePointer } from '../lib/clipboard.svelte';
-  import { NODE_H, NODE_W, app, closeEnlarged, cmd, closeMenus, noteZoom, openCrossLink, screenToFlow, selectEdge, selectFrame, selectNode, viewCenter } from '../lib/app.svelte';
+  import { NODE_H, NODE_W, app, closeEnlarged, cmd, closeMenus, noteView, noteZoom, openCrossLink, screenToFlow, selectEdge, selectFrame, selectNode, viewCenter } from '../lib/app.svelte';
   import NodeCard from './NodeCard.svelte';
   import StoryEdge from './StoryEdge.svelte';
   import FlowBridge from './FlowBridge.svelte';
@@ -313,7 +313,7 @@
     {ondelete}
     {onnodedragstart}
     onmove={(_e, vp) => noteZoom(vp.zoom)}
-    onmoveend={(_e, vp) => noteZoom(vp.zoom)}
+    onmoveend={(_e, vp) => { noteZoom(vp.zoom); noteView(vp); }}
     {onnodedrag}
     {onnodedragstop}
     multiSelectionKey={['Shift', 'Control', 'Meta']}
